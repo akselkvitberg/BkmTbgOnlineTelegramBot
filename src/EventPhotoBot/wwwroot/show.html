@@ -24,6 +24,11 @@
 
   <div id="offline" hidden>Reconnecting&hellip;</div>
 
+  <!-- A local (not server) preference: whoever is minding the projector can
+       hide/show the caption overlay with a key press. Shown briefly on load
+       so the shortcut is discoverable, then hidden by show.js. -->
+  <div id="caption-hint">Press <strong>C</strong> to toggle captions</div>
+
   <!-- Keeps the display machine awake where the Wake Lock API is unavailable. -->
   <video id="keepawake" muted loop playsinline src="/keepawake.mp4"></video>
 

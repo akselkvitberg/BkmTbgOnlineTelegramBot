@@ -80,4 +80,18 @@ html, body {
 #offline[hidden] { display: none; }
 #caption[hidden] { display: none; }
 
+#caption-hint {
+  position: fixed;
+  left: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  font-size: 0.85rem;
+  opacity: 0.85;
+  transition: opacity 600ms ease-in-out;
+}
+
+#caption-hint[hidden] { display: none; }
+
 #keepawake { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

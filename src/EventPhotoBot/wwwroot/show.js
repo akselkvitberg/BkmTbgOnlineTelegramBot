@@ -13,6 +13,7 @@
   const captionText = document.getElementById('caption-text');
   const emptyEl = document.getElementById('empty');
   const offlineEl = document.getElementById('offline');
+  const captionHintEl = document.getElementById('caption-hint');
 
   let manifest = null;
   let etag = null;
@@ -23,8 +24,55 @@
   let failures = 0;
   let seenIds = new Set();
   let currentImageId = null;
+  let currentImage = null; // last image passed to render(), for instant caption toggling
 
   const imageUrl = id => `/img/${encodeURIComponent(id)}/display`;
+
+  // ---- caption visibility (a local, per-machine preference, not server state) ----
+
+  const CAPTIONS_KEY = 'eventPhotoBot.showCaptions';
+
+  function loadCaptionsEnabled() {
+    try {
+      const stored = localStorage.getItem(CAPTIONS_KEY);
+      return stored === null ? true : stored === '1';
+    } catch {
+      // A locked-down browser profile can throw on any localStorage access.
+      // The overlay must still work (default on) even though the choice
+      // won't survive a reload in that profile.
+      return true;
+    }
+  }
+
+  function saveCaptionsEnabled(value) {
+    try {
+      localStorage.setItem(CAPTIONS_KEY, value ? '1' : '0');
+    } catch {
+      // Best-effort persistence only; the toggle still works for this
+      // session even where it can't be saved.
+    }
+  }
+
+  let captionsEnabled = loadCaptionsEnabled();
+
+  function updateCaptionOverlay() {
+    if (!currentImage) { captionEl.hidden = true; return; }
+    const hasCaption = Boolean(currentImage.caption || currentImage.senderName);
+    captionEl.hidden = !hasCaption || !captionsEnabled;
+    captionSender.textContent = currentImage.senderName ?? '';
+    captionText.textContent = currentImage.caption ?? '';
+  }
+
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'c' && event.key !== 'C') return;
+    captionsEnabled = !captionsEnabled;
+    saveCaptionsEnabled(captionsEnabled);
+    updateCaptionOverlay();
+  });
+
+  // The shortcut has no other affordance, so give it a few seconds of
+  // on-screen visibility once, at load, for whoever is minding the machine.
+  setTimeout(() => { captionHintEl.hidden = true; }, 8000);
 
   // ---- polling -------------------------------------------------------------
 
@@ -116,9 +164,17 @@
   // ---- rendering -----------------------------------------------------------
 
   function render(image) {
+    // Caption/sender text is re-applied on every call, even when the image
+    // itself hasn't changed: a takeover can run indefinitely, and an
+    // organiser correcting that image's caption or sender mid-display must
+    // reach the screen without waiting for the takeover to end.
+    currentImage = image;
+    updateCaptionOverlay();
+
     // A takeover re-checks every 2s for expiry (see advance()) and would
-    // otherwise re-render, and briefly cross-fade, the same still image on
-    // every check. Skipping a no-op render keeps a long takeover flicker-free.
+    // otherwise re-swap and re-transition the same still image on every
+    // check. Skipping the DOM swap (only) when the image is unchanged keeps
+    // a long takeover flicker-free without going stale.
     if (image.id === currentImageId) return;
     currentImageId = image.id;
 
@@ -133,11 +189,6 @@
     next.classList.add('visible');
     slot.classList.remove('visible');
     activeSlot = 1 - activeSlot;
-
-    const hasCaption = Boolean(image.caption || image.senderName);
-    captionEl.hidden = !hasCaption;
-    captionSender.textContent = image.senderName ?? '';
-    captionText.textContent = image.caption ?? '';
   }
 
   function preload(count) {
@@ -162,7 +213,9 @@
       emptyEl.hidden = false;
       // A caption left over from the last-shown image must not linger behind
       // the holding card once the playlist has genuinely run dry.
-      captionEl.hidden = true;
+      currentImage = null;
+      currentImageId = null;
+      updateCaptionOverlay();
       advanceTimer = setTimeout(advance, 2000);
       return;
     }
