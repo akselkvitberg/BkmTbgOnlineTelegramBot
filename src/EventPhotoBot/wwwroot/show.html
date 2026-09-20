@@ -1,1 +1,32 @@
-<!doctype html><meta charset="utf-8"><title>placeholder</title><p>placeholder
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Event photos</title>
+  <link rel="stylesheet" href="/show.css">
+</head>
+<body>
+  <div id="stage">
+    <div class="slide" data-slot="a"></div>
+    <div class="slide" data-slot="b"></div>
+  </div>
+
+  <div id="caption" hidden>
+    <span id="caption-sender"></span>
+    <span id="caption-text"></span>
+  </div>
+
+  <div id="empty">
+    <h1>Send us your photos</h1>
+    <p id="empty-detail">They will appear here once an organiser approves them.</p>
+  </div>
+
+  <div id="offline" hidden>Reconnecting&hellip;</div>
+
+  <!-- Keeps the display machine awake where the Wake Lock API is unavailable. -->
+  <video id="keepawake" muted loop playsinline src="/keepawake.mp4"></video>
+
+  <script src="/show.js"></script>
+</body>
+</html>
