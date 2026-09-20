@@ -72,6 +72,22 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 
 #takeover-banner[hidden] { display: none; }
 
+#takeover-banner .takeover-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+#takeover-banner .takeover-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
 #pairing-banner {
   margin: 0 0 16px;
   padding: 12px 16px;

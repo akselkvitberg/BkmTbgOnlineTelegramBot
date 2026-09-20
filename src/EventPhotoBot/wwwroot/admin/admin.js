@@ -11,7 +11,18 @@
     get manifest() { return manifest; },
     api,
     imageUrl: (id, size) => `/img/${encodeURIComponent(id)}/${size}`,
+    escapeHtml,
   };
+
+  // Every one of these characters can be attacker-controlled: a Telegram
+  // display name or a photo caption ends up here. Any admin page that
+  // interpolates such a string into innerHTML must run it through this
+  // first - see the pages' own render functions for where that applies.
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[ch]);
+  }
 
   async function api(method, path, body) {
     const options = { method, headers: {} };
@@ -66,11 +77,26 @@
     banner.hidden = !active;
     if (!active) return;
 
+    // Name the image, not just "one image" - a takeover set to "until I
+    // clear it" and forgotten is the likeliest way to leave one photo on
+    // the wall for an hour, and the admin needs to know which photo to go
+    // look for. The takeover image is always approved (the server enforces
+    // that), so it is always present in manifest.images; the fallback here
+    // is defensive only.
+    const image = manifest.images.find(i => i.id === takeover.id);
+    const sender = escapeHtml(image?.senderName ?? 'Unknown');
+    const caption = image?.caption ? escapeHtml(image.caption) : '';
     const until = takeover.until
       ? `until ${new Date(takeover.until).toLocaleTimeString()}`
       : 'until you clear it';
-    banner.innerHTML =
-      `<strong>One image is holding the screen</strong><span class="muted">${until}</span>`;
+
+    banner.innerHTML = `
+      <img class="takeover-thumb" src="${Admin.imageUrl(takeover.id, 'thumb')}" alt="">
+      <span class="takeover-info">
+        <strong>Holding the screen: ${sender}</strong>
+        ${caption ? `<span class="muted">${caption}</span>` : ''}
+        <span class="muted">${until}</span>
+      </span>`;
 
     const clear = document.createElement('button');
     clear.className = 'danger';

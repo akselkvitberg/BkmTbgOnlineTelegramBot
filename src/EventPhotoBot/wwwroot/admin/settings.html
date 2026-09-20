@@ -86,7 +86,7 @@
           ? '<tr><td class="muted">Nobody yet. Turn on pairing mode and share the bot.</td></tr>'
           : whitelist.map((entry, index) => `
             <tr>
-              <td>${entry.name}</td>
+              <td>${Admin.escapeHtml(entry.name)}</td>
               <td class="muted">${entry.id}</td>
               <td><label><input type="checkbox" ${entry.trusted ? 'checked' : ''}
                     onchange="toggleTrusted(${index}, this.checked)"> trusted</label></td>
@@ -98,12 +98,17 @@
       document.getElementById('seen').innerHTML =
         seen.length === 0
           ? '<tr><td class="muted">Nobody has messaged the bot while pairing was on.</td></tr>'
+          // Only the id - a number - goes into the onclick attribute. The
+          // sender's name is attacker-controlled (a Telegram display name),
+          // so it is looked up by id inside addSeen() instead of being
+          // embedded in a string here: HTML-escaping alone would still
+          // leave a way to break out of the single-quoted JS argument the
+          // old version built.
           : seen.map(sender => `
             <tr>
-              <td>${sender.name}</td>
+              <td>${Admin.escapeHtml(sender.name)}</td>
               <td class="muted">${sender.id}</td>
-              <td><button onclick="addSeen(${sender.id}, '${sender.name.replace(/'/g, "\\'")}')">
-                Add to whitelist</button></td>
+              <td><button onclick="addSeen(${sender.id})">Add to whitelist</button></td>
             </tr>`).join('');
     }
 
@@ -123,9 +128,11 @@
       saveWhitelist();
     }
 
-    function addSeen(id, name) {
+    function addSeen(id) {
       if (whitelist.some(e => e.id === id)) return;
-      whitelist.push({ id, name, trusted: false });
+      const sender = seen.find(s => s.id === id);
+      if (!sender) return;
+      whitelist.push({ id, name: sender.name, trusted: false });
       saveWhitelist();
     }
 
