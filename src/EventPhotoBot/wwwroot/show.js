@@ -12,6 +12,7 @@
   const captionSender = document.getElementById('caption-sender');
   const captionText = document.getElementById('caption-text');
   const emptyEl = document.getElementById('empty');
+  const emptyEventNameEl = document.getElementById('empty-event-name');
   const offlineEl = document.getElementById('offline');
   const captionHintEl = document.getElementById('caption-hint');
 
@@ -91,6 +92,12 @@
       });
 
       if (response.status === 304) { onPollSuccess(); return; }
+      // A 401 means the session has expired or been revoked - the manifest will
+      // never succeed again until someone signs back in. Without this branch a 401
+      // fell into the generic failure counter below, and the projector would sit
+      // showing its last frame under a permanent "Reconnecting..." badge instead of
+      // recovering, exactly like admin.js already does for its own polling.
+      if (response.status === 401) { location.href = '/login'; return; }
       if (!response.ok) throw new Error(`manifest ${response.status}`);
 
       etag = response.headers.get('ETag');
@@ -122,34 +129,86 @@
     document.documentElement.style.setProperty(
       '--transition', `${next.settings.transitionMs}ms`);
 
+    const eventName = next.settings.eventName || '';
+    emptyEventNameEl.textContent = eventName;
+    emptyEventNameEl.hidden = eventName.length === 0;
+
     const incoming = next.images;
-    const incomingIds = new Set(incoming.map(i => i.id));
-
-    // Images that vanished disappear after the current slide, not mid-slide.
-    playlist = playlist.filter(i => incomingIds.has(i.id));
-
-    const known = new Set(playlist.map(i => i.id));
-    const fresh = incoming.filter(i => !known.has(i.id));
 
     if (first) {
       playlist = [...incoming];
-    } else if (next.settings.newestFirstBoost) {
-      // Newly approved images jump in within a slide or two, then rejoin the pool.
-      const insertAt = Math.min(playlist.length, cursor + 1);
-      const brandNew = fresh.filter(i => !seenIds.has(i.id));
-      const rest = fresh.filter(i => seenIds.has(i.id));
-      playlist.splice(insertAt, 0, ...brandNew);
-      playlist.push(...rest);
+      cursor = 0;
     } else {
-      playlist.push(...fresh);
+      const result = reconcilePlaylist(incoming, next.settings.newestFirstBoost);
+      playlist = result.playlist;
+      cursor = result.cursor;
     }
 
     incoming.forEach(i => seenIds.add(i.id));
 
-    if (cursor >= playlist.length) cursor = 0;
+    // Images that vanished (hidden/rejected/deleted) are simply absent from
+    // `incoming`, so they drop out of the rebuilt playlist here - but nothing above
+    // forces a re-render, so whatever is already on screen stays there until the
+    // advance() timer already running fires next. They disappear after the current
+    // slide, never mid-slide.
     emptyEl.hidden = playlist.length > 0 || takeoverImage() !== null;
 
     if (first) advance();
+  }
+
+  /// <summary>
+  /// The server's manifest array is authoritative for both order and multiplicity:
+  /// a recurring pin sits at every Nth position, exactly as many times as
+  /// ManifestBuilder placed it, and settings.order (shuffle vs newest-first) is
+  /// already baked into the array's order. Reconciling by id-set instead - filtering
+  /// the old playlist down to ids still present, then appending ids not already
+  /// known - can never move an id the client has already seen and can never show
+  /// more than one copy of it: pinning an image already in rotation had no visible
+  /// effect, and an image that became approved while already pinned entered as N
+  /// adjacent duplicates instead of one every N slides.
+  ///
+  /// Rebuilding fully from `incoming` on every change fixes both, and also makes
+  /// settings.order take effect immediately instead of only on the next page load.
+  /// The one thing still handled here, not by the server, is "newest first boost":
+  /// a genuinely new *ordinary* (non-recurring) image is moved from its natural
+  /// server position to just after the slide currently on screen, so it jumps the
+  /// queue by a slide or two rather than waiting its turn. Recurring pins are
+  /// excluded from that boost and left at every occurrence the server gave them -
+  /// boosting only the nearest one and dropping the rest is exactly the N-duplicate
+  /// bug this replaces.
+  /// </summary>
+  function reconcilePlaylist(incoming, newestFirstBoost) {
+    const brandNewIds = newestFirstBoost
+      ? new Set(incoming.filter(i => !i.recurring && !seenIds.has(i.id)).map(i => i.id))
+      : new Set();
+
+    const rebuilt = incoming.filter(i => !brandNewIds.has(i.id));
+    const insertAt = Math.min(resumePosition(rebuilt), rebuilt.length);
+
+    if (brandNewIds.size > 0) {
+      rebuilt.splice(insertAt, 0, ...incoming.filter(i => brandNewIds.has(i.id)));
+    }
+
+    return { playlist: rebuilt, cursor: insertAt >= rebuilt.length ? 0 : insertAt };
+  }
+
+  /// <summary>
+  /// The index, within `list`, that playback should resume from: just after the
+  /// slide currently on screen. Prefers the occurrence at or after the old cursor so
+  /// a duplicated (recurring) id resolves to "the next upcoming one", not always the
+  /// first copy in the array. Falls back to the old cursor position, clamped to the
+  /// new length, when the current image is no longer present at all (it was hidden,
+  /// rejected or deleted) or nothing has been shown yet.
+  /// </summary>
+  function resumePosition(list) {
+    if (currentImageId === null) return Math.min(cursor, list.length);
+
+    const occurrences = [];
+    list.forEach((image, index) => { if (image.id === currentImageId) occurrences.push(index); });
+    if (occurrences.length === 0) return Math.min(cursor, list.length);
+
+    const atOrAfter = occurrences.find(index => index >= cursor);
+    return (atOrAfter !== undefined ? atOrAfter : occurrences[0]) + 1;
   }
 
   function takeoverImage() {

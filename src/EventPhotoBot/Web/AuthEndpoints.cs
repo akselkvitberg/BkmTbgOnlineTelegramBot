@@ -10,6 +10,14 @@ public static class AuthEndpoints
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            // login.html already renders a friendly message for ?error=rate (nothing
+            // otherwise produces it): without this, a rate-limited login attempt got a
+            // bare 429 with no page and no explanation of what to do next.
+            options.OnRejected = (context, _) =>
+            {
+                context.HttpContext.Response.Redirect("/login?error=rate");
+                return ValueTask.CompletedTask;
+            };
             options.AddPolicy(LoginRateLimitPolicy, context =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     context.Connection.RemoteIpAddress?.ToString() ?? "unknown",

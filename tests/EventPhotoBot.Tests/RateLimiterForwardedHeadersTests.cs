@@ -22,7 +22,13 @@ public class RateLimiterForwardedHeadersTests : IClassFixture<AppFactory>
         // distinguished only by X-Forwarded-For. If forwarded headers are not
         // wired, both hit the very first (proxy) RemoteIpAddress and share one
         // limiter bucket, causing the second client to get rate-limited early.
-        async Task<HttpStatusCode> Hit(string ip)
+        //
+        // Every request here uses a wrong password, so every response is a 302 —
+        // the rate limiter's own OnRejected redirects to /login?error=rate (see
+        // AuthEndpoints), same status code as the ordinary "wrong password" redirect
+        // to /login?error=bad. The Location header, not the status code, is what
+        // distinguishes "still allowed through, password rejected" from "rate limited".
+        async Task<string?> Hit(string ip)
         {
             var client = _factory.CreateAnonymousClient();
             var req = new HttpRequestMessage(HttpMethod.Post, "/login")
@@ -31,18 +37,18 @@ public class RateLimiterForwardedHeadersTests : IClassFixture<AppFactory>
             };
             req.Headers.Add("X-Forwarded-For", ip);
             var resp = await client.SendAsync(req);
-            return resp.StatusCode;
+            Assert.Equal(HttpStatusCode.Redirect, resp.StatusCode);
+            return resp.Headers.Location?.ToString();
         }
 
         for (var i = 0; i < 8; i++)
         {
-            var s = await Hit("10.0.0.1");
-            Assert.NotEqual(HttpStatusCode.TooManyRequests, s);
+            Assert.Equal("/login?error=bad", await Hit("10.0.0.1"));
         }
         // The 9th request from this same forwarded IP should now be limited.
-        Assert.Equal(HttpStatusCode.TooManyRequests, await Hit("10.0.0.1"));
+        Assert.Equal("/login?error=rate", await Hit("10.0.0.1"));
 
         // A different forwarded IP must not be affected by IP 10.0.0.1's limit.
-        Assert.NotEqual(HttpStatusCode.TooManyRequests, await Hit("10.0.0.2"));
+        Assert.Equal("/login?error=bad", await Hit("10.0.0.2"));
     }
 }

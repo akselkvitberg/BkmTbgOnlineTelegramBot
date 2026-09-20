@@ -158,4 +158,46 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task A_fat_fingered_duration_is_clamped_rather_than_taken_literally()
+    {
+        // 600 typed for 60 is exactly the failure the takeover banner exists to
+        // catch after the fact — clamping up front bounds the damage to a day.
+        var client = _factory.CreateAuthenticatedClient();
+        var id = await SeedImageAsync();
+
+        await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = 100_000 });
+
+        var until = _factory.Store.Snapshot.Settings.TakeoverUntil;
+        Assert.NotNull(until);
+        Assert.InRange(until!.Value,
+            DateTimeOffset.UtcNow.AddHours(23), DateTimeOffset.UtcNow.AddHours(25));
+    }
+
+    [Fact]
+    public async Task A_zero_or_negative_duration_is_clamped_up_to_at_least_a_minute()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        var id = await SeedImageAsync();
+
+        await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = 0 });
+
+        var until = _factory.Store.Snapshot.Settings.TakeoverUntil;
+        Assert.NotNull(until);
+        Assert.True(until!.Value > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task Clearing_an_already_clear_takeover_does_not_bump_the_generation()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
+
+        var generationBefore = _factory.Store.Generation;
+        var response = await client.DeleteAsync("/api/takeover");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(generationBefore, _factory.Store.Generation);
+    }
 }

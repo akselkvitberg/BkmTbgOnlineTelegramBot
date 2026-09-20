@@ -1,5 +1,7 @@
 using EventPhotoBot.Imaging;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace EventPhotoBot.Tests;
 
@@ -85,6 +87,40 @@ public class ImagePipelineTests
     {
         var garbage = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
         Assert.ThrowsAny<Exception>(() => ImagePipeline.Process(garbage));
+    }
+
+    /// <summary>
+    /// The 20 MB Telegram download cap bounds compressed bytes, not the decoded
+    /// bitmap. A real high-megapixel photo compresses down under that cap easily,
+    /// but decodes to hundreds of MB of raw pixels — an OOM risk on the single 1 GiB
+    /// Cloud Run instance this runs on. This builds a genuine (if visually blank)
+    /// image just over the pixel cap, single-channel to keep the test itself cheap,
+    /// and asserts it is declined by header inspection alone, before the expensive
+    /// full decode (Image.Load) ever runs.
+    /// </summary>
+    [Fact]
+    public void An_image_over_the_decode_pixel_cap_is_declined_politely()
+    {
+        const int width = 8000;
+        const int height = 6252; // 8000 * 6252 = 50,016,000 > MaxDecodedPixels
+        Assert.True((long)width * height > ImagePipeline.MaxDecodedPixels);
+
+        using var oversized = new Image<L8>(width, height);
+        using var buffer = new MemoryStream();
+        oversized.Save(buffer, new PngEncoder());
+
+        var error = Assert.Throws<ImageTooLargeException>(() => ImagePipeline.Process(buffer.ToArray()));
+        Assert.Contains("too large", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void An_image_at_the_decode_pixel_cap_is_still_processed()
+    {
+        // landscape.jpg (used throughout this file) is nowhere near the cap; this
+        // just confirms Process() doesn't reject an ordinary photo the cap should
+        // never touch.
+        var result = ImagePipeline.Process(Asset("landscape.jpg"));
+        Assert.True(result.Width > 0 && result.Height > 0);
     }
 
     [Theory]

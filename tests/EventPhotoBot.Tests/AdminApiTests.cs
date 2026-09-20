@@ -107,6 +107,30 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task An_upload_with_an_unrecognized_extension_falls_back_to_jpg_rather_than_using_it_verbatim()
+    {
+        // The extension becomes part of a GCS object name, so a client-supplied
+        // IFormFile.FileName must never flow into it unvalidated.
+        var client = _factory.CreateAuthenticatedClient();
+        var bytes = File.ReadAllBytes(
+            Path.Combine(AppContext.BaseDirectory, "TestAssets", "landscape.jpg"));
+
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(bytes);
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        content.Add(file, "file", "../../etc/passwd.exe");
+
+        var response = await client.PostAsync("/api/images", content);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var id = document.RootElement.GetProperty("id").GetString()!;
+        var image = _factory.Store.Snapshot.Images[id];
+        Assert.Equal("jpg", image.OriginalExtension);
+        Assert.Contains(ObjectPaths.Original(id, "jpg"), _factory.Objects.Paths);
+    }
+
+    [Fact]
     public async Task Uploading_something_that_is_not_an_image_is_rejected()
     {
         var client = _factory.CreateAuthenticatedClient();

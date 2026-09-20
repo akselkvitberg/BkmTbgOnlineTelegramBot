@@ -12,6 +12,7 @@
     <a href="/admin/images">Images</a>
     <a href="/admin/settings">Settings</a>
     <a href="/show">Screen</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
   </nav>
 
   <main>
@@ -69,10 +70,18 @@
       whitelist = settings.whitelist ?? [];
       seen = settings.seenSenders ?? [];
 
+      // The manifest subscription below can call load() at any moment - e.g. another
+      // admin approves a photo while this one is mid-keystroke in "Seconds per
+      // image". A field currently focused is being edited right now; overwriting it
+      // out from under the admin's cursor loses the keystroke and the value they were
+      // typing, so every field that accepts typed input (not the checkboxes, which
+      // have no in-progress-typing state to lose) is skipped while focused.
       for (const key of ['slideSeconds', 'transitionMs', 'recurringEvery']) {
-        document.getElementById(key).value = settings[key];
+        const input = document.getElementById(key);
+        if (document.activeElement !== input) input.value = settings[key];
       }
-      document.getElementById('order').value = settings.order;
+      const orderEl = document.getElementById('order');
+      if (document.activeElement !== orderEl) orderEl.value = settings.order;
       document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
       document.getElementById('autoApproveTrusted').checked = settings.autoApproveTrusted;
       document.getElementById('pairingMode').checked = settings.pairingMode;
@@ -152,6 +161,13 @@
       pairingMode: document.getElementById('pairingMode').checked,
     }).then(load);
 
+    // Without this, the admin sits on the settings page during pairing mode (this
+    // page's primary onboarding flow, and the runbook's first acceptance check),
+    // shares the bot's handle, and watches nothing happen as senders message it -
+    // load() only ever ran once, at page open. Admin.onManifest fires on every
+    // change that bumps the manifest generation, and adding a SeenSender does
+    // exactly that (see AdminApiTests), so the signal was already there.
+    Admin.onManifest(() => load());
     load();
   </script>
 </body>

@@ -12,8 +12,11 @@ resource name appears.
 
 ## Before the event
 
-- [ ] Bot created via BotFather, token stored (`gcloud secrets versions add
-      eventphoto-bot-token --data-file=- --project PROJECT_ID`),
+- [ ] Bot created via BotFather, token stored using the safe non-interactive form —
+      typing a value and pressing Enter at an interactive `--data-file=-` prompt stores
+      a trailing newline in the secret, which AppConfig now trims, but avoiding it is
+      one less thing to debug:
+      `printf '%s' 'YOUR_TOKEN' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID`,
       `/setuserpic` and description set so it looks deliberate
 - [ ] Whitelist collected via pairing mode, then pairing mode turned off (see
       "Collecting the whitelist" below)
@@ -30,6 +33,16 @@ resource name appears.
 - [ ] Login link and password shared with whoever will run the screen
 - [ ] Display machine's browser open on `/show`, fullscreen, OS-level sleep
       disabled (not just the browser tab)
+- [ ] Billing budget alert set on the project by hand. `infra/main.tf`'s
+      `google_billing_budget` resource is commented out (it needs a billing
+      account id and the billingbudgets API enabled, which Terraform can't
+      assume it has permission to touch) — create the equivalent budget
+      alert yourself in the Cloud Console under Billing → Budgets & alerts
+      before the event starts, not after.
+- [ ] Scheduled teardown booked. Put "run the After checklist" (below) on a
+      calendar or reminder for the day after the event — the whole point of
+      destroying everything is that it happens, and a manual step with no
+      reminder is the one that gets forgotten.
 
 ### Collecting the whitelist (pairing mode)
 
@@ -83,6 +96,13 @@ opening `/show` on a different machine.
       looks empty — an emptied bucket is not a destroyed one, and the whole
       point of the exercise is that nobody's photos are sitting in a bucket
       after the event ended
+- [ ] Purge Cloud Logging. Logs are not a Terraform resource, so
+      `terraform destroy` leaves them behind — and they can carry sender
+      names, captions and (until this fix) even the bot token from earlier
+      builds. From the project's Logs Explorer, delete the retained log
+      buckets (or run `gcloud logging buckets list --project PROJECT_ID` and
+      delete each one), rather than assuming project deletion alone clears
+      them on your timeline
 
 If the event repeats (a second party, a second Sunday), destroying and
 redeploying from scratch is the intended pattern — there is no state that
@@ -122,11 +142,13 @@ several depend on state left by the one before.
       stops appearing within two seconds, no reload.
 - [ ] **Steady-state manifest polls are free.** Open the browser's network
       tab on `/show` while nothing is changing. Pass: `GET /api/manifest`
-      requests return `304 Not Modified`, and Cloud Run's logs
-      (`gcloud run services logs read eventphoto --project PROJECT_ID
-      --region europe-north1`) show no calls into Cloud Storage during that
-      same window — the manifest is served from the in-memory generation
-      counter, not from a bucket read, on every poll that finds nothing new.
+      requests return `304 Not Modified`. This does not depend on eyeballing
+      Cloud Run's logs — the app logs no GCS calls at any level, so absence
+      of a log line there would pass whether or not a call happened. The
+      claim that the manifest is served from the in-memory generation
+      counter rather than a bucket read is proven instead by the unit test
+      `A_poll_performs_no_object_store_io`, which fails the build if that
+      ever regresses.
 - [ ] **Takeover displaces the slideshow within one slide.** Set takeover on
       an approved image from an admin page. Pass: the currently open
       slideshow switches to that image on its next poll (at most one slide
@@ -155,12 +177,17 @@ several depend on state left by the one before.
       both display upright on the slideshow, not rotated or letterboxed
       sideways.
 - [ ] **Killing the instance mid-event loses nothing.** While the slideshow
-      is running and polling, deploy a new no-op revision (e.g. rerun
-      `infra/deploy.ps1 -SkipBuild`, or `gcloud run services update
-      eventphoto --project PROJECT_ID --region europe-north1` with no real
-      change) to force the old instance to be replaced. Pass: the slideshow
-      keeps going from its next poll with no images or approvals lost —
-      state is reloaded from `state.json` at the new instance's startup.
+      is running and polling, force the old instance to be replaced with
+      `gcloud run services update eventphoto --project PROJECT_ID --region
+      europe-north1` (with no real change). Pass: the slideshow keeps going
+      from its next poll with no images or approvals lost — state is
+      reloaded from `state.json` at the new instance's startup. Do **not**
+      use `infra/deploy.ps1 -SkipBuild` for this check while the event is
+      live: it re-registers the webhook with `drop_pending_updates: true`,
+      which discards anything Telegram is holding for the webhook at that
+      moment — a photo sent in that window vanishes with no error to the
+      sender or the admin. `deploy.ps1` is for before/after the event, or a
+      scratch project; `gcloud run services update` is the mid-event tool.
 - [ ] **`terraform destroy` leaves nothing behind.** Run
       `terraform -chdir=infra destroy` (in a scratch project first if you
       want to check this without touching the real event's data). Pass: the

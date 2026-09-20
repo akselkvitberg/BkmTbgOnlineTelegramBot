@@ -40,8 +40,13 @@
       alert(`That did not work (${response.status}). ${detail}`);
       return null;
     }
-    // Refresh straight away rather than waiting for the next poll.
-    await pollOnce(true);
+    // Refresh straight away rather than waiting for the next poll. The write above
+    // already succeeded, so a dropped connection here - the common case on a phone -
+    // must not make the caller look like the action itself failed: pollOnce rejecting
+    // would otherwise propagate out of api() and skip the caller's own .then(load),
+    // leaving the page showing no sign of a change the server did make. The next
+    // scheduled poll (loop(), below) picks it up regardless.
+    try { await pollOnce(true); } catch { /* stale UI for one tick; not a failure */ }
     return response;
   }
 

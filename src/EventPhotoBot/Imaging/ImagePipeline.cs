@@ -8,11 +8,25 @@ namespace EventPhotoBot.Imaging;
 public sealed record ProcessedImage(
     byte[] Display, byte[] Thumb, int Width, int Height, string Sha256);
 
+/// <summary>
+/// Thrown for an image that decodes to something the service should decline rather
+/// than attempt to process. The message is written to be shown to the sender as-is.
+/// </summary>
+public sealed class ImageTooLargeException(string message) : Exception(message);
+
 public static class ImagePipeline
 {
     public const int DisplayMaxEdge = 2560;
     public const int ThumbMaxEdge = 480;
     public const int JpegQuality = 82;
+
+    // The 20 MB Telegram download cap bounds compressed bytes, not the decoded
+    // bitmap: a high-megapixel JPEG well under 20 MB can decode to hundreds of MB of
+    // raw pixels. On the single 1 GiB Cloud Run instance this runs on
+    // (max_instance_count = 1), that is an OOM that takes the slideshow down, not
+    // just a failed upload. 50 megapixels covers any real camera photo with room to
+    // spare while keeping the decoded bitmap in the tens-of-MB range.
+    public const long MaxDecodedPixels = 50_000_000;
 
     private static readonly HashSet<string> Supported =
         new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/jpg", "image/png", "image/webp" };
@@ -27,6 +41,15 @@ public static class ImagePipeline
     /// </summary>
     public static ProcessedImage Process(byte[] original)
     {
+        // Identify reads only the header, not the pixel data, so this stays cheap
+        // even for the file this check exists to reject.
+        var info = Image.Identify(original)
+                   ?? throw new InvalidOperationException("Unrecognized image format.");
+        var pixels = (long)info.Width * info.Height;
+        if (pixels > MaxDecodedPixels)
+            throw new ImageTooLargeException(
+                "That photo is too large for me to process — try sending a smaller one.");
+
         using var image = Image.Load(original);
 
         image.Mutate(c => c.AutoOrient());

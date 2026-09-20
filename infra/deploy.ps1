@@ -36,12 +36,14 @@ terraform -chdir="$PSScriptRoot" apply `
 Assert-Success 'terraform apply (bootstrap)'
 
 Write-Host '==> Secret values' -ForegroundColor Cyan
-Write-Host 'Add any that are missing, then rerun. These commands are interactive on purpose:'
-Write-Host "  gcloud secrets versions add $Name-bot-token      --data-file=- --project $ProjectId"
-Write-Host "  gcloud secrets versions add $Name-webhook-secret --data-file=- --project $ProjectId"
-Write-Host "  gcloud secrets versions add $Name-webhook-path   --data-file=- --project $ProjectId"
-Write-Host "  gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
-Write-Host "  gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
+Write-Host 'Add any that are missing, then rerun. AppConfig trims whitespace on load, so a'
+Write-Host 'trailing newline from typing a value and pressing Enter is no longer fatal - but'
+Write-Host 'the form below avoids adding one in the first place:'
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-bot-token      --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webhook-secret --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webhook-path   --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
 Write-Host ''
 Write-Host 'Generate the three random ones (webhook-secret, webhook-path, cookie-key) with:  openssl rand -hex 32'
 Write-Host ''
@@ -75,11 +77,17 @@ Assert-Success 'terraform output service_url'
 if ([string]::IsNullOrWhiteSpace($serviceUrl)) { throw 'service_url output is empty.' }
 
 Write-Host '==> Registering the Telegram webhook' -ForegroundColor Cyan
-$botToken      = gcloud secrets versions access latest --secret "$Name-bot-token" --project $ProjectId
+# PowerShell's native-command capture splits multi-line output into a string[] (one
+# element per line), not a single string. A secret value should never have embedded
+# newlines, but if one somehow does, "bot$botToken" below would interpolate the array
+# space-joined rather than throwing — a silent corruption of the token, not a loud
+# failure. Out-String forces a single string in every case, and Trim() drops the
+# trailing newline gcloud's own output adds.
+$botToken      = (gcloud secrets versions access latest --secret "$Name-bot-token" --project $ProjectId | Out-String).Trim()
 Assert-Success 'gcloud secrets versions access (bot-token)'
-$webhookPath   = gcloud secrets versions access latest --secret "$Name-webhook-path" --project $ProjectId
+$webhookPath   = (gcloud secrets versions access latest --secret "$Name-webhook-path" --project $ProjectId | Out-String).Trim()
 Assert-Success 'gcloud secrets versions access (webhook-path)'
-$webhookSecret = gcloud secrets versions access latest --secret "$Name-webhook-secret" --project $ProjectId
+$webhookSecret = (gcloud secrets versions access latest --secret "$Name-webhook-secret" --project $ProjectId | Out-String).Trim()
 Assert-Success 'gcloud secrets versions access (webhook-secret)'
 
 if ([string]::IsNullOrWhiteSpace($botToken) -or [string]::IsNullOrWhiteSpace($webhookPath) `
@@ -91,6 +99,13 @@ $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$bo
     url                  = "$serviceUrl/tg/$webhookPath"
     secret_token         = $webhookSecret
     max_connections      = 4
+    # Safe here because this call only fires when the webhook URL, path or secret is
+    # being (re)registered for the first time, before anyone has the bot's handle - there
+    # is nothing pending to drop yet. Do NOT run this deploy script (or otherwise call
+    # setWebhook) mid-event: it would discard any update Telegram is holding for a
+    # temporarily-unreachable webhook, and a photo sent in that window vanishes with no
+    # error to either the sender or the admin. A mid-event redeploy should go through
+    # `gcloud run services update` instead, which never touches the webhook registration.
     drop_pending_updates = 'true'
 }
 

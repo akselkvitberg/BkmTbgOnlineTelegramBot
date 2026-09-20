@@ -12,6 +12,7 @@
     <a href="/admin/images">Images</a>
     <a href="/admin/settings">Settings</a>
     <a href="/show">Screen</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
   </nav>
 
   <main>
@@ -57,19 +58,38 @@
         </div>`).join('');
     }
 
+    // Guards the A/R shortcut against a second decision landing on the same photo:
+    // pending only refreshes after the round trip below plus a full loadPending(),
+    // which is easily over a second on an admin phone at one bar. Without this, five
+    // quick taps of "A" - or one held key at the OS auto-repeat rate - sent five
+    // `approved` writes against pending[0] and left photos 2-5 untouched, each write
+    // still bumping the generation and forcing every connected client to refetch.
+    let deciding = false;
+
     async function decide(id, status) {
-      const response = await Admin.api('POST', `/api/images/${id}/status`, { status });
-      // Admin.api already alerted the admin on failure. Reload from the
-      // server either way rather than trusting local state: removing the
-      // item locally on a failed call would make it vanish from the queue
-      // while it is still pending server-side, with nothing to bring it
-      // back until some unrelated change advances the manifest generation.
-      if (!response) return;
-      await loadPending();
+      if (deciding) return;
+      deciding = true;
+      try {
+        const response = await Admin.api('POST', `/api/images/${id}/status`, { status });
+        // Admin.api already alerted the admin on failure. Leave `pending` untouched
+        // on failure so the photo stays visible and the next shortcut press retries
+        // it, rather than silently moving on to the next photo in the backlog.
+        if (!response) return;
+        // Remove the decided item locally instead of re-fetching: the manifest
+        // subscription (Admin.onManifest below) already brings the authoritative
+        // list once the write's generation bump reaches it, and the immediate
+        // loadPending() this replaces was a second round trip for the same result.
+        pending = pending.filter(image => image.id !== id);
+        render();
+      } finally {
+        deciding = false;
+      }
     }
 
     document.addEventListener('keydown', event => {
-      if (pending.length === 0) return;
+      // event.repeat is true for the synthetic keydown events an OS sends while a
+      // key is held, at the auto-repeat rate - each one otherwise a full decide().
+      if (event.repeat || pending.length === 0) return;
       const key = event.key.toLowerCase();
       if (key === 'a') decide(pending[0].id, 'approved');
       if (key === 'r') decide(pending[0].id, 'rejected');

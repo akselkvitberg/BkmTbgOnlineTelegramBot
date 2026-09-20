@@ -133,6 +133,26 @@ public class ManifestBuilderTests
     }
 
     [Fact]
+    public void Every_recurring_pin_still_shows_when_there_are_fewer_ordinary_images_than_the_interval()
+    {
+        // ordinary.Count (2) < RecurringEvery (10): the main interleave loop never
+        // reaches a multiple of 'every', so both pins depend entirely on the
+        // fallback branch. Only appending recurring[0] there silently dropped the
+        // second pinned image until enough ordinary images accumulated.
+        var state = StateWith(
+            ("a", ImageStatus.Approved, PinKind.None),
+            ("b", ImageStatus.Approved, PinKind.None),
+            ("menu", ImageStatus.Approved, PinKind.Recurring),
+            ("programme", ImageStatus.Approved, PinKind.Recurring));
+        state.Settings.RecurringEvery = 10;
+
+        var ids = ManifestBuilder.Build(state, 1, Now).Images.Select(i => i.Id).ToArray();
+
+        Assert.Contains("menu", ids);
+        Assert.Contains("programme", ids);
+    }
+
+    [Fact]
     public void A_recurring_pin_is_not_also_listed_as_an_ordinary_image()
     {
         var state = StateWith(
@@ -230,5 +250,13 @@ public class ManifestBuilderTests
         Assert.Empty(manifest.Images);
         Assert.Null(manifest.Takeover);
         Assert.Equal(0, manifest.PendingCount);
+    }
+
+    [Fact]
+    public void The_event_name_passed_in_is_carried_onto_the_settings_view()
+    {
+        var manifest = ManifestBuilder.Build(new EventState(), 0, Now, "Summer Party");
+
+        Assert.Equal("Summer Party", manifest.Settings.EventName);
     }
 }

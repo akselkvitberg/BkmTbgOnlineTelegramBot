@@ -54,4 +54,44 @@ public class AppConfigTests
 
         Assert.Contains("TELEGRAM_BOT_TOKEN", error.Message);
     }
+
+    [Fact]
+    public void Load_treats_a_whitespace_only_value_as_missing()
+    {
+        var blanked = Complete()
+            .Select(p => p.Item1 == "TELEGRAM_WEBHOOK_SECRET" ? (p.Item1, "   ") : p).ToArray();
+
+        var error = Assert.Throws<InvalidOperationException>(() => AppConfig.Load(Config(blanked)));
+
+        Assert.Contains("TELEGRAM_WEBHOOK_SECRET", error.Message);
+    }
+
+    [Fact]
+    public void Load_trims_a_trailing_newline_from_every_value()
+    {
+        // `gcloud secrets versions add --data-file=-` run interactively stores whatever
+        // the terminal sends on Enter, trailing newline included — this is exactly that.
+        var withNewlines = Complete()
+            .Select(p => (p.Item1, p.Item2 + "\n")).ToArray();
+
+        var config = AppConfig.Load(Config(withNewlines));
+
+        Assert.Equal("bucket", config.BucketName);
+        Assert.Equal("Party", config.EventName);
+        Assert.Equal("token", config.BotToken);
+        Assert.Equal("secret", config.WebhookSecret);
+        Assert.Equal("abc123", config.WebhookPath);
+        Assert.Equal("hunter2", config.AdminPassword);
+        Assert.Equal("0123456789abcdef0123456789abcdef", config.CookieSigningKey);
+    }
+
+    [Fact]
+    public void Load_trims_leading_and_trailing_whitespace_from_every_value()
+    {
+        var padded = Complete().Select(p => (p.Item1, $"  {p.Item2}  ")).ToArray();
+
+        var config = AppConfig.Load(Config(padded));
+
+        Assert.Equal("hunter2", config.AdminPassword);
+    }
 }

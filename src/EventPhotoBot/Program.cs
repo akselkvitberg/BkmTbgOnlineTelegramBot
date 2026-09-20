@@ -26,7 +26,18 @@ builder.Services.AddSingleton<IObjectStore>(sp => new GcsObjectStore(
     sp.GetRequiredService<ILogger<GcsObjectStore>>()));
 
 builder.Services.AddSingleton<StateStore>();
-builder.Services.AddHttpClient<ITelegramClient, TelegramClient>();
+// HttpClientFactory's logging handlers log the request URI at Information, and
+// Telegram puts the bot token in the URL PATH (https://api.telegram.org/bot<token>/...),
+// which the factory's redaction only strips from the query string. Left at the default
+// level, every getFile/download/sendMessage call would write the live bot token to Cloud
+// Logging — a secret that outlives `terraform destroy`, since logs aren't a Terraform
+// resource. appsettings.json sets "System.Net.Http.HttpClient": "Warning" to silence
+// exactly those Information-level request/response lines; this is not noise suppression,
+// it's the outbound half of the same care "Microsoft.AspNetCore": "Warning" already gives
+// the inbound side. An explicit 60s timeout also keeps a slow Telegram call from eating
+// most of Cloud Run's 120s request timeout, leaving room for decode plus object writes.
+builder.Services.AddHttpClient<ITelegramClient, TelegramClient>(
+    client => client.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddSingleton<UpdateHandler>();
 builder.Services.AddLoginRateLimiter();
 

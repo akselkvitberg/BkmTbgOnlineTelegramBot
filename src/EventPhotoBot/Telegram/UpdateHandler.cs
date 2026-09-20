@@ -197,6 +197,12 @@ public sealed class UpdateHandler(
         {
             processed = ImagePipeline.Process(original);
         }
+        catch (ImageTooLargeException e)
+        {
+            logger.LogWarning("Declined an over-the-decode-limit image from {Sender}.", sender.Id);
+            await telegram.SendMessageAsync(chat.Id, e.Message, ct);
+            return;
+        }
         catch (Exception e)
         {
             logger.LogWarning(e, "Could not decode an image from {Sender}.", sender.Id);

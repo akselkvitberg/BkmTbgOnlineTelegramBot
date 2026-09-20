@@ -20,6 +20,14 @@ public sealed record SettingsPatch(
 
 public static class ApiEndpoints
 {
+    // A fat-fingered takeover duration (600 typed for 60) is exactly the failure the
+    // takeover banner exists to catch after the fact; clamping up front means a typo
+    // strands a photo for at most a day, not indefinitely.
+    private const int MaxTakeoverMinutes = 24 * 60;
+
+    private static readonly HashSet<string> AllowedUploadExtensions =
+        new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
+
     public static void MapApi(this WebApplication app)
     {
         app.MapGet("/api/images", (string? status, StateStore store) =>
@@ -63,7 +71,7 @@ public static class ApiEndpoints
             });
         });
 
-        app.MapGet("/api/manifest", (HttpContext http, StateStore store) =>
+        app.MapGet("/api/manifest", (HttpContext http, StateStore store, AppConfig config) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
@@ -76,7 +84,7 @@ public static class ApiEndpoints
             http.Response.Headers.CacheControl = "no-cache";
 
             return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow));
+                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, config.EventName));
         });
 
         app.MapPost("/api/images/{id}/status",
@@ -141,7 +149,7 @@ public static class ApiEndpoints
 
                 state.Settings.TakeoverImageId = request.ImageId;
                 state.Settings.TakeoverUntil = request.Minutes is { } minutes
-                    ? DateTimeOffset.UtcNow.AddMinutes(minutes)
+                    ? DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(minutes, 1, MaxTakeoverMinutes))
                     : null;
 
                 return Results.Ok();
@@ -150,6 +158,18 @@ public static class ApiEndpoints
 
         app.MapDelete("/api/takeover", async (StateStore store) =>
         {
+            // StateStore.MutateAsync always writes, even when the mutation callback
+            // changes nothing - so guarding inside the callback would not have
+            // avoided the write. Skipping the call outright when there is plainly
+            // nothing to clear is what actually avoids bumping the generation and
+            // forcing every connected client to refetch for a no-op clear (the admin
+            // UI can call this more than once - two admins, or a stale page). Reading
+            // Snapshot outside the lock is the same fast-path pattern used elsewhere
+            // in this codebase: not authoritative by itself, but MutateAsync's own
+            // clone-and-check inside the lock would just no-op harmlessly on the rare
+            // race where a takeover appears between this check and the call.
+            if (store.Snapshot.Settings.TakeoverImageId is null) return Results.Ok();
+
             await store.MutateAsync(state =>
             {
                 state.Settings.TakeoverImageId = null;
@@ -204,8 +224,12 @@ public static class ApiEndpoints
                 }
 
                 var id = Ulid.NewUlid().ToString();
+                // The object name is built from this, so it must come from a fixed
+                // list, not verbatim from the client-supplied IFormFile.FileName —
+                // an attacker-controlled string with no validation otherwise ends up
+                // as part of a GCS object path.
                 var extension = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
-                if (string.IsNullOrEmpty(extension)) extension = "jpg";
+                if (!AllowedUploadExtensions.Contains(extension)) extension = "jpg";
                 var now = DateTimeOffset.UtcNow;
 
                 await objects.WriteAsync(ObjectPaths.Original(id, extension),

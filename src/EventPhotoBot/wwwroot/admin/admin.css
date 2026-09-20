@@ -42,6 +42,21 @@ nav a {
 
 nav a.active { background: var(--bg); color: var(--text); }
 
+.nav-logout { margin-left: auto; }
+
+.nav-logout button {
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-logout button:hover { color: var(--text); }
+
 .badge {
   display: inline-block;
   min-width: 20px;

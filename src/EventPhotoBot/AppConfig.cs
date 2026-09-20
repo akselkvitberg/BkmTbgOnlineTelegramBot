@@ -36,15 +36,22 @@ public sealed class AppConfig
                 "Secrets come from Secret Manager via Cloud Run; check the service's env vars.");
         }
 
+        // Trimmed: `gcloud secrets versions add --data-file=-` run interactively (as the
+        // runbook and deploy script tell the operator to do) stores whatever the terminal
+        // sends on Enter, trailing newline included. An untrimmed value flows straight into
+        // the HMAC key, the password comparison, the route template and the constant-time
+        // webhook check — the worst case being a webhook secret that never again matches
+        // what Telegram sends, silently 401-ing every update with nothing in the app's own
+        // logs to explain why. Trimming a shared event password costs nothing.
         return new AppConfig
         {
-            BucketName = config["BUCKET_NAME"]!,
-            EventName = config["EVENT_NAME"]!,
-            BotToken = config["TELEGRAM_BOT_TOKEN"]!,
-            WebhookSecret = config["TELEGRAM_WEBHOOK_SECRET"]!,
-            WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!,
-            AdminPassword = config["ADMIN_PASSWORD"]!,
-            CookieSigningKey = config["COOKIE_SIGNING_KEY"]!,
+            BucketName = config["BUCKET_NAME"]!.Trim(),
+            EventName = config["EVENT_NAME"]!.Trim(),
+            BotToken = config["TELEGRAM_BOT_TOKEN"]!.Trim(),
+            WebhookSecret = config["TELEGRAM_WEBHOOK_SECRET"]!.Trim(),
+            WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!.Trim(),
+            AdminPassword = config["ADMIN_PASSWORD"]!.Trim(),
+            CookieSigningKey = config["COOKIE_SIGNING_KEY"]!.Trim(),
         };
     }
 

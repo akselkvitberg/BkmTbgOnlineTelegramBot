@@ -2,7 +2,8 @@ using System.Text.Json;
 
 namespace EventPhotoBot.Telegram;
 
-public sealed class TelegramClient(HttpClient http, AppConfig config) : ITelegramClient
+public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<TelegramClient> logger)
+    : ITelegramClient
 {
     private string Api => $"https://api.telegram.org/bot{config.BotToken}";
 
@@ -24,8 +25,10 @@ public sealed class TelegramClient(HttpClient http, AppConfig config) : ITelegra
     {
         using var response = await http.PostAsJsonAsync(
             $"{Api}/sendMessage", new { chat_id = chatId, text }, ct);
-        // A failed reply must not fail the ingest that already succeeded.
+        // A failed reply must not fail the ingest that already succeeded. Logged as a
+        // warning, not written to Console.Error: Cloud Run surfaces stderr at ERROR
+        // severity, and a benign failed reply is not a fault worth paging on.
         if (!response.IsSuccessStatusCode)
-            Console.Error.WriteLine($"sendMessage failed: {(int)response.StatusCode}");
+            logger.LogWarning("sendMessage failed: {StatusCode}", (int)response.StatusCode);
     }
 }

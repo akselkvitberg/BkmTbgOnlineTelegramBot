@@ -8,7 +8,7 @@ public sealed record ManifestImage(
 public sealed record TakeoverView(string Id, DateTimeOffset? Until);
 
 public sealed record SettingsView(
-    int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order);
+    int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName);
 
 public sealed record Manifest(
     long Version,
@@ -23,7 +23,8 @@ public sealed record Manifest(
 /// </summary>
 public static class ManifestBuilder
 {
-    public static Manifest Build(EventState state, long generation, DateTimeOffset now)
+    public static Manifest Build(
+        EventState state, long generation, DateTimeOffset now, string eventName = "")
     {
         var settings = state.Settings;
 
@@ -49,7 +50,7 @@ public static class ManifestBuilder
             Takeover: ActiveTakeover(state, now),
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
-                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle"),
+                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle", eventName),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 
@@ -94,7 +95,12 @@ public static class ManifestBuilder
                 next++;
             }
         }
-        if (next == 0) result.Add(recurring[0]);
+        // ordinary.Count < every means the loop above never reached a multiple of
+        // 'every', so no recurring image was scheduled at all - the pin(s) would
+        // otherwise never appear until enough ordinary images accumulate. Appending
+        // every recurring image once (not just recurring[0]) is what keeps a second
+        // pinned image from being silently dropped at small image counts.
+        if (next == 0) result.AddRange(recurring);
         return result;
     }
 
