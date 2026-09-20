@@ -117,4 +117,121 @@ public class StateStoreTests
 
         Assert.Equal(9, count);
     }
+
+    [Fact]
+    public async Task Mutate_leaves_state_unchanged_when_retries_are_exhausted()
+    {
+        var inner = new InMemoryObjectStore();
+        var seed = new StateStore(inner);
+        await seed.LoadAsync();
+        await seed.MutateAsync(s => s.Settings.SlideSeconds = 3);
+
+        // Every write to state.json loses the race, no matter how many times it
+        // retries, so retries are eventually exhausted.
+        var store = new StateStore(new AlwaysConflictingObjectStore(inner));
+        await store.LoadAsync();
+        var generationBefore = store.Generation;
+
+        await Assert.ThrowsAsync<PreconditionFailedException>(() =>
+            store.MutateAsync(s => s.Settings.SlideSeconds = 777));
+
+        // The attempted change is gone; Snapshot and Generation still agree with
+        // each other and with what was actually last persisted.
+        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(generationBefore, store.Generation);
+    }
+
+    [Fact]
+    public async Task Mutate_leaves_state_unchanged_when_the_callback_throws()
+    {
+        var (store, _) = NewStore();
+        await store.LoadAsync();
+        await store.MutateAsync(s => s.Settings.SlideSeconds = 3);
+        var generationBefore = store.Generation;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.MutateAsync(s =>
+            {
+                s.Settings.SlideSeconds = 777;
+                throw new InvalidOperationException("boom");
+            }));
+
+        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(generationBefore, store.Generation);
+    }
+
+    [Fact]
+    public async Task Mutate_leaves_state_unchanged_when_cancelled_mid_write()
+    {
+        var inner = new InMemoryObjectStore();
+        var store = new StateStore(new CancellationCheckingObjectStore(inner));
+        await store.LoadAsync();
+        await store.MutateAsync(s => s.Settings.SlideSeconds = 3);
+        var generationBefore = store.Generation;
+
+        using var cts = new CancellationTokenSource();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            store.MutateAsync(s =>
+            {
+                s.Settings.SlideSeconds = 777;
+                // Cancel once the mutation has been computed but before the write
+                // that would confirm it is allowed to complete.
+                cts.Cancel();
+            }, cts.Token));
+
+        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(generationBefore, store.Generation);
+    }
+
+    /// <summary>Test double: every write to StatePath fails the precondition, no
+    /// matter what generation is offered, simulating a writer that always wins the
+    /// race. Reads pass through untouched, so a reload always sees the same object.</summary>
+    private sealed class AlwaysConflictingObjectStore(IObjectStore inner) : IObjectStore
+    {
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default) =>
+            inner.ReadAsync(path, ct);
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType,
+            long? ifGenerationMatch, CancellationToken ct = default) =>
+            path == StateStore.StatePath
+                ? throw new PreconditionFailedException(path)
+                : inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) =>
+            inner.OpenReadAsync(path, ct);
+
+        public Task DeleteAsync(string path, CancellationToken ct = default) =>
+            inner.DeleteAsync(path, ct);
+    }
+
+    /// <summary>Test double: honours cancellation the way a real network-backed
+    /// IObjectStore would, which InMemoryObjectStore does not need to.</summary>
+    private sealed class CancellationCheckingObjectStore(IObjectStore inner) : IObjectStore
+    {
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return inner.ReadAsync(path, ct);
+        }
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType,
+            long? ifGenerationMatch, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+        }
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return inner.OpenReadAsync(path, ct);
+        }
+
+        public Task DeleteAsync(string path, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return inner.DeleteAsync(path, ct);
+        }
+    }
 }

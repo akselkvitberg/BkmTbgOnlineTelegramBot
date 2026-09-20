@@ -55,9 +55,15 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
         {
             for (var attempt = 1; ; attempt++)
             {
-                ClearExpiredTakeover(_state);
-                var result = mutate(_state);
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(_state, StateJson.Options);
+                // Mutate a clone, never the live _state: until WriteAsync to StatePath
+                // has actually succeeded, nothing here is confirmed, and Snapshot must
+                // never show a change the bucket does not have. This also means a
+                // thrown mutate callback, a non-precondition write failure, or a
+                // cancellation leaves _state exactly as it was before this call.
+                var working = Clone(_state);
+                ClearExpiredTakeover(working);
+                var result = mutate(working);
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(working, StateJson.Options);
 
                 try
                 {
@@ -69,6 +75,7 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
                     _generation = await objects.WriteAsync(
                         StatePath, bytes, "application/json",
                         ifGenerationMatch: _generation, ct);
+                    _state = working;
                     _lastBytes = bytes;
                     return result;
                 }
@@ -86,6 +93,11 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
             _gate.Release();
         }
     }
+
+    private static EventState Clone(EventState state) =>
+        JsonSerializer.Deserialize<EventState>(
+            JsonSerializer.SerializeToUtf8Bytes(state, StateJson.Options),
+            StateJson.Options)!;
 
     /// <summary>
     /// Takeover expiry triggers no write of its own, so the client drops an expired
