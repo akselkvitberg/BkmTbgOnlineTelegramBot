@@ -8,7 +8,16 @@
 
   <ItemGroup>
     <PackageReference Include="Google.Cloud.Storage.V1" Version="4.16.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.2" />
+    <!--
+      Pinned to 3.1.12 deliberately — do not bump to 4.x. SixLabors.ImageSharp 4.x gates
+      CoreCompile on a license-enrollment check that is a hard build ERROR (not a warning)
+      in Release configuration, which is what the Task 14 container build uses; that would
+      block deployment outright, and getting a Six Labors license key configured is a BCC
+      action, not a code change. 3.1.12 carries the same Six Labors Split License already
+      accepted for this project, it just doesn't gate the build on that enrollment step.
+      See .superpowers/sdd/2026-09-20-event-photo-bot/task-8-report.md for the full story.
+    -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
 </Project>
