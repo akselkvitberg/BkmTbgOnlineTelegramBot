@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EventPhotoBot/EventPhotoBot.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EventPhotoBot.Tests/EventPhotoBot.Tests.csproj" />
+  </Folder>
+</Solution>
