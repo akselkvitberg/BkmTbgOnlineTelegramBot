@@ -72,3 +72,11 @@ public static class StateJson
         WriteIndented = false,
     };
 }
+
+/// <summary>The only place object names are constructed.</summary>
+public static class ObjectPaths
+{
+    public static string Original(string id, string extension) => $"originals/{id}.{extension}";
+    public static string Display(string id) => $"display/{id}.jpg";
+    public static string Thumb(string id) => $"thumbs/{id}.jpg";
+}
