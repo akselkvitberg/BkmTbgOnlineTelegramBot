@@ -43,7 +43,7 @@ Write-Host "  gcloud secrets versions add $Name-webhook-path   --data-file=- --p
 Write-Host "  gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
 Write-Host "  gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
 Write-Host ''
-Write-Host 'Generate the three random ones with:  openssl rand -hex 32'
+Write-Host 'Generate the three random ones (webhook-secret, webhook-path, cookie-key) with:  openssl rand -hex 32'
 Write-Host ''
 
 if (-not $SkipBuild) {

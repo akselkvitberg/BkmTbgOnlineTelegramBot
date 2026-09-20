@@ -5,6 +5,11 @@ actually working before you rely on it. The whole system is designed to be
 destroyed after the event — see **After** — so treat teardown as a step on
 this list, not a someday task.
 
+Commands below that name a resource (`eventphoto-bot-token`, the Cloud Run
+service `eventphoto`, and so on) assume the default `-Name eventphoto`. If
+this event was deployed with a different `-Name`, substitute it everywhere a
+resource name appears.
+
 ## Before the event
 
 - [ ] Bot created via BotFather, token stored (`gcloud secrets versions add
@@ -159,7 +164,7 @@ several depend on state left by the one before.
 - [ ] **`terraform destroy` leaves nothing behind.** Run
       `terraform -chdir=infra destroy` (in a scratch project first if you
       want to check this without touching the real event's data). Pass: the
-      bucket, the four secrets, and the Cloud Run service are all gone
+      bucket, all five secrets, and the Cloud Run service are all gone
       afterwards — check with `gcloud storage buckets list`, `gcloud secrets
       list`, and `gcloud run services list`, all scoped `--project
       PROJECT_ID`.
@@ -180,3 +185,17 @@ on a rerun where only the secrets or the Terraform apply needed a retry.
 
 On success it prints the slideshow URL, the admin URL, and confirms the
 webhook registered.
+
+If any step fails, the script stops there and reports which command failed.
+Fix whatever it reports (usually a missing secret version or a `gcloud`
+auth issue) and rerun the whole command — every step is safe to repeat.
+
+## Build notes
+
+`SixLabors.ImageSharp` is pinned to **3.1.12** deliberately — this is not
+accidental staleness. 4.x gates the build on a Six Labors licence-key
+enrollment check that is a hard error, not a warning, in Release
+configuration, and the container build (`Dockerfile`) always builds Release.
+Bumping this package without first sorting out a Six Labors licence key will
+break the image build with an error that has no obvious connection to
+whatever change prompted the bump.
