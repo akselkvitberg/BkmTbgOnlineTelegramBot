@@ -1,1 +1,108 @@
-<!doctype html><meta charset="utf-8"><title>placeholder</title><p>placeholder
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Images</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Queue<span class="badge"></span></a>
+    <a href="/admin/images">Images</a>
+    <a href="/admin/settings">Settings</a>
+    <a href="/show">Screen</a>
+  </nav>
+
+  <main>
+    <div id="pairing-banner" hidden>
+      <strong>Pairing mode is on</strong>
+      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
+    </div>
+    <div id="takeover-banner" hidden></div>
+
+    <div class="row">
+      <label for="filter" style="margin:0">Show</label>
+      <select id="filter" style="width:auto" onchange="load()">
+        <option value="approved">Approved</option>
+        <option value="hidden">Hidden</option>
+        <option value="pending">Pending</option>
+        <option value="rejected">Rejected</option>
+        <option value="">Everything</option>
+      </select>
+      <input type="file" id="upload" accept="image/*" style="width:auto">
+      <button onclick="uploadFile()">Upload</button>
+    </div>
+
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <script src="/admin/admin.js"></script>
+  <script>
+    async function load() {
+      const status = document.getElementById('filter').value;
+      const query = status ? `?status=${status}` : '';
+      const response = await fetch(`/api/images${query}`, { cache: 'no-store' });
+      if (!response.ok) return;
+      render(await response.json());
+    }
+
+    function render(images) {
+      const grid = document.getElementById('grid');
+      if (images.length === 0) {
+        grid.innerHTML = '<p class="empty">Nothing here.</p>';
+        return;
+      }
+      grid.innerHTML = images.map(image => `
+        <figure data-id="${image.id}">
+          <img src="${Admin.imageUrl(image.id, 'thumb')}" alt="" loading="lazy">
+          <div class="row">
+            <button onclick="setStatus('${image.id}','${image.status === 'hidden' ? 'approved' : 'hidden'}')">
+              ${image.status === 'hidden' ? 'Show' : 'Hide'}
+            </button>
+            <button onclick="setPin('${image.id}','${image.pin === 'recurring' ? 'none' : 'recurring'}')">
+              ${image.pin === 'recurring' ? 'Unpin' : 'Pin'}
+            </button>
+            <button onclick="takeover('${image.id}')">Take over</button>
+            <button class="danger" onclick="remove('${image.id}')">Delete</button>
+          </div>
+        </figure>`).join('');
+    }
+
+    const setStatus = (id, status) => Admin.api('POST', `/api/images/${id}/status`, { status }).then(load);
+    const setPin = (id, pin) => Admin.api('POST', `/api/images/${id}/pin`, { pin }).then(load);
+
+    async function remove(id) {
+      if (!confirm('Delete this photo? It is removed from storage too, and cannot be undone.')) return;
+      await Admin.api('DELETE', `/api/images/${id}`);
+      load();
+    }
+
+    async function takeover(id) {
+      const choice = prompt(
+        'Take over the screen for how long?\n5, 15 or 60 minutes, or leave blank for "until I clear it".', '15');
+      if (choice === null) return;
+      const minutes = choice.trim() === '' ? null : Number(choice);
+      if (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0)) {
+        alert('Enter a number of minutes, or leave it blank.');
+        return;
+      }
+      await Admin.api('PUT', '/api/takeover', { imageId: id, minutes });
+      load();
+    }
+
+    async function uploadFile() {
+      const input = document.getElementById('upload');
+      if (!input.files.length) return;
+      const form = new FormData();
+      form.append('file', input.files[0]);
+      await Admin.api('POST', '/api/images', form);
+      input.value = '';
+      load();
+    }
+
+    Admin.onManifest(() => load());
+    load();
+  </script>
+</body>
+</html>

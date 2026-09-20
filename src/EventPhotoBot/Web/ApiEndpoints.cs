@@ -22,6 +22,47 @@ public static class ApiEndpoints
 {
     public static void MapApi(this WebApplication app)
     {
+        app.MapGet("/api/images", (string? status, StateStore store) =>
+        {
+            var images = store.Snapshot.Images.Values.AsEnumerable();
+
+            if (status is not null)
+            {
+                if (!Enum.TryParse<ImageStatus>(status, ignoreCase: true, out var wanted))
+                    return Results.BadRequest(new { error = "Unknown status." });
+                images = images.Where(i => i.Status == wanted);
+            }
+
+            return Results.Ok(images
+                .OrderByDescending(i => i.SortKey, StringComparer.Ordinal)
+                .Select(i => new
+                {
+                    i.Id, i.SenderName, i.Caption, i.Width, i.Height,
+                    Status = i.Status.ToString().ToLowerInvariant(),
+                    Pin = i.Pin.ToString().ToLowerInvariant(),
+                    i.ReceivedAt,
+                }));
+        });
+
+        app.MapGet("/api/settings", (StateStore store) =>
+        {
+            var s = store.Snapshot.Settings;
+            return Results.Ok(new
+            {
+                s.SlideSeconds,
+                s.TransitionMs,
+                Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
+                s.NewestFirstBoost,
+                s.RecurringEvery,
+                s.AutoApproveTrusted,
+                s.PairingMode,
+                s.Whitelist,
+                s.SeenSenders,
+                s.TakeoverImageId,
+                s.TakeoverUntil,
+            });
+        });
+
         app.MapGet("/api/manifest", (HttpContext http, StateStore store) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:

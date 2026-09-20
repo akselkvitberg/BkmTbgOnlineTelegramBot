@@ -1,1 +1,151 @@
-<!doctype html><meta charset="utf-8"><title>placeholder</title><p>placeholder
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Settings</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Queue<span class="badge"></span></a>
+    <a href="/admin/images">Images</a>
+    <a href="/admin/settings">Settings</a>
+    <a href="/show">Screen</a>
+  </nav>
+
+  <main>
+    <div id="pairing-banner" hidden>
+      <strong>Pairing mode is on</strong>
+      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
+    </div>
+    <div id="takeover-banner" hidden></div>
+
+    <h2>Slideshow</h2>
+    <label for="slideSeconds">Seconds per image</label>
+    <input id="slideSeconds" type="number" min="2" max="120">
+    <label for="transitionMs">Cross-fade (ms)</label>
+    <input id="transitionMs" type="number" min="0" max="5000">
+    <label for="order">Order</label>
+    <select id="order">
+      <option value="shuffle">Shuffle</option>
+      <option value="newest-first">Newest first</option>
+    </select>
+    <label><input id="newestFirstBoost" type="checkbox"> Jump new photos to the front</label>
+    <label for="recurringEvery">Show a pinned image every N photos</label>
+    <input id="recurringEvery" type="number" min="1" max="100">
+    <div class="row"><button class="primary" onclick="saveSlideshow()">Save</button></div>
+
+    <h2>Senders</h2>
+    <label><input id="autoApproveTrusted" type="checkbox">
+      Trusted senders skip the queue</label>
+    <label><input id="pairingMode" type="checkbox">
+      Pairing mode — anyone who messages the bot gets their id back</label>
+    <div class="row"><button class="primary" onclick="saveSenders()">Save</button></div>
+
+    <h3>Whitelist</h3>
+    <table id="whitelist"></table>
+    <div class="row">
+      <input id="newId" type="number" placeholder="Telegram id" style="width:auto">
+      <input id="newName" type="text" placeholder="Name" style="width:auto">
+      <button onclick="addEntry()">Add</button>
+    </div>
+
+    <h3>Seen while pairing</h3>
+    <table id="seen"></table>
+    <div class="row"><button onclick="clearSeen()">Clear the list</button></div>
+  </main>
+
+  <script src="/admin/admin.js"></script>
+  <script>
+    let settings = null;
+    let whitelist = [];
+    let seen = [];
+
+    async function load() {
+      const response = await fetch('/api/settings', { cache: 'no-store' });
+      if (!response.ok) return;
+      settings = await response.json();
+      whitelist = settings.whitelist ?? [];
+      seen = settings.seenSenders ?? [];
+
+      for (const key of ['slideSeconds', 'transitionMs', 'recurringEvery']) {
+        document.getElementById(key).value = settings[key];
+      }
+      document.getElementById('order').value = settings.order;
+      document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
+      document.getElementById('autoApproveTrusted').checked = settings.autoApproveTrusted;
+      document.getElementById('pairingMode').checked = settings.pairingMode;
+      renderWhitelist();
+      renderSeen();
+    }
+
+    function renderWhitelist() {
+      document.getElementById('whitelist').innerHTML =
+        whitelist.length === 0
+          ? '<tr><td class="muted">Nobody yet. Turn on pairing mode and share the bot.</td></tr>'
+          : whitelist.map((entry, index) => `
+            <tr>
+              <td>${entry.name}</td>
+              <td class="muted">${entry.id}</td>
+              <td><label><input type="checkbox" ${entry.trusted ? 'checked' : ''}
+                    onchange="toggleTrusted(${index}, this.checked)"> trusted</label></td>
+              <td><button class="danger" onclick="removeEntry(${index})">Remove</button></td>
+            </tr>`).join('');
+    }
+
+    function renderSeen() {
+      document.getElementById('seen').innerHTML =
+        seen.length === 0
+          ? '<tr><td class="muted">Nobody has messaged the bot while pairing was on.</td></tr>'
+          : seen.map(sender => `
+            <tr>
+              <td>${sender.name}</td>
+              <td class="muted">${sender.id}</td>
+              <td><button onclick="addSeen(${sender.id}, '${sender.name.replace(/'/g, "\\'")}')">
+                Add to whitelist</button></td>
+            </tr>`).join('');
+    }
+
+    const saveWhitelist = () => Admin.api('PATCH', '/api/settings', { whitelist }).then(load);
+
+    function toggleTrusted(index, trusted) { whitelist[index].trusted = trusted; saveWhitelist(); }
+    function removeEntry(index) { whitelist.splice(index, 1); saveWhitelist(); }
+
+    function addEntry() {
+      const id = Number(document.getElementById('newId').value);
+      const name = document.getElementById('newName').value.trim() || String(id);
+      if (!Number.isFinite(id) || id <= 0) { alert('Enter a numeric Telegram id.'); return; }
+      if (whitelist.some(e => e.id === id)) { alert('Already on the list.'); return; }
+      whitelist.push({ id, name, trusted: false });
+      document.getElementById('newId').value = '';
+      document.getElementById('newName').value = '';
+      saveWhitelist();
+    }
+
+    function addSeen(id, name) {
+      if (whitelist.some(e => e.id === id)) return;
+      whitelist.push({ id, name, trusted: false });
+      saveWhitelist();
+    }
+
+    const clearSeen = () =>
+      Admin.api('PATCH', '/api/settings', { clearSeenSenders: true }).then(load);
+
+    const saveSlideshow = () => Admin.api('PATCH', '/api/settings', {
+      slideSeconds: Number(document.getElementById('slideSeconds').value),
+      transitionMs: Number(document.getElementById('transitionMs').value),
+      order: document.getElementById('order').value,
+      newestFirstBoost: document.getElementById('newestFirstBoost').checked,
+      recurringEvery: Number(document.getElementById('recurringEvery').value),
+    }).then(load);
+
+    const saveSenders = () => Admin.api('PATCH', '/api/settings', {
+      autoApproveTrusted: document.getElementById('autoApproveTrusted').checked,
+      pairingMode: document.getElementById('pairingMode').checked,
+    }).then(load);
+
+    load();
+  </script>
+</body>
+</html>

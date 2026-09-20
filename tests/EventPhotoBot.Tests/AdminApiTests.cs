@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using EventPhotoBot.State;
 
 namespace EventPhotoBot.Tests;
@@ -192,6 +193,109 @@ public class AdminApiTests : IClassFixture<AppFactory>
             "/api/takeover", new { imageId = (string?)null, minutes = 5 });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Listing_images_filters_by_status_and_shapes_each_entry()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        var pendingId = await SeedImageAsync(ImageStatus.Pending);
+
+        var response = await client.GetAsync("/api/images?status=pending");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var entry = document.RootElement.EnumerateArray()
+            .Single(e => e.GetProperty("id").GetString() == pendingId);
+        Assert.Equal("pending", entry.GetProperty("status").GetString());
+        Assert.Equal("none", entry.GetProperty("pin").GetString());
+        Assert.Equal(10, entry.GetProperty("width").GetInt32());
+        Assert.Equal(10, entry.GetProperty("height").GetInt32());
+        Assert.True(entry.TryGetProperty("receivedAt", out _));
+
+        // A different filter must not surface this pending image.
+        var approvedOnly = await client.GetAsync("/api/images?status=approved");
+        using var approvedDoc = JsonDocument.Parse(await approvedOnly.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(approvedDoc.RootElement.EnumerateArray(),
+            e => e.GetProperty("id").GetString() == pendingId);
+    }
+
+    [Fact]
+    public async Task Listing_images_without_a_status_returns_images_of_every_status()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        var pendingId = await SeedImageAsync(ImageStatus.Pending);
+        var rejectedId = await SeedImageAsync(ImageStatus.Rejected);
+
+        var response = await client.GetAsync("/api/images");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var ids = document.RootElement.EnumerateArray()
+            .Select(e => e.GetProperty("id").GetString())
+            .ToList();
+        Assert.Contains(pendingId, ids);
+        Assert.Contains(rejectedId, ids);
+    }
+
+    [Fact]
+    public async Task Listing_images_with_an_unknown_status_is_rejected()
+    {
+        var response = await _factory.CreateAuthenticatedClient().GetAsync("/api/images?status=banana");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reading_settings_returns_the_full_shape_including_the_whitelist_and_seen_senders()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await _factory.Store.MutateAsync(s =>
+        {
+            s.Settings.SlideSeconds = 42;
+            s.Settings.Order = SlideOrder.NewestFirst;
+            s.Settings.PairingMode = true;
+            s.Settings.Whitelist = [new WhitelistEntry { Id = 42, Name = "Guest", Trusted = true }];
+            s.Settings.SeenSenders =
+                [new SeenSender { Id = 99, Name = "Curious", FirstSeen = DateTimeOffset.UtcNow }];
+        });
+
+        var response = await client.GetAsync("/api/settings");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        Assert.Equal(42, root.GetProperty("slideSeconds").GetInt32());
+        Assert.Equal("newest-first", root.GetProperty("order").GetString());
+        Assert.True(root.GetProperty("pairingMode").GetBoolean());
+        Assert.True(root.TryGetProperty("transitionMs", out _));
+        Assert.True(root.TryGetProperty("newestFirstBoost", out _));
+        Assert.True(root.TryGetProperty("recurringEvery", out _));
+        Assert.True(root.TryGetProperty("autoApproveTrusted", out _));
+        Assert.True(root.TryGetProperty("takeoverImageId", out _));
+        Assert.True(root.TryGetProperty("takeoverUntil", out _));
+
+        var whitelistEntry = Assert.Single(root.GetProperty("whitelist").EnumerateArray());
+        Assert.Equal(42, whitelistEntry.GetProperty("id").GetInt64());
+        Assert.Equal("Guest", whitelistEntry.GetProperty("name").GetString());
+        Assert.True(whitelistEntry.GetProperty("trusted").GetBoolean());
+
+        var seenEntry = Assert.Single(root.GetProperty("seenSenders").EnumerateArray());
+        Assert.Equal(99, seenEntry.GetProperty("id").GetInt64());
+        Assert.Equal("Curious", seenEntry.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task The_two_new_read_routes_require_a_session()
+    {
+        var client = _factory.CreateAnonymousClient();
+
+        var responses = new[]
+        {
+            await client.GetAsync("/api/images"),
+            await client.GetAsync("/api/settings"),
+        };
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
     }
 
     [Fact]
