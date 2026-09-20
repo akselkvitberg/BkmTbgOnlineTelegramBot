@@ -188,7 +188,10 @@ several depend on state left by the one before.
       moment — a photo sent in that window vanishes with no error to the
       sender or the admin. `deploy.ps1` is for before/after the event, or a
       scratch project; `gcloud run services update` is the mid-event tool.
-- [ ] **`terraform destroy` leaves nothing behind.** Run
+- [ ] **`terraform destroy` leaves nothing behind.** From a clean clone,
+      `infra/`'s own state has never been initialized in this checkout, so
+      run `terraform -chdir=infra init -backend-config="bucket=<state bucket
+      from One-time setup>"` first (see **One-time setup** above), then
       `terraform -chdir=infra destroy` (in a scratch project first if you
       want to check this without touching the real event's data). Pass: the
       bucket, all five secrets, and the Cloud Run service are all gone
@@ -234,6 +237,18 @@ Artifact Registry. See the GHA report
 (`.superpowers/sdd/2026-09-20-event-photo-bot/gha-report.md`) for why each
 role is there.
 
+Confirm the exact `OWNER/REPO` value before applying — the provider's
+attribute condition compares it byte for byte against the `repository`
+claim GitHub's OIDC token carries, which is the account's own canonical
+casing, not necessarily what a clone URL or a habit of typing the name
+happens to show. A mismatch doesn't fail loudly at apply time; it fails
+closed later, at the workflow's authentication step, with an opaque STS
+error that doesn't mention casing at all. Check it first:
+
+```bash
+gh api repos/OWNER/REPO --jq .full_name
+```
+
 ```bash
 cd infra/wif
 terraform init
@@ -272,8 +287,14 @@ path. Under **Settings → Secrets and variables → Actions → Variables**, se
 
 None of these are secret — they're project ids, resource names and a bucket
 name. No bot token, admin password or signing key is ever configured as a
-GitHub secret or variable; those stay in Secret Manager and are added the
-same way regardless of which deploy path is used:
+GitHub secret or variable.
+
+That secret material stays in Secret Manager, added by hand the same way
+regardless of which deploy path is used — but not yet: the four steps above
+create the state bucket and the WIF trust, not the app's own secret
+*resources*. Those come from either path's own bootstrap step (`deploy.ps1`'s
+targeted apply, or the `deploy` workflow's "Terraform bootstrap apply"
+step) — run one of those first, then add versions:
 
 ```bash
 printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID
@@ -320,10 +341,13 @@ be started by hand from the Actions tab. They authenticate to GCP with
 Workload Identity Federation — no service account key is stored in GitHub.
 
 Both paths stay interchangeable: `deploy.ps1` and the `deploy` workflow run
-the same sequence (build, push, capture the digest, `terraform apply` pinned
-to it, register the webhook the same way), and both read and write the same
-Terraform state — see **One-time setup** above, all four steps of which this
-path needs (including the GitHub repository variables).
+the same sequence — a targeted bootstrap apply for the Artifact Registry
+repository and the secret resources (needed on a fresh project before
+there's anywhere to push an image or add a secret version to), build, push,
+capture the digest, `terraform apply` pinned to it, register the webhook the
+same way — and both read and write the same Terraform state. See
+**One-time setup** above, all four steps of which this path needs (including
+the GitHub repository variables).
 
 ### Running the workflows
 
@@ -362,11 +386,26 @@ It does **not** touch:
   are meant to outlive any one event, not be recreated per event.
 
 If the project itself is also being retired (not just this one event), both
-have to be torn down explicitly and separately:
+have to be torn down explicitly and separately, from the repository root
+(`terraform -chdir=`, not `cd`, so the second command isn't run from inside
+the first one's directory looking for a path that doesn't exist there):
 
 ```bash
-cd infra/wif     && terraform destroy -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
-cd infra/backend && terraform destroy -var "project_id=PROJECT_ID"
+# The state bucket has versioning ON, deliberately (see infra/backend/main.tf)
+# — a corrupted or bad-apply state write should be recoverable — and no
+# force_destroy. That means `terraform destroy` on its own cannot remove it:
+# GCS refuses to delete a non-empty bucket, and this one always holds at
+# least eventphoto/state/default.tfstate (infra/main.tf's backend prefix)
+# plus every noncurrent version of it, not just whatever the "current" file
+# is. Empty it first. --recursive against the
+# object wildcard implies --all-versions (gcloud's own doc for this exact
+# case), so this clears the version history too, and it doesn't touch the
+# bucket resource itself — that stays for `terraform destroy` to remove next.
+bucket_name=$(terraform -chdir=infra/backend output -raw bucket_name)
+gcloud storage rm --recursive --all-versions "gs://$bucket_name/**" --project PROJECT_ID
+
+terraform -chdir=infra/wif     destroy -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
+terraform -chdir=infra/backend destroy -var "project_id=PROJECT_ID"
 ```
 
 Confirm the state bucket is actually gone afterwards

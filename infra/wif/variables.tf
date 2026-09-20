@@ -6,7 +6,7 @@ variable "project_id" {
 variable "repository" {
   type        = string
   default     = "akselkvitberg/BkmTbgOnlineTelegramBot"
-  description = "GitHub 'owner/repo' allowed to mint tokens against this provider. Locking the provider's attribute_condition to this exact value is what makes the federation keyless-safe — double check it before applying if this config is ever reused for a fork or a rename."
+  description = "GitHub 'owner/repo' allowed to mint tokens against this provider. Locking the provider's attribute_condition to this exact value is what makes the federation keyless-safe — double check it before applying if this config is ever reused for a fork or a rename. The comparison is case-sensitive and GitHub's OIDC token carries the account's own canonical casing (not necessarily what a clone URL happens to show), so a casing mismatch here fails closed with an opaque STS/auth error at the workflow's authentication step rather than a clear one at apply time. Confirm the exact value before applying, e.g. `gh api repos/OWNER/REPO --jq .full_name` — see docs/RUNBOOK.md's one-time setup section."
 }
 
 variable "name" {

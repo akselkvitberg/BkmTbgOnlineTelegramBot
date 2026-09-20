@@ -78,6 +78,19 @@ jobs:
       - name: Terraform plan
         working-directory: infra
         run: |
+          # GitHub's default shell for run: steps is `bash -e {0}` — -e, but
+          # NOT pipefail. Without pipefail, `terraform plan | tee plan.txt`
+          # takes its exit status from `tee`, which succeeds even when
+          # terraform fails, so a bad variable, a backend permission error or
+          # a provider error would print to stderr, the step would go green,
+          # and the job summary below would publish an empty fenced block
+          # that reads exactly like a clean no-op plan — for the one workflow
+          # whose entire purpose is to be trusted before an apply. set -euo
+          # pipefail (matching every step in deploy.yml that pipes output)
+          # makes the pipeline's exit status the failing command's, so `-e`
+          # actually stops the job. 2>&1 folds stderr into the same capture
+          # so the failure reason lands in the summary, not just the log.
+          set -euo pipefail
           # region/name fall back to the same defaults as variables.tf
           # (europe-north1 / eventphoto) when the repository variable is
           # unset, via plain bash parameter expansion — not TF_VAR_*, which
@@ -92,7 +105,7 @@ jobs:
             -var "name=$name" \
             -var "event_name=$EVENT_NAME" \
             -var "image_digest=$IMAGE_DIGEST" \
-            -out=tfplan | tee plan.txt
+            -out=tfplan 2>&1 | tee plan.txt
 
       - name: Publish plan to the job summary
         working-directory: infra

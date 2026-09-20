@@ -83,6 +83,36 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "registry=$region-docker.pkg.dev/$GCP_PROJECT_ID/$name" >> "$GITHUB_OUTPUT"
 
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+
+      # On a fresh project the Artifact Registry repository this workflow is
+      # about to `docker push` into does not exist yet, and neither do the
+      # secret resources docs/RUNBOOK.md tells the operator to add versions
+      # to — both are created here, not by the full apply below, which is
+      # pinned to a real image digest that can't exist before a push has
+      # somewhere to land. This mirrors infra/deploy.ps1's own targeted
+      # bootstrap apply line for line (-target, placeholder digest, same
+      # vars), which is what keeps the two paths genuinely interchangeable
+      # rather than the workflow silently assuming the bucket-and-WIF
+      # one-time setup also created these — it doesn't; only a bootstrap
+      # apply does.
+      - name: Terraform bootstrap apply (registry + secrets)
+        working-directory: infra
+        env:
+          REGION: ${{ steps.cfg.outputs.region }}
+          NAME: ${{ steps.cfg.outputs.name }}
+        run: |
+          terraform apply -input=false -auto-approve \
+            -target=google_artifact_registry_repository.images \
+            -target=google_secret_manager_secret.secrets \
+            -var "project_id=$GCP_PROJECT_ID" \
+            -var "region=$REGION" \
+            -var "name=$NAME" \
+            -var "event_name=$EVENT_NAME" \
+            -var "image_digest=placeholder"
+
       - name: Build and push image
         env:
           REGION: ${{ steps.cfg.outputs.region }}
@@ -107,10 +137,6 @@ jobs:
             exit 1
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Terraform init
-        working-directory: infra
-        run: terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
 
       - name: Terraform apply
         working-directory: infra
@@ -145,9 +171,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          bot_token=$(gcloud secrets versions access latest --secret "$NAME-bot-token" --project "$GCP_PROJECT_ID")
-          webhook_path=$(gcloud secrets versions access latest --secret "$NAME-webhook-path" --project "$GCP_PROJECT_ID")
-          webhook_secret=$(gcloud secrets versions access latest --secret "$NAME-webhook-secret" --project "$GCP_PROJECT_ID")
+          # Each fetch is guarded individually rather than with a trailing
+          # `[ -z ... ]` check after all three: under `set -e`, a `gcloud`
+          # call that fails outright (no version at all — the common case
+          # for a secret nobody has added yet) aborts the script at the
+          # assignment itself, so a check placed after all three assignments
+          # never runs for that case; it would only ever fire for the much
+          # rarer "version exists but is empty" case. `cmd || { ...; }` is a
+          # checked context (`-e` does not trigger on the left side of `||`,
+          # same as the `&&` idiom the preflight steps use above), so each
+          # failure is caught right where it happens, with a message naming
+          # which secret is missing rather than gcloud's own bare NOT_FOUND.
+          bot_token=$(gcloud secrets versions access latest --secret "$NAME-bot-token" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-bot-token'. Add one with 'gcloud secrets versions add $NAME-bot-token --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          webhook_path=$(gcloud secrets versions access latest --secret "$NAME-webhook-path" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-webhook-path'. Add one with 'gcloud secrets versions add $NAME-webhook-path --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          webhook_secret=$(gcloud secrets versions access latest --secret "$NAME-webhook-secret" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-webhook-secret'. Add one with 'gcloud secrets versions add $NAME-webhook-secret --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
 
           # Mask immediately, in the same breath they're captured. These are
           # never registered as GitHub *secrets* (the constraint on this repo
@@ -159,11 +199,6 @@ jobs:
           echo "::add-mask::$webhook_path"
           echo "::add-mask::$webhook_secret"
 
-          if [ -z "$bot_token" ] || [ -z "$webhook_path" ] || [ -z "$webhook_secret" ]; then
-            echo "One or more secrets have no version yet. Add them with 'gcloud secrets versions add' (see docs/RUNBOOK.md) and rerun." >&2
-            exit 1
-          fi
-
           # drop_pending_updates=true is safe here ONLY because this call
           # fires when the webhook URL, path or secret is being (re)registered
           # from a clean state — see infra/deploy.ps1's comment on this exact
@@ -173,12 +208,24 @@ jobs:
           # in that window vanishes with no error to either the sender or the
           # admin. A mid-event redeploy goes through `gcloud run services
           # update` instead, which never touches webhook registration.
-          http_status=$(curl -sS -o response.json -w '%{http_code}' \
-            -X POST "https://api.telegram.org/bot${bot_token}/setWebhook" \
-            --data-urlencode "url=${SERVICE_URL}/tg/${webhook_path}" \
-            --data-urlencode "secret_token=${webhook_secret}" \
-            --data-urlencode "max_connections=4" \
-            --data-urlencode "drop_pending_updates=true")
+          #
+          # The whole request goes through `-K -` (a config file on stdin)
+          # rather than flags on the command line: curl's argv is world-
+          # readable on Linux via /proc/<pid>/cmdline for the life of the
+          # process, so a bot token or secret passed as `-X POST
+          # ".../bot$bot_token/..."` would sit there in plain sight for any
+          # other process on the runner, however briefly. Reading the same
+          # values from stdin instead means they never appear as a process
+          # argument at all.
+          http_status=$(curl -sS -o response.json -w '%{http_code}' -K - <<CURLCFG
+          request = "POST"
+          url = "https://api.telegram.org/bot${bot_token}/setWebhook"
+          data-urlencode = "url=${SERVICE_URL}/tg/${webhook_path}"
+          data-urlencode = "secret_token=${webhook_secret}"
+          data-urlencode = "max_connections=4"
+          data-urlencode = "drop_pending_updates=true"
+          CURLCFG
+          )
 
           ok=$(jq -r '.ok // false' response.json)
           if [ "$http_status" != "200" ] || [ "$ok" != "true" ]; then
