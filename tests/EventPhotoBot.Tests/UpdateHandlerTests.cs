@@ -3,6 +3,9 @@ using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
 using EventPhotoBot.Tests.Fakes;
 using Microsoft.Extensions.Logging.Abstractions;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace EventPhotoBot.Tests;
 
@@ -13,6 +16,22 @@ public class UpdateHandlerTests
 
     private static byte[] SamplePhoto() =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestAssets", "landscape.jpg"));
+
+    /// <summary>
+    /// A small, valid, decodable JPEG whose pixel content — and so whose sha256 after
+    /// ImagePipeline.Process — differs by seed. Used where a test needs several genuinely
+    /// distinct images rather than one fixture reused several times, since the content-hash
+    /// duplicate guard now applies uniformly, including to album items.
+    /// </summary>
+    private static byte[] DistinctPhoto(int seed)
+    {
+        var color = new Rgb24(
+            (byte)(seed * 37 % 256), (byte)(seed * 91 % 256), (byte)(seed * 173 % 256));
+        using var image = new Image<Rgb24>(64, 48, color);
+        using var stream = new MemoryStream();
+        image.Save(stream, new JpegEncoder());
+        return stream.ToArray();
+    }
 
     private sealed class Harness
     {
@@ -200,11 +219,13 @@ public class UpdateHandlerTests
     {
         var harness = await Harness.CreateAsync(s =>
             s.Whitelist.Add(new WhitelistEntry { Id = Guest, Name = "Guest" }));
-        StockFile(harness, "large");
 
+        // Five genuinely distinct images, the way a real five-photo album is: the
+        // content-hash duplicate guard applies here too, so five copies of the same
+        // fixture would (correctly) collapse into one stored image.
         for (var i = 0; i < 5; i++)
         {
-            harness.Telegram.Files[$"path/large{i}"] = SamplePhoto();
+            harness.Telegram.Files[$"path/large{i}"] = DistinctPhoto(i);
             var update = PhotoFrom(Guest, fileUniqueId: $"album{i}", mediaGroupId: "group-1");
             update.Message!.Photo![1].FileId = $"large{i}";
             await harness.Handler.HandleAsync(update);

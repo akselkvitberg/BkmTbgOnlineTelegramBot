@@ -11,6 +11,16 @@ public sealed class UpdateHandler(
 {
     private const long MaxDownloadBytes = 20L * 1024 * 1024;
 
+    // UpdateHandler is registered as a singleton and ASP.NET Core dispatches
+    // concurrent requests across thread-pool threads, so two album members (or two
+    // unrelated senders) can genuinely run this class's methods at the same time.
+    // Both fields below are mutated from request-handling code, so every access to
+    // either is behind its own lock — a HashSet/Dictionary is not thread-safe on its
+    // own, and neither field is written to disk, so a lock here costs nothing beyond
+    // the in-process contention.
+    private readonly object _groupLock = new();
+    private readonly object _replyThrottleLock = new();
+
     /// <summary>
     /// Album sends arrive as separate updates sharing a media_group_id. Each is its
     /// own image; the group exists only so a five-photo album gets one reply.
@@ -94,16 +104,23 @@ public sealed class UpdateHandler(
                 "try again once they have.", ct);
     }
 
-    /// <summary>True at most once per cooldown window per sender; also records the attempt.</summary>
+    /// <summary>
+    /// True at most once per cooldown window per sender; also records the attempt.
+    /// The check-and-record is one atomic step under the lock, so two concurrent
+    /// probes from the same sender cannot both read "no recent reply" and both win.
+    /// </summary>
     private bool ShouldReplyToUnlisted(long senderId)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (_lastUnlistedReplyAt.TryGetValue(senderId, out var last)
-            && now - last < UnlistedReplyCooldown)
-            return false;
+        lock (_replyThrottleLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (_lastUnlistedReplyAt.TryGetValue(senderId, out var last)
+                && now - last < UnlistedReplyCooldown)
+                return false;
 
-        _lastUnlistedReplyAt[senderId] = now;
-        return true;
+            _lastUnlistedReplyAt[senderId] = now;
+            return true;
+        }
     }
 
     private sealed record Candidate(
@@ -148,9 +165,12 @@ public sealed class UpdateHandler(
         TgMessage message, TgUser sender, TgChat chat,
         WhitelistEntry entry, Candidate candidate, CancellationToken ct)
     {
-        var snapshot = store.Snapshot;
-
-        if (snapshot.Images.Values.Any(i => i.FileUniqueId == candidate.FileUniqueId))
+        // Fast-path pre-check: saves a download for the obvious case of a resend.
+        // Not authoritative by itself — it reads a Snapshot taken before the download
+        // and decode below, both unbounded in duration, so it cannot by itself stop
+        // two overlapping deliveries of the same content. The re-check inside
+        // MutateAsync further down, under the store's lock, is what actually does.
+        if (store.Snapshot.Images.Values.Any(i => i.FileUniqueId == candidate.FileUniqueId))
         {
             await AcknowledgeAsync(message, chat, "I already have that one.", ct);
             return;
@@ -185,58 +205,91 @@ public sealed class UpdateHandler(
             return;
         }
 
-        // Content-hash dedup targets an accidental standalone resend of the same photo.
-        // It is skipped for album items: a media_group_id batch is a set of distinct
-        // shots chosen together in the gallery, and content-hash collisions inside one
-        // batch are a test-fixture artifact (same sample file), not a real duplicate —
-        // the fileUniqueId guard above already covers the true per-file duplicate case.
-        if (message.MediaGroupId is null
-            && snapshot.Images.Values.Any(i => i.Sha256 == processed.Sha256))
+        // Same fast-path caveat as above: saves the object writes below for the
+        // common case, but is still followed by the authoritative re-check.
+        if (store.Snapshot.Images.Values.Any(i => i.Sha256 == processed.Sha256))
         {
             await AcknowledgeAsync(message, chat, "I already have that one.", ct);
             return;
         }
 
         var id = Ulid.NewUlid().ToString();
-        var approved = entry.Trusted && snapshot.Settings.AutoApproveTrusted;
-        var now = DateTimeOffset.UtcNow;
 
-        // Objects first, state last: a failure here leaves orphaned bytes,
-        // never a manifest entry pointing at nothing.
+        // Objects first, state last: a failure here leaves orphaned bytes, never a
+        // manifest entry pointing at nothing. Two overlapping deliveries of the same
+        // content can both reach this point (the download and decode above take
+        // unbounded time, and — from Task 11 on — the admin upload path is a second
+        // writer into the same state); each writes its own set of objects here, and
+        // the MutateAsync below re-checks both guards under StateStore's semaphore,
+        // so only one of them ends up with a manifest entry. The loser's objects are
+        // simply orphaned bytes, which the "objects first" rule already accepts.
         await objects.WriteAsync(ObjectPaths.Original(id, candidate.Extension),
             original, "application/octet-stream", null, ct);
         await objects.WriteAsync(ObjectPaths.Display(id), processed.Display, "image/jpeg", null, ct);
         await objects.WriteAsync(ObjectPaths.Thumb(id), processed.Thumb, "image/jpeg", null, ct);
 
-        await store.MutateAsync(state => state.Images[id] = new ImageRecord
+        var approved = false;
+        var stored = await store.MutateAsync(state =>
         {
-            Id = id,
-            Source = ImageSource.Telegram,
-            SenderId = sender.Id,
-            SenderName = sender.DisplayName,
-            FileUniqueId = candidate.FileUniqueId,
-            Sha256 = processed.Sha256,
-            Caption = string.IsNullOrWhiteSpace(message.Caption) ? null : message.Caption,
-            Status = approved ? ImageStatus.Approved : ImageStatus.Pending,
-            Pin = PinKind.None,
-            Width = processed.Width,
-            Height = processed.Height,
-            ReceivedAt = now,
-            DecidedAt = approved ? now : null,
-            SortKey = id,
-            OriginalExtension = candidate.Extension,
-        });
+            // The authoritative check. This runs while MutateAsync holds its
+            // semaphore (and, on a precondition-failure retry, against a freshly
+            // reloaded state), so two overlapping calls cannot both see "no
+            // duplicate" and both add an entry — one of them always observes the
+            // other's write first.
+            var isDuplicate = state.Images.Values.Any(i =>
+                i.FileUniqueId == candidate.FileUniqueId || i.Sha256 == processed.Sha256);
+            if (isDuplicate) return false;
+
+            approved = entry.Trusted && state.Settings.AutoApproveTrusted;
+            var now = DateTimeOffset.UtcNow;
+            state.Images[id] = new ImageRecord
+            {
+                Id = id,
+                Source = ImageSource.Telegram,
+                SenderId = sender.Id,
+                SenderName = sender.DisplayName,
+                FileUniqueId = candidate.FileUniqueId,
+                Sha256 = processed.Sha256,
+                Caption = string.IsNullOrWhiteSpace(message.Caption) ? null : message.Caption,
+                Status = approved ? ImageStatus.Approved : ImageStatus.Pending,
+                Pin = PinKind.None,
+                Width = processed.Width,
+                Height = processed.Height,
+                ReceivedAt = now,
+                DecidedAt = approved ? now : null,
+                SortKey = id,
+                OriginalExtension = candidate.Extension,
+            };
+            return true;
+        }, ct);
+
+        if (!stored)
+        {
+            await AcknowledgeAsync(message, chat, "I already have that one.", ct);
+            return;
+        }
 
         await AcknowledgeAsync(message, chat,
             approved ? "Got it — it is on the screen now." : "Got it — an organiser will approve it shortly.",
             ct);
     }
 
-    /// <summary>One reply per send, or one per album rather than one per photo.</summary>
+    /// <summary>
+    /// One reply per send, or one per album rather than one per photo. The
+    /// check-and-add is one atomic step under the lock, so two album members
+    /// finishing concurrently cannot both observe "not yet acknowledged" and both send.
+    /// </summary>
     private async Task AcknowledgeAsync(
         TgMessage message, TgChat chat, string text, CancellationToken ct)
     {
-        if (message.MediaGroupId is { } group && !_acknowledgedGroups.Add(group)) return;
+        if (message.MediaGroupId is { } group)
+        {
+            lock (_groupLock)
+            {
+                if (!_acknowledgedGroups.Add(group)) return;
+            }
+        }
+
         await telegram.SendMessageAsync(chat.Id, text, ct);
     }
 }
