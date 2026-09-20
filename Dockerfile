@@ -13,8 +13,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build /app .
 
-# Cloud Run supplies PORT and expects the container to listen on it.
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080
+# Cloud Run supplies PORT; Program.cs reads it and binds accordingly, defaulting
+# to 8080 only when PORT is unset (local runs). This EXPOSE is documentation of
+# that default — Cloud Run's own routing does not consult it — and must not be
+# the thing that decides what the app binds.
 EXPOSE 8080
 
 # Run as a non-root user. The app writes nothing to the filesystem — all state

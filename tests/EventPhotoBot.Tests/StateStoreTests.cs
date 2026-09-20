@@ -142,6 +142,36 @@ public class StateStoreTests
     }
 
     [Fact]
+    public async Task Load_retries_a_transient_read_failure_and_then_succeeds()
+    {
+        var inner = new InMemoryObjectStore();
+        var seed = new StateStore(inner);
+        await seed.LoadAsync();
+        await seed.MutateAsync(s => s.Settings.SlideSeconds = 42);
+
+        // The bucket read fails twice — a permission-propagation lag, a passing
+        // GCS 5xx — before succeeding on the third attempt.
+        var flaky = new FailingNTimesObjectStore(inner, failCount: 2);
+        var store = new StateStore(flaky);
+
+        await store.LoadAsync();
+
+        Assert.Equal(42, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(2, flaky.FailedReads);
+    }
+
+    [Fact]
+    public async Task Load_gives_up_after_the_bucket_stays_unreachable()
+    {
+        // Every read fails, no matter how many times it retries, simulating a
+        // bucket that is genuinely broken rather than transiently slow.
+        var flaky = new FailingNTimesObjectStore(new InMemoryObjectStore(), failCount: int.MaxValue);
+        var store = new StateStore(flaky);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.LoadAsync());
+    }
+
+    [Fact]
     public async Task Mutate_leaves_state_unchanged_when_the_callback_throws()
     {
         var (store, _) = NewStore();
@@ -197,6 +227,40 @@ public class StateStoreTests
             path == StateStore.StatePath
                 ? throw new PreconditionFailedException(path)
                 : inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) =>
+            inner.OpenReadAsync(path, ct);
+
+        public Task DeleteAsync(string path, CancellationToken ct = default) =>
+            inner.DeleteAsync(path, ct);
+    }
+
+    /// <summary>Test double: the first <paramref name="failCount"/> calls to
+    /// ReadAsync throw, simulating a transiently (or persistently, if failCount is
+    /// large enough) unreachable bucket. Every other member passes straight
+    /// through, the same way AlwaysConflictingObjectStore above wraps writes.</summary>
+    private sealed class FailingNTimesObjectStore(IObjectStore inner, int failCount) : IObjectStore
+    {
+        private int _reads;
+
+        /// <summary>Test hook: how many ReadAsync calls actually failed.</summary>
+        public int FailedReads { get; private set; }
+
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default)
+        {
+            _reads++;
+            if (_reads <= failCount)
+            {
+                FailedReads++;
+                throw new InvalidOperationException($"Simulated transient read failure #{_reads}.");
+            }
+
+            return inner.ReadAsync(path, ct);
+        }
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType,
+            long? ifGenerationMatch, CancellationToken ct = default) =>
+            inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
 
         public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) =>
             inner.OpenReadAsync(path, ct);

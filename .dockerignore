@@ -4,3 +4,4 @@
 docs/
 infra/
 *.md
+.superpowers/

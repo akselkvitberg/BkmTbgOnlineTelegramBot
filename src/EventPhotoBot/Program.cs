@@ -11,6 +11,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables();
 
+// Cloud Run supplies PORT and expects the container to listen on it; the port
+// is not hardcoded here or in the image. Defaulting to 8080 when PORT is
+// unset keeps `dotnet run` and the test host working unchanged.
+var port = builder.Configuration["PORT"] ?? "8080";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
 var config = AppConfig.Load(builder.Configuration);
 builder.Services.AddSingleton(config);
 

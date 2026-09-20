@@ -13,6 +13,8 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
     public const string StatePath = "state/state.json";
     public const string PrevPath = "state/state-prev.json";
     private const int MaxAttempts = 4;
+    private const int LoadMaxAttempts = 3;
+    private static readonly TimeSpan LoadRetryDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private EventState _state = new();
@@ -27,7 +29,7 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        var stored = await objects.ReadAsync(StatePath, ct);
+        var stored = await ReadStateWithRetryAsync(ct);
         if (stored is null)
         {
             _state = new EventState();
@@ -43,6 +45,33 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
         _generation = stored.Generation;
         logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
             _generation, _state.Images.Count);
+    }
+
+    /// <summary>
+    /// Startup calls this before anything else is mapped, including /healthz, so a
+    /// transient failure reaching the bucket — permission propagation lag on a fresh
+    /// deploy, a passing GCS 5xx, a cold IAM token fetch — must not crash the revision
+    /// before Kestrel ever binds. A small bounded retry absorbs that; a persistently
+    /// broken bucket still fails fast once attempts are exhausted, unchanged from
+    /// before. Cancellation is never retried — it means the caller stopped waiting,
+    /// not that the bucket is unreachable.
+    /// </summary>
+    private async Task<StoredObject?> ReadStateWithRetryAsync(CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await objects.ReadAsync(StatePath, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException && attempt < LoadMaxAttempts)
+            {
+                logger?.LogWarning(e,
+                    "Failed to load state (attempt {Attempt}/{MaxAttempts}); retrying.",
+                    attempt, LoadMaxAttempts);
+                await Task.Delay(LoadRetryDelay, ct);
+            }
+        }
     }
 
     public async Task MutateAsync(Action<EventState> mutate, CancellationToken ct = default) =>
