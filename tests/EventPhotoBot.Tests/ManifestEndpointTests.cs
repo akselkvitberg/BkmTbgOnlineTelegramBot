@@ -100,4 +100,31 @@ public class ManifestEndpointTests : IClassFixture<AppFactory>
         Assert.True(cacheControl.Private);
         Assert.True(cacheControl.MaxAge > TimeSpan.FromDays(1));
     }
+
+    [Fact]
+    public async Task An_unauthenticated_image_401_carries_no_immutable_cache_header()
+    {
+        // A 401 must never be cacheable: a viewer who hits an image before logging
+        // in must not be stuck with a year-long cached rejection after logging in.
+        await _factory.Objects.WriteAsync(
+            ObjectPaths.Display("img3"), [7], "image/jpeg", null);
+
+        var response = await _factory.CreateAnonymousClient().GetAsync("/img/img3/display");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Null(response.Headers.CacheControl?.MaxAge);
+        Assert.False(response.Headers.CacheControl?.Private ?? false);
+    }
+
+    [Fact]
+    public async Task A_missing_image_404_carries_no_immutable_cache_header()
+    {
+        // Same story for a 404: the id might exist a moment later, so a
+        // year-long immutable cache on "not found" would hide it forever.
+        var response = await _factory.CreateAuthenticatedClient().GetAsync("/img/nope-again/display");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Null(response.Headers.CacheControl?.MaxAge);
+        Assert.False(response.Headers.CacheControl?.Private ?? false);
+    }
 }

@@ -44,14 +44,6 @@ app.UseForwardedHeaders();
 
 app.UseRateLimiter();
 
-// Long, private cache lifetimes on image bytes: a given id's bytes never change.
-app.Use(async (http, next) =>
-{
-    if (http.Request.Path.StartsWithSegments("/img"))
-        http.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
-    await next();
-});
-
 app.MapGet("/healthz", () => Results.Text("ok"));
 
 app.MapAuth(config);
