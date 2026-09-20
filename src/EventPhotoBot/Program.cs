@@ -1,5 +1,6 @@
 using EventPhotoBot;
 using EventPhotoBot.State;
+using EventPhotoBot.Telegram;
 using EventPhotoBot.Web;
 using Google.Cloud.Storage.V1;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -17,6 +18,8 @@ builder.Services.AddSingleton<IObjectStore>(sp => new GcsObjectStore(
     sp.GetRequiredService<ILogger<GcsObjectStore>>()));
 
 builder.Services.AddSingleton<StateStore>();
+builder.Services.AddHttpClient<ITelegramClient, TelegramClient>();
+builder.Services.AddSingleton<UpdateHandler>();
 builder.Services.AddLoginRateLimiter();
 
 // Cloud Run terminates TLS and proxies every request, so Connection.RemoteIpAddress
@@ -45,6 +48,26 @@ app.UseForwardedHeaders();
 app.UseRateLimiter();
 
 app.MapGet("/healthz", () => Results.Text("ok"));
+
+app.MapPost($"/tg/{config.WebhookPath}",
+    async (HttpContext http, TgUpdate update, UpdateHandler handler, CancellationToken ct) =>
+    {
+        if (http.Request.Headers["X-Telegram-Bot-Api-Secret-Token"] != config.WebhookSecret)
+            return Results.Unauthorized();
+
+        try
+        {
+            await handler.HandleAsync(update, ct);
+        }
+        catch (Exception e)
+        {
+            app.Logger.LogError(e, "Unhandled error processing update {UpdateId}.", update.UpdateId);
+        }
+
+        // Always 200 once the update is parsed. Telegram's retry would resend the
+        // whole update and risk duplicates; the sender already got an apology.
+        return Results.Ok();
+    });
 
 app.MapAuth(config);
 app.UseSessionGate(config);

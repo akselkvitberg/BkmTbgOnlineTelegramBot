@@ -18,6 +18,7 @@
       See .superpowers/sdd/2026-09-20-event-photo-bot/task-8-report.md for the full story.
     -->
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="Ulid" Version="1.4.1" />
   </ItemGroup>
 
 </Project>
