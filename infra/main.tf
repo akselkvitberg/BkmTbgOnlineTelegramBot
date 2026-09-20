@@ -6,6 +6,23 @@ terraform {
       version = "~> 6.0"
     }
   }
+
+  # Remote state for CI (GitHub Actions has no workstation to keep local state
+  # on between runs) — see infra/backend/ for the bucket this points at and
+  # the chicken-and-egg ordering that creates it first.
+  #
+  # A backend block is evaluated before any variable, so the bucket name
+  # can't be var.project_id or anything else computed — Terraform requires it
+  # to be a literal. The standard workaround is a *partial* backend
+  # configuration: leave the bucket out here and supply it at init time:
+  #   terraform init -backend-config="bucket=<infra/backend output bucket_name>"
+  # The CI workflows (.github/workflows/) do this. A workstation running
+  # infra/deploy.ps1 does not pass -backend-config, so `terraform init` there
+  # now needs the same flag before it will succeed against this backend —
+  # see docs/RUNBOOK.md and the GHA report's concerns section.
+  backend "gcs" {
+    prefix = "eventphoto/state"
+  }
 }
 
 provider "google" {

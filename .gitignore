@@ -262,11 +262,13 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
-# Terraform (local state; this infrastructure exists to be destroyed)
-infra/.terraform/
-infra/*.tfstate
-infra/*.tfstate.*
-infra/terraform.tfvars
+# Terraform (local state; this infrastructure exists to be destroyed).
+# infra/backend and infra/wif are bootstrap configs applied by hand with
+# their own local state — same reasoning, same exclusions.
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/terraform.tfvars
 
 # Superpowers SDD scratch workspace
 .superpowers/

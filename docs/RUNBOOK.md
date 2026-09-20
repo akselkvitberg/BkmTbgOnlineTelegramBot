@@ -217,6 +217,137 @@ If any step fails, the script stops there and reports which command failed.
 Fix whatever it reports (usually a missing secret version or a `gcloud`
 auth issue) and rerun the whole command — every step is safe to repeat.
 
+## Deploying from GitHub Actions
+
+An alternative to running `deploy.ps1` from a workstation: three manual
+(`workflow_dispatch`-only) workflows in `.github/workflows/` — `plan`,
+`deploy` and `destroy`. Nothing here runs on a push; every one of them has to
+be started by hand from the Actions tab. They authenticate to GCP with
+Workload Identity Federation — no service account key is stored in GitHub.
+
+Both paths stay interchangeable: `deploy.ps1` and the `deploy` workflow run
+the same sequence (build, push, capture the digest, `terraform apply` pinned
+to it, register the webhook the same way), and both read and write the same
+Terraform state once the one-time setup below is done.
+
+### One-time setup
+
+Do this once per GCP project, not per event. Both bootstrap configs use
+their own **local** state (never migrated anywhere) and are applied by hand
+from a workstation with `gcloud` already authenticated against the project —
+neither is ever run from CI.
+
+**1. State bucket (`infra/backend/`)** — creates the GCS bucket that
+`infra/main.tf` uses as its remote backend once this is done.
+
+```bash
+cd infra/backend
+terraform init
+terraform apply -var "project_id=PROJECT_ID"
+terraform output -raw bucket_name    # -> save as the TF_STATE_BUCKET value below
+```
+
+**2. Workload Identity Federation (`infra/wif/`)** — creates the pool,
+provider (locked to this one GitHub repository) and the service account the
+workflows act as, and grants that service account the roles it needs to run
+Terraform against `infra/` and to push images to Artifact Registry. See the
+GHA report (`.superpowers/sdd/2026-09-20-event-photo-bot/gha-report.md`) for
+why each role is there.
+
+```bash
+cd infra/wif
+terraform init
+terraform apply -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
+terraform output -raw workload_identity_provider    # -> GCP_WORKLOAD_IDENTITY_PROVIDER
+terraform output -raw deploy_service_account_email  # -> GCP_DEPLOY_SERVICE_ACCOUNT
+```
+
+**3. First `terraform init` against the new backend** — after step 1, the
+next `terraform init` in `infra/` (whether from `deploy.ps1` or a workflow)
+needs to point at the new bucket explicitly:
+
+```bash
+cd infra
+terraform init -backend-config="bucket=<bucket_name from step 1>"
+```
+
+Terraform will offer to migrate the existing local state into the bucket —
+accept that once, from a workstation, so the state used up to now is not
+orphaned.
+
+**4. GitHub repository variables** — under **Settings → Secrets and
+variables → Actions → Variables**, set:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | The project id (same one used above) |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of step 2 |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | Output of step 2 |
+| `TF_STATE_BUCKET` | Output of step 1 |
+| `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
+| `APP_NAME` | Optional — defaults to `eventphoto` if unset |
+
+None of these are secret — they're project ids, resource names and a bucket
+name. No bot token, admin password or signing key is ever configured as a
+GitHub secret or variable; those stay in Secret Manager and are added the
+same way regardless of which deploy path is used:
+
+```bash
+printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID
+```
+
+### Running the workflows
+
+All three live under the **Actions** tab, run via **Run workflow**.
+
+- **plan** — takes `event_name` and an optional `image_digest` (leave it as
+  the default `placeholder` before the first image has ever been built —
+  the same bootstrap convention `deploy.ps1` uses). Writes the plan to the
+  run's job summary, so reviewing it doesn't mean digging through logs.
+- **deploy** — takes `event_name`. Builds and pushes the image, applies
+  pinned to the resulting digest, and registers the webhook. **Do not run
+  this mid-event** — same warning as `deploy.ps1 -SkipBuild`: registering the
+  webhook drops whatever Telegram is holding for the moment the webhook is
+  unreachable. Mid-event, use `gcloud run services update` by hand instead.
+- **destroy** — takes `confirm_project_id`. It must match this repository's
+  `GCP_PROJECT_ID` variable exactly, or the job fails before touching GCP.
+  Runs `terraform destroy` in `infra/` — see **Teardown** below for what
+  this does *not* remove.
+
+A concurrency group shared by all three (`eventphoto-terraform`) means only
+one of plan/deploy/destroy runs at a time, so two runs can't write to the
+same remote state simultaneously.
+
+### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
+
+`terraform destroy` in `infra/` removes the Cloud Run service, the images
+bucket, the five secrets, the runtime service account and the Artifact
+Registry repository — the same set `deploy.ps1`'s counterpart apply created.
+It does **not** touch:
+
+- **The Terraform state bucket** (`infra/backend/`) — destroying it would
+  delete the record of what to destroy, so it's deliberately outside this
+  module's own blast radius.
+- **The Workload Identity Federation pool, provider and deploy service
+  account** (`infra/wif/`) — these authenticate GitHub Actions to GCP and
+  are meant to outlive any one event, not be recreated per event.
+
+If the project itself is also being retired (not just this one event), both
+have to be torn down explicitly and separately:
+
+```bash
+cd infra/wif     && terraform destroy -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
+cd infra/backend && terraform destroy -var "project_id=PROJECT_ID"
+```
+
+Confirm the state bucket is actually gone afterwards
+(`gcloud storage buckets list --project PROJECT_ID`) — the spec's teardown
+criterion is "confirm the bucket is gone, not just emptied", and that applies
+just as much to this bucket as to the images one.
+
+If the project is staying in use for a future event, leave both alone —
+that's the point of bootstrapping them once.
+
 ## Build notes
 
 `SixLabors.ImageSharp` is pinned to **3.1.12** deliberately — this is not

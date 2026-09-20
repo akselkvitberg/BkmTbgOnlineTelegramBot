@@ -1,0 +1,112 @@
+name: Destroy
+
+# Manual only, and gated behind typing the project id back — this tears down
+# the live Cloud Run service and deletes the bucket (and everything in it)
+# with no undo. Does NOT remove the Terraform state bucket (infra/backend/)
+# or the Workload Identity Federation pool/deploy service account
+# (infra/wif/) — those are bootstrapped separately and outlive any one
+# event; see docs/RUNBOOK.md's teardown section.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_id:
+        description: "Type the exact GCP project id to confirm. This destroys the live service, its bucket and every image in it."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # required to exchange this run's OIDC token for GCP credentials
+
+concurrency:
+  group: eventphoto-terraform
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    # Every value this job reads from vars/inputs is passed through env here
+    # and referenced as "$NAME" in the run: scripts below, rather than
+    # spliced in with ${{ }} — that keeps an operator's own input from ever
+    # being interpreted as shell syntax instead of a plain string.
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      CONFIRM_PROJECT_ID: ${{ inputs.confirm_project_id }}
+    steps:
+      - name: Check required repository variables
+        run: |
+          missing=()
+          [ -z "$GCP_PROJECT_ID" ] && missing+=("repository variable GCP_PROJECT_ID")
+          [ -z "$GCP_WORKLOAD_IDENTITY_PROVIDER" ] && missing+=("repository variable GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -z "$GCP_DEPLOY_SERVICE_ACCOUNT" ] && missing+=("repository variable GCP_DEPLOY_SERVICE_ACCOUNT")
+          [ -z "$TF_STATE_BUCKET" ] && missing+=("repository variable TF_STATE_BUCKET")
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf 'Missing: %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      # The real guard. Everything else in this job assumes it already
+      # passed — this step runs before checkout or authentication so a
+      # mismatched confirmation never gets anywhere near GCP credentials.
+      - name: Require the typed project id to match
+        run: |
+          if [ -z "$CONFIRM_PROJECT_ID" ] || [ "$CONFIRM_PROJECT_ID" != "$GCP_PROJECT_ID" ]; then
+            echo "Typed project id ('$CONFIRM_PROJECT_ID') does not match this repository's configured GCP_PROJECT_ID ('$GCP_PROJECT_ID')." >&2
+            echo "Refusing to run terraform destroy." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Authenticate to GCP (Workload Identity Federation, keyless)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+
+      - name: Terraform destroy
+        working-directory: infra
+        run: |
+          region="${GCP_REGION:-europe-north1}"
+          name="${APP_NAME:-eventphoto}"
+          # event_name and image_digest don't affect WHICH resources destroy
+          # removes — a destroy tears down everything already in state
+          # regardless of these values, it never creates or updates
+          # anything — but the config still requires a value for every
+          # variable with no default to build its plan graph at all. These
+          # two are placeholders that satisfy that requirement, nothing more.
+          terraform destroy -input=false -auto-approve \
+            -var "project_id=$GCP_PROJECT_ID" \
+            -var "region=$region" \
+            -var "name=$name" \
+            -var "event_name=teardown" \
+            -var "image_digest=placeholder"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Destroyed"
+            echo
+            echo "Project \`$GCP_PROJECT_ID\`: Cloud Run service, bucket, secrets, runtime service account and Artifact Registry repository removed."
+            echo
+            echo "**Not removed by this workflow** — confirm these separately, see docs/RUNBOOK.md:"
+            echo "- The Terraform state bucket (\`infra/backend/\`)"
+            echo "- The Workload Identity Federation pool/provider and deploy service account (\`infra/wif/\`)"
+            echo "- Cloud Logging buckets — not a Terraform resource at all"
+          } >> "$GITHUB_STEP_SUMMARY"
