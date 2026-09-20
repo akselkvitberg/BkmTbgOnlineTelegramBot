@@ -196,10 +196,96 @@ several depend on state left by the one before.
       list`, and `gcloud run services list`, all scoped `--project
       PROJECT_ID`.
 
-## Deploying
+## One-time setup (before the first deploy, either path)
+
+`infra/deploy.ps1` and the GitHub Actions workflows apply the same `infra/`
+module to the same project, so they have to read and write the same
+Terraform state — otherwise each path can believe it owns resources the
+other created, an apply from one side tries to recreate what the other
+already made, and `terraform destroy` from either one stops being able to
+see what the other left behind. For a system whose whole teardown story
+rests on "destroy leaves nothing behind", two divergent states is exactly
+the failure mode to design out. This is why `infra/main.tf` points at a
+shared GCS backend instead of each path keeping its own local state, and it
+holds **regardless of which path you use to deploy** — a local apply
+sharing state with CI is deliberate, not a quirk of the GitHub Actions setup.
+
+Do the following once per GCP project, not per event.
+
+**1. State bucket (`infra/backend/`)** — required before the *first* deploy
+from either path, including the very first `deploy.ps1` run. Creates the GCS
+bucket `infra/main.tf`'s backend block points at. Uses its own local state
+(never migrated anywhere) and is applied by hand from a workstation with
+`gcloud` already authenticated against the project.
 
 ```bash
-pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party"
+cd infra/backend
+terraform init
+terraform apply -var "project_id=PROJECT_ID"
+terraform output -raw bucket_name    # -> the -StateBucket / TF_STATE_BUCKET value used below
+```
+
+**2. Workload Identity Federation (`infra/wif/`)** — only needed for the
+GitHub Actions path; skip it if you only ever deploy from a workstation.
+Creates the pool, provider (locked to this one GitHub repository) and the
+service account the workflows act as, and grants that service account the
+roles it needs to run Terraform against `infra/` and to push images to
+Artifact Registry. See the GHA report
+(`.superpowers/sdd/2026-09-20-event-photo-bot/gha-report.md`) for why each
+role is there.
+
+```bash
+cd infra/wif
+terraform init
+terraform apply -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
+terraform output -raw workload_identity_provider    # -> GCP_WORKLOAD_IDENTITY_PROVIDER
+terraform output -raw deploy_service_account_email  # -> GCP_DEPLOY_SERVICE_ACCOUNT
+```
+
+**3. If `infra/` already has local state from before this setup existed** —
+the next `terraform init` there (from either path) will notice the backend
+block changed and offer to migrate that local state into the new bucket.
+Accept that once, from a workstation, so the state used up to now is not
+orphaned:
+
+```bash
+cd infra
+terraform init -backend-config="bucket=<bucket_name from step 1>"
+```
+
+A brand new project has no local state yet, so this step is a no-op the
+first time through — `deploy.ps1` and the workflows both pass
+`-backend-config`/`-StateBucket` themselves on every run regardless (see
+below).
+
+**4. GitHub repository variables** — only needed for the GitHub Actions
+path. Under **Settings → Secrets and variables → Actions → Variables**, set:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | The project id (same one used above) |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of step 2 |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | Output of step 2 |
+| `TF_STATE_BUCKET` | Output of step 1 |
+| `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
+| `APP_NAME` | Optional — defaults to `eventphoto` if unset |
+
+None of these are secret — they're project ids, resource names and a bucket
+name. No bot token, admin password or signing key is ever configured as a
+GitHub secret or variable; those stay in Secret Manager and are added the
+same way regardless of which deploy path is used:
+
+```bash
+printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID
+```
+
+## Deploying
+
+Needs the state bucket from **One-time setup** above to already exist —
+`-StateBucket` below is where its name goes.
+
+```bash
+pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party" -StateBucket eventphoto-tfstate-my-event-project
 ```
 
 The script bootstraps the registry, bucket and secret resources, prints the
@@ -209,6 +295,14 @@ in plaintext in state), builds and pushes the image, applies the full
 configuration pinned to that image's digest, and registers the Telegram
 webhook. It is safe to rerun: pass `-SkipBuild` to skip rebuilding the image
 on a rerun where only the secrets or the Terraform apply needed a retry.
+
+`-StateBucket` points `terraform init` at the same remote state the GitHub
+Actions workflows use, on purpose — see **One-time setup** above. A
+workstation deploy and a CI deploy of the same project share one Terraform
+state so neither can drift into believing it owns resources the other
+created. Omitting `-StateBucket` fails immediately with a message pointing
+back to **One-time setup**, rather than a raw Terraform
+backend-initialization error.
 
 On success it prints the slideshow URL, the admin URL, and confirms the
 webhook registered.
@@ -228,73 +322,8 @@ Workload Identity Federation — no service account key is stored in GitHub.
 Both paths stay interchangeable: `deploy.ps1` and the `deploy` workflow run
 the same sequence (build, push, capture the digest, `terraform apply` pinned
 to it, register the webhook the same way), and both read and write the same
-Terraform state once the one-time setup below is done.
-
-### One-time setup
-
-Do this once per GCP project, not per event. Both bootstrap configs use
-their own **local** state (never migrated anywhere) and are applied by hand
-from a workstation with `gcloud` already authenticated against the project —
-neither is ever run from CI.
-
-**1. State bucket (`infra/backend/`)** — creates the GCS bucket that
-`infra/main.tf` uses as its remote backend once this is done.
-
-```bash
-cd infra/backend
-terraform init
-terraform apply -var "project_id=PROJECT_ID"
-terraform output -raw bucket_name    # -> save as the TF_STATE_BUCKET value below
-```
-
-**2. Workload Identity Federation (`infra/wif/`)** — creates the pool,
-provider (locked to this one GitHub repository) and the service account the
-workflows act as, and grants that service account the roles it needs to run
-Terraform against `infra/` and to push images to Artifact Registry. See the
-GHA report (`.superpowers/sdd/2026-09-20-event-photo-bot/gha-report.md`) for
-why each role is there.
-
-```bash
-cd infra/wif
-terraform init
-terraform apply -var "project_id=PROJECT_ID" -var "repository=OWNER/REPO"
-terraform output -raw workload_identity_provider    # -> GCP_WORKLOAD_IDENTITY_PROVIDER
-terraform output -raw deploy_service_account_email  # -> GCP_DEPLOY_SERVICE_ACCOUNT
-```
-
-**3. First `terraform init` against the new backend** — after step 1, the
-next `terraform init` in `infra/` (whether from `deploy.ps1` or a workflow)
-needs to point at the new bucket explicitly:
-
-```bash
-cd infra
-terraform init -backend-config="bucket=<bucket_name from step 1>"
-```
-
-Terraform will offer to migrate the existing local state into the bucket —
-accept that once, from a workstation, so the state used up to now is not
-orphaned.
-
-**4. GitHub repository variables** — under **Settings → Secrets and
-variables → Actions → Variables**, set:
-
-| Variable | Value |
-| --- | --- |
-| `GCP_PROJECT_ID` | The project id (same one used above) |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of step 2 |
-| `GCP_DEPLOY_SERVICE_ACCOUNT` | Output of step 2 |
-| `TF_STATE_BUCKET` | Output of step 1 |
-| `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
-| `APP_NAME` | Optional — defaults to `eventphoto` if unset |
-
-None of these are secret — they're project ids, resource names and a bucket
-name. No bot token, admin password or signing key is ever configured as a
-GitHub secret or variable; those stay in Secret Manager and are added the
-same way regardless of which deploy path is used:
-
-```bash
-printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID
-```
+Terraform state — see **One-time setup** above, all four steps of which this
+path needs (including the GitHub repository variables).
 
 ### Running the workflows
 

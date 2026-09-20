@@ -8,6 +8,7 @@
 param(
     [Parameter(Mandatory)][string] $ProjectId,
     [Parameter(Mandatory)][string] $EventName,
+    [string] $StateBucket,
     [string] $Region = 'europe-north1',
     [string] $Name = 'eventphoto',
     [switch] $SkipBuild
@@ -25,8 +26,25 @@ function Assert-Success([string] $What) {
     if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)." }
 }
 
+# infra/main.tf declares a `backend "gcs"` block with no bucket (a backend
+# block can't reference a variable), so `terraform init` here needs the same
+# `-backend-config` the GitHub Actions workflows pass. This is deliberate,
+# not incidental: a workstation apply and a CI apply must land in the same
+# state, or they can each believe they own resources the other created,
+# and `terraform destroy` from either path stops being trustworthy — see
+# docs/RUNBOOK.md. A plain, unhelpful Terraform backend-initialization error
+# is the wrong way for a first-time operator to discover this, so it's
+# checked here instead, in the same style as every other guard in this
+# script.
+if ([string]::IsNullOrWhiteSpace($StateBucket)) {
+    throw "-StateBucket is required. Apply infra/backend/ once first (terraform init && " +
+        "terraform apply -var project_id=$ProjectId), then pass its bucket_name output here: " +
+        "terraform -chdir=infra/backend output -raw bucket_name. The workstation deploy and the " +
+        "GitHub Actions workflows share one remote state on purpose - see docs/RUNBOOK.md."
+}
+
 Write-Host '==> Bootstrapping registry, bucket and secrets (first apply may partially fail; rerun)' -ForegroundColor Cyan
-terraform -chdir="$PSScriptRoot" init
+terraform -chdir="$PSScriptRoot" init -backend-config="bucket=$StateBucket"
 Assert-Success 'terraform init'
 terraform -chdir="$PSScriptRoot" apply `
     -target=google_artifact_registry_repository.images `
