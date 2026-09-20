@@ -76,7 +76,17 @@ public static class ApiEndpoints
             });
 
         app.MapPut("/api/takeover", async (TakeoverRequest request, StateStore store) =>
-            await store.MutateAsync(state =>
+        {
+            // Guard before the dictionary lookup: System.Text.Json happily deserializes
+            // a missing or explicitly null "imageId" into ImageId = null (the record's
+            // non-nullable annotation isn't enforced at runtime), and
+            // Dictionary<string,T>.TryGetValue(null, ...) throws ArgumentNullException
+            // rather than returning false. Without this check that becomes an unhandled
+            // 500 — there is no exception-handler middleware in this app.
+            if (string.IsNullOrEmpty(request.ImageId))
+                return Results.BadRequest(new { error = "imageId is required." });
+
+            return await store.MutateAsync(state =>
             {
                 if (!state.Images.TryGetValue(request.ImageId, out var image))
                     return Results.NotFound();
@@ -94,7 +104,8 @@ public static class ApiEndpoints
                     : null;
 
                 return Results.Ok();
-            }));
+            });
+        });
 
         app.MapDelete("/api/takeover", async (StateStore store) =>
         {

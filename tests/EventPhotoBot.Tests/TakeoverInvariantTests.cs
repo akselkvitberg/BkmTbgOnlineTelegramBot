@@ -38,8 +38,13 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var second = await SeedImageAsync();
 
         await client.PutAsJsonAsync("/api/takeover", new { imageId = first, minutes = (int?)null });
+
+        // Isolate the replace itself: one write should both drop the first claim
+        // and install the second, never a clear-then-set pair of writes.
+        var generationBeforeReplace = _factory.Store.Generation;
         await client.PutAsJsonAsync("/api/takeover", new { imageId = second, minutes = (int?)null });
 
+        Assert.Equal(generationBeforeReplace + 1, _factory.Store.Generation);
         Assert.Equal(second, _factory.Store.Snapshot.Settings.TakeoverImageId);
     }
 
@@ -62,8 +67,12 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var id = await SeedImageAsync();
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = (int?)null });
 
+        // One write must both remove the image and drop the takeover it held —
+        // never a remove followed by a separate clear-up write.
+        var generationBeforeDelete = _factory.Store.Generation;
         await client.DeleteAsync($"/api/images/{id}");
 
+        Assert.Equal(generationBeforeDelete + 1, _factory.Store.Generation);
         Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
         Assert.Null(_factory.Store.Snapshot.Settings.TakeoverUntil);
     }
@@ -75,8 +84,12 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var id = await SeedImageAsync();
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = (int?)null });
 
+        // One write must both flip the status and drop the takeover it held —
+        // never a status write followed by a separate clear-up write.
+        var generationBeforeHide = _factory.Store.Generation;
         await client.PostAsJsonAsync($"/api/images/{id}/status", new { status = "hidden" });
 
+        Assert.Equal(generationBeforeHide + 1, _factory.Store.Generation);
         Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
     }
 
@@ -87,8 +100,11 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var id = await SeedImageAsync();
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = (int?)null });
 
+        // Same guarantee as the hide case, for the reject path.
+        var generationBeforeReject = _factory.Store.Generation;
         await client.PostAsJsonAsync($"/api/images/{id}/status", new { status = "rejected" });
 
+        Assert.Equal(generationBeforeReject + 1, _factory.Store.Generation);
         Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
     }
 

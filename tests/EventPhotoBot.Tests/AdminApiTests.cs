@@ -174,6 +174,27 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task Takeover_with_a_missing_imageId_is_rejected()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.PutAsJsonAsync("/api/takeover", new { minutes = 5 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Takeover_with_a_null_imageId_is_rejected()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.PutAsJsonAsync(
+            "/api/takeover", new { imageId = (string?)null, minutes = 5 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Every_mutating_route_requires_a_session()
     {
         var client = _factory.CreateAnonymousClient();

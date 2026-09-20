@@ -5,7 +5,6 @@ namespace EventPhotoBot.Tests.Fakes;
 public sealed class InMemoryObjectStore : IObjectStore
 {
     private readonly Dictionary<string, StoredObject> _objects = [];
-    private long _nextGeneration = 1;
 
     /// <summary>Test hook: number of write calls, to assert polls do no I/O.</summary>
     public int WriteCount { get; private set; }
@@ -25,12 +24,16 @@ public sealed class InMemoryObjectStore : IObjectStore
         long? ifGenerationMatch, CancellationToken ct = default)
     {
         WriteCount++;
-        if (ifGenerationMatch is { } expected)
-        {
-            var current = _objects.TryGetValue(path, out var existing) ? existing.Generation : 0L;
-            if (current != expected) throw new PreconditionFailedException(path);
-        }
-        var generation = _nextGeneration++;
+        var current = _objects.TryGetValue(path, out var existing) ? existing.Generation : 0L;
+        if (ifGenerationMatch is { } expected && current != expected)
+            throw new PreconditionFailedException(path);
+
+        // Generation is tracked per object path, as real GCS generations are: writing
+        // one object (e.g. the state-prev backup) must never advance the generation
+        // reported for a different object (e.g. state.json). A single shared counter
+        // across all paths would make store.Generation jump by more than one write per
+        // logical MutateAsync call, which is not how the real object store behaves.
+        var generation = current + 1;
         _objects[path] = new StoredObject(bytes, generation);
         return Task.FromResult(generation);
     }
@@ -49,6 +52,9 @@ public sealed class InMemoryObjectStore : IObjectStore
     }
 
     /// <summary>Simulates a concurrent writer bumping the generation behind our back.</summary>
-    public void ForceWrite(string path, byte[] bytes) =>
-        _objects[path] = new StoredObject(bytes, _nextGeneration++);
+    public void ForceWrite(string path, byte[] bytes)
+    {
+        var current = _objects.TryGetValue(path, out var existing) ? existing.Generation : 0L;
+        _objects[path] = new StoredObject(bytes, current + 1);
+    }
 }
