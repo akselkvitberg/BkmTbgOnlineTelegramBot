@@ -102,7 +102,8 @@ public static class ManifestBuilder
     {
         var settings = state.Settings;
         if (settings.TakeoverImageId is not { } id) return null;
-        if (!state.Images.ContainsKey(id)) return null;
+        if (!state.Images.TryGetValue(id, out var image) || image.Status != ImageStatus.Approved)
+            return null;
         if (settings.TakeoverUntil is { } until && until <= now) return null;
         return new TakeoverView(id, settings.TakeoverUntil);
     }

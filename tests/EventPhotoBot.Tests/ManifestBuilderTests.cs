@@ -192,6 +192,24 @@ public class ManifestBuilderTests
     }
 
     [Fact]
+    public void A_takeover_pointing_at_a_hidden_image_is_not_reported()
+    {
+        var state = StateWith(("a", ImageStatus.Hidden, PinKind.None));
+        state.Settings.TakeoverImageId = "a";
+
+        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+    }
+
+    [Fact]
+    public void A_takeover_pointing_at_a_pending_image_is_not_reported()
+    {
+        var state = StateWith(("a", ImageStatus.Pending, PinKind.None));
+        state.Settings.TakeoverImageId = "a";
+
+        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+    }
+
+    [Fact]
     public void The_playlist_is_still_built_while_a_takeover_is_active()
     {
         var state = StateWith(
