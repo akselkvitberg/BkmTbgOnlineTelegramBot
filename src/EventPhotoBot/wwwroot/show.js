@@ -20,6 +20,8 @@
   let etag = null;
   let playlist = [];
   let cursor = 0;
+  let lastShownIndex = 0; // the index actually rendered by the most recent advance(),
+                           // before cursor's post-render increment - see resumePosition()
   let activeSlot = 0;
   let advanceTimer = null;
   let failures = 0;
@@ -194,20 +196,30 @@
 
   /// <summary>
   /// The index, within `list`, that playback should resume from: just after the
-  /// slide currently on screen. Prefers the occurrence at or after the old cursor so
-  /// a duplicated (recurring) id resolves to "the next upcoming one", not always the
-  /// first copy in the array. Falls back to the old cursor position, clamped to the
-  /// new length, when the current image is no longer present at all (it was hidden,
-  /// rejected or deleted) or nothing has been shown yet.
+  /// slide currently on screen. Matches against `lastShownIndex` - the index
+  /// advance() actually rendered - not `cursor`, which by the time this runs has
+  /// already been incremented past it (advance() renders playlist[cursor], then
+  /// increments). Using `cursor` here made "at or after cursor" search for an
+  /// occurrence *after* the one on screen, which for a unique id fails and falls
+  /// back to occurrences[0] by accident, but for a recurring pin - an id repeated
+  /// several times in the playlist - finds the *next* copy and jumps the cursor
+  /// there, silently skipping every ordinary image in between on every manifest
+  /// change. `cursor - 1` is not a safe substitute: once cursor has wrapped to 0
+  /// (the shown image was the last in the array), cursor - 1 is -1, which would
+  /// match the first occurrence and starve the head of the playlist instead.
+  ///
+  /// Falls back to just after `lastShownIndex`, clamped to the new length, when
+  /// the current image is no longer present at all (hidden, rejected or deleted).
+  /// Returns 0 when nothing has been shown yet (the playlist started empty).
   /// </summary>
   function resumePosition(list) {
-    if (currentImageId === null) return Math.min(cursor, list.length);
+    if (currentImageId === null) return 0;
 
     const occurrences = [];
     list.forEach((image, index) => { if (image.id === currentImageId) occurrences.push(index); });
-    if (occurrences.length === 0) return Math.min(cursor, list.length);
+    if (occurrences.length === 0) return Math.min(lastShownIndex + 1, list.length);
 
-    const atOrAfter = occurrences.find(index => index >= cursor);
+    const atOrAfter = occurrences.find(index => index >= lastShownIndex);
     return (atOrAfter !== undefined ? atOrAfter : occurrences[0]) + 1;
   }
 
@@ -280,8 +292,9 @@
     }
 
     emptyEl.hidden = true;
-    render(playlist[cursor % playlist.length]);
-    cursor = (cursor + 1) % playlist.length;
+    lastShownIndex = cursor % playlist.length;
+    render(playlist[lastShownIndex]);
+    cursor = (lastShownIndex + 1) % playlist.length;
     preload(2);
 
     const seconds = manifest?.settings?.slideSeconds ?? 8;
