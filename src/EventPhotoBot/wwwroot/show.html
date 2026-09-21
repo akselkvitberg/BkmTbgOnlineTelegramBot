@@ -21,6 +21,10 @@
     <p id="empty-event-name" hidden></p>
     <h1>Send us your photos</h1>
     <p id="empty-detail">They will appear here once an organiser approves them.</p>
+    <div id="join" hidden>
+      <img id="join-qr" alt="Scan to send photos">
+      <p id="join-handle"></p>
+    </div>
   </div>
 
   <div id="offline" hidden>Reconnecting&hellip;</div>
@@ -31,6 +35,10 @@
   <div id="caption-hint">
     Press <strong>F</strong> for fullscreen &middot; <strong>C</strong> to toggle captions
   </div>
+
+  <!-- Small corner QR while photos are showing, so somebody arriving late can still
+       join without waiting for the screen to run out of pictures. -->
+  <img id="join-badge" hidden alt="Scan to send photos">
 
   <!-- Keeps the display machine awake where the Wake Lock API is unavailable. -->
   <video id="keepawake" muted loop playsinline src="/keepawake.mp4"></video>

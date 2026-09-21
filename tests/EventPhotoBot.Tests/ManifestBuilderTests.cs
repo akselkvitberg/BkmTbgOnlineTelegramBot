@@ -7,6 +7,23 @@ public class ManifestBuilderTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 20, 20, 0, 0, TimeSpan.Zero);
 
+    [Fact]
+    public void The_manifest_carries_the_join_url()
+    {
+        var manifest = ManifestBuilder.Build(
+            new EventState(), generation: 1, Now, "Party", "https://t.me/bot?start=code");
+
+        Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
+    }
+
+    [Fact]
+    public void The_join_url_is_null_when_the_bot_username_is_unknown()
+    {
+        var manifest = ManifestBuilder.Build(new EventState(), generation: 1, Now, "Party");
+
+        Assert.Null(manifest.Settings.JoinUrl);
+    }
+
     private static EventState StateWith(params (string Id, ImageStatus Status, PinKind Pin)[] images)
     {
         var state = new EventState();

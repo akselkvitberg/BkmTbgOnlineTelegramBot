@@ -1,6 +1,7 @@
 using System.Text.Json;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
+using EventPhotoBot.Telegram;
 
 namespace EventPhotoBot.Web;
 
@@ -81,7 +82,8 @@ public static class ApiEndpoints
             });
         });
 
-        app.MapGet("/api/manifest", (HttpContext http, StateStore store, AppConfig config) =>
+        app.MapGet("/api/manifest",
+            (HttpContext http, StateStore store, AppConfig config, BotIdentity identity) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
@@ -93,8 +95,13 @@ public static class ApiEndpoints
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
 
+            // identity.JoinUrl is fixed for the life of the instance, so it cannot
+            // change between two polls of the same generation — the ETag above still
+            // keys off store.Generation alone, and the no-object-store-IO guarantee
+            // this path is tested for is unaffected.
             return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, config.EventName));
+                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, config.EventName,
+                identity.JoinUrl));
         });
 
         app.MapPost("/api/images/{id}/status",

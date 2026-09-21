@@ -8,7 +8,8 @@ public sealed record ManifestImage(
 public sealed record TakeoverView(string Id, DateTimeOffset? Until);
 
 public sealed record SettingsView(
-    int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName);
+    int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName,
+    string? JoinUrl);
 
 public sealed record Manifest(
     long Version,
@@ -24,7 +25,8 @@ public sealed record Manifest(
 public static class ManifestBuilder
 {
     public static Manifest Build(
-        EventState state, long generation, DateTimeOffset now, string eventName = "")
+        EventState state, long generation, DateTimeOffset now, string eventName = "",
+        string? joinUrl = null)
     {
         var settings = state.Settings;
 
@@ -50,7 +52,8 @@ public static class ManifestBuilder
             Takeover: ActiveTakeover(state, now),
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
-                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle", eventName),
+                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle", eventName,
+                joinUrl),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 

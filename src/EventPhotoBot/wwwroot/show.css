@@ -116,4 +116,38 @@ html, body {
 
 #caption-hint[hidden] { display: none; }
 
+/* Large in the empty state, a small corner badge once photos are showing. Both sit
+   on solid white: a QR on a dark or textured ground is markedly harder for a phone
+   camera to lock onto, and the whole point is that it scans from across a room. */
+#join-qr {
+  width: 30vmin;
+  height: auto;
+  background: #fff;
+  padding: 2vmin;
+  border-radius: 1vmin;
+}
+
+#join-handle {
+  margin-top: 1rem;
+  font-family: ui-monospace, monospace;
+  opacity: 0.7;
+}
+
+#join[hidden] { display: none; }
+
+#join-badge {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 11vmin;
+  height: auto;
+  background: #fff;
+  padding: 1vmin;
+  border-radius: 1vmin;
+  opacity: 0.85;
+  z-index: 5;
+}
+
+#join-badge[hidden] { display: none; }
+
 #keepawake { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
