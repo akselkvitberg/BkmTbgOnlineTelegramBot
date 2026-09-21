@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       event_name:
-        description: "Event name shown on the slideshow's empty state (maps to var.event_name)."
-        required: true
+        description: "Override the EVENT_NAME repository variable for this run only. Leave empty to use it."
+        required: false
         type: string
       image_digest:
         description: "Full image ref by digest to plan against (var.image_digest). Leave as 'placeholder' before any image has ever been built and pushed — this mirrors infra/deploy.ps1's own bootstrap apply, which uses the same placeholder for the same reason."
@@ -37,7 +37,10 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       APP_NAME: ${{ vars.APP_NAME }}
-      EVENT_NAME: ${{ inputs.event_name }}
+      # Set once as a repository variable; the dispatch input overrides it for a
+      # one-off run. Keeps plan and deploy reading the same name by default, so a
+      # plan cannot quietly describe a differently-named event than the deploy.
+      EVENT_NAME: ${{ inputs.event_name || vars.EVENT_NAME }}
       IMAGE_DIGEST: ${{ inputs.image_digest }}
     steps:
       - name: Check required inputs and repository variables
@@ -47,7 +50,7 @@ jobs:
           [ -z "$GCP_WORKLOAD_IDENTITY_PROVIDER" ] && missing+=("repository variable GCP_WORKLOAD_IDENTITY_PROVIDER")
           [ -z "$GCP_DEPLOY_SERVICE_ACCOUNT" ] && missing+=("repository variable GCP_DEPLOY_SERVICE_ACCOUNT")
           [ -z "$TF_STATE_BUCKET" ] && missing+=("repository variable TF_STATE_BUCKET")
-          [ -z "$EVENT_NAME" ] && missing+=("workflow input event_name")
+          [ -z "$EVENT_NAME" ] && missing+=("repository variable EVENT_NAME (or the event_name input)")
           [ -z "$IMAGE_DIGEST" ] && missing+=("workflow input image_digest")
           if [ "${#missing[@]}" -ne 0 ]; then
             printf 'Missing: %s\n' "${missing[@]}" >&2
