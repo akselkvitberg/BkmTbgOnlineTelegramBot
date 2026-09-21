@@ -55,6 +55,43 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // Enum.TryParse accepts a numeric string as well as a name, so without a guard a
+    // body of {"status": "99"} parsed to (ImageStatus)99 and was written to the state
+    // file — a status no switch arm, no admin page and no manifest consumer has ever
+    // heard of, surviving a restart and served back as the status of a real photo.
+    // "0" is the other half of it: it lands on a *declared* value, so Enum.IsDefined
+    // waves it through and it silently means Pending. Neither is a name.
+
+    [Theory]
+    [InlineData("99")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public async Task A_numeric_image_status_is_rejected_and_leaves_the_image_alone(string status)
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        var id = await SeedImageAsync(ImageStatus.Approved);
+
+        var response = await client.PostAsJsonAsync($"/api/images/{id}/status", new { status });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(ImageStatus.Approved, _factory.Store.Snapshot.Images[id].Status);
+    }
+
+    [Theory]
+    [InlineData("99")]
+    [InlineData("0")]
+    public async Task A_numeric_pin_is_rejected_and_leaves_the_pin_alone(string pin)
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        var id = await SeedImageAsync(ImageStatus.Approved);
+        await client.PostAsJsonAsync($"/api/images/{id}/pin", new { pin = "recurring" });
+
+        var response = await client.PostAsJsonAsync($"/api/images/{id}/pin", new { pin });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(PinKind.Recurring, _factory.Store.Snapshot.Images[id].Pin);
+    }
+
     [Fact]
     public async Task Setting_a_recurring_pin_works()
     {
@@ -408,6 +445,22 @@ public class AdminApiTests : IClassFixture<AppFactory>
     public async Task Listing_images_with_an_unknown_status_is_rejected()
     {
         var response = await _factory.CreateAuthenticatedClient().GetAsync("/api/images?status=banana");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("99")]
+    [InlineData("0")]
+    public async Task Listing_images_by_a_numeric_status_is_rejected(string status)
+    {
+        // Nothing is written on this path, so the cost of the gap here was only a
+        // filter that silently matched nothing (99) or matched Pending without
+        // anyone asking for it (0). It goes through the same parse as the writes
+        // above, and the point of routing all five through one helper is that this
+        // one cannot be the one that drifts back.
+        var response = await _factory.CreateAuthenticatedClient()
+            .GetAsync($"/api/images?status={status}");
+
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 

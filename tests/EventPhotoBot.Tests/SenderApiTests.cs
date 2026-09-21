@@ -79,6 +79,34 @@ public class SenderApiTests : IClassFixture<AppFactory>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// Enum.TryParse accepts a numeric string as well as a name, so without a guard
+    /// {"status": "99"} wrote (SenderStatus)99 into the roster — a status the admin
+    /// page cannot render and, worse on this endpoint than on the others, one that is
+    /// neither Banned nor AutoApprove, so the photo pipeline treats that person as
+    /// merely Known for the rest of the event. "1" is the other half: it lands on a
+    /// declared value, passes Enum.IsDefined, and silently means AutoApprove — this
+    /// endpoint is the one where that mistake pre-approves a stranger.
+    ///
+    /// Each case takes its own sender id: the roster is shared across this class.
+    /// </summary>
+    [Theory]
+    [InlineData(5009, "99")]
+    [InlineData(5010, "1")]
+    [InlineData(5011, "-1")]
+    public async Task A_numeric_sender_status_is_rejected_and_leaves_the_sender_alone(
+        long id, string status)
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await client.PostAsJsonAsync($"/api/senders/{id}/status", new { status = "known" });
+
+        var response = await client.PostAsJsonAsync($"/api/senders/{id}/status", new { status });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var sender = Assert.Single(_factory.Store.Snapshot.Settings.Senders, s => s.Id == id);
+        Assert.Equal(SenderStatus.Known, sender.Status);
+    }
+
     [Fact]
     public async Task Setting_a_status_needs_a_session()
     {
