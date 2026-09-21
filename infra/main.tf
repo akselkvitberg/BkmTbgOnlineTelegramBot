@@ -5,6 +5,13 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.0"
     }
+    # Every Firebase resource is beta-only, so the optional Hosting front door
+    # below needs a second provider alongside the first. Both point at the same
+    # project; nothing else in this config uses google-beta.
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 6.0"
+    }
   }
 
   # Remote state for CI (GitHub Actions has no workstation to keep local state
@@ -30,18 +37,44 @@ provider "google" {
   region  = var.region
 }
 
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+
+  # Firebase's own docs call for this: without it the Firebase API calls bill
+  # their quota to whichever project the *credentials* belong to rather than
+  # the one being configured, which on a service-account apply is not
+  # necessarily this project at all.
+  user_project_override = true
+}
+
 # ---------------------------------------------------------------------------
 # APIs
 # ---------------------------------------------------------------------------
 
-resource "google_project_service" "apis" {
-  for_each = toset([
+locals {
+  apis = [
     "run.googleapis.com",
     "artifactregistry.googleapis.com",
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
     "iamcredentials.googleapis.com",
-  ])
+  ]
+
+  # Only when a Hosting site is actually asked for. Adding Firebase to a
+  # project is one of the few things here that cannot be undone (see
+  # google_firebase_project below), so a project that doesn't want the
+  # friendly URL shouldn't get the APIs that lead there either.
+  hosting_enabled = var.hosting_site != ""
+
+  hosting_apis = [
+    "firebase.googleapis.com",
+    "firebasehosting.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "apis" {
+  for_each = toset(concat(local.apis, local.hosting_enabled ? local.hosting_apis : []))
 
   service = each.value
 
@@ -247,6 +280,73 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
   location = google_cloud_run_v2_service.app.location
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# ---------------------------------------------------------------------------
+# The friendly URL — optional, set var.hosting_site to enable.
+#
+# Firebase Hosting hands out https://<site>.web.app with a certificate already
+# in place, for free and without owning a domain, and rewrites every path to
+# the Cloud Run service above. That is the whole reason it is here: a URL a
+# guest can read off a screen instead of the run.app one.
+#
+# The run.app URL keeps working and stays the webhook base — see deploy.ps1.
+# Nothing about intake depends on Hosting, so DNS or certificate trouble on
+# this side cannot cost a photo.
+#
+# Two things here are unlike everything else in this file:
+#   - google_firebase_project cannot be undone. Once Firebase is added to a
+#     GCP project it stays added; `terraform destroy` only drops it from
+#     state. Harmless for a project that is deleted wholesale after the
+#     event, but it does mean this one resource breaks the "destroy returns
+#     the project to clean" property the rest of the config has.
+#   - site_id is globally unique across all of Firebase and immutable. Claim
+#     it early; a name taken on the evening of the event is a name gone.
+# ---------------------------------------------------------------------------
+
+resource "google_firebase_project" "hosting" {
+  count    = local.hosting_enabled ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_firebase_hosting_site" "app" {
+  count    = local.hosting_enabled ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  site_id  = var.hosting_site
+
+  depends_on = [google_firebase_project.hosting]
+}
+
+# A version is the config itself; a release is what publishes it. Changing the
+# rewrite below replaces both, which is how Hosting works rather than churn to
+# design out.
+resource "google_firebase_hosting_version" "app" {
+  count    = local.hosting_enabled ? 1 : 0
+  provider = google-beta
+  site_id  = google_firebase_hosting_site.app[0].site_id
+
+  config {
+    rewrites {
+      glob = "**"
+
+      run {
+        service_id = google_cloud_run_v2_service.app.name
+        region     = google_cloud_run_v2_service.app.location
+      }
+    }
+  }
+}
+
+resource "google_firebase_hosting_release" "app" {
+  count        = local.hosting_enabled ? 1 : 0
+  provider     = google-beta
+  site_id      = google_firebase_hosting_site.app[0].site_id
+  version_name = google_firebase_hosting_version.app[0].name
+  message      = "${var.name} — ${var.event_name}"
 }
 
 # ---------------------------------------------------------------------------
