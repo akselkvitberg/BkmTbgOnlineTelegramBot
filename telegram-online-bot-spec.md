@@ -251,14 +251,16 @@ Scope that lifecycle rule with `matches_prefix = ["originals/", "display/", "thu
 
 ## Infrastructure as code
 
-One Terraform root module, local state, no workspaces or remote backend — it exists to be destroyed.
+One Terraform root module, no workspaces — it exists to be destroyed.
+
+State lives in a GCS bucket created by a separate bootstrap module (`infra/backend/`), not on a workstation. This came late: deployment settled on GitHub Actions, which has no durable local disk between runs, and the workstation script (`infra/deploy.ps1`) shares that same remote state on purpose so neither path can believe it owns resources the other created. A third bootstrap module (`infra/wif/`) holds the Workload Identity Federation trust the workflows authenticate with. Both bootstrap modules are outside `infra/`'s own blast radius and outlive any one event — see `docs/RUNBOOK.md`.
 
 | Resource | Notes |
 | --- | --- |
 | `google_project_service` | run, artifactregistry, secretmanager, storage, iamcredentials. Set `disable_on_destroy = false` — disabling APIs on destroy is a common source of hung or failed teardowns |
 | `google_artifact_registry_repository` | Docker format, one region |
 | `google_storage_bucket` | Uniform access, lifecycle delete at 30 days scoped to the image prefixes, `force_destroy = true` |
-| `google_secret_manager_secret` | Four: bot token, admin password, webhook secret token, cookie signing key |
+| `google_secret_manager_secret` | Five: bot token, admin password, webhook secret token, webhook path, cookie signing key |
 | `google_service_account` | Runtime identity for the service |
 | IAM bindings | `roles/storage.objectAdmin` scoped to the bucket, `roles/secretmanager.secretAccessor` per secret |
 | `google_cloud_run_v2_service` | See settings below |
@@ -286,11 +288,15 @@ Secrets reach the container as environment variables sourced from Secret Manager
 
 **Webhook registration**
 
-The webhook URL is only known after the service is created, so registration is a step after apply — either a `null_resource` with a `local-exec` calling `setWebhook` with the service URL and secret token, or a line in the deploy script. A script is easier to reason about and easier to rerun.
+The webhook URL is only known after the service is created, so registration is a step after apply — either a `null_resource` with a `local-exec` calling `setWebhook` with the service URL and secret token, or a step in the deploy pipeline. A scripted step is easier to reason about and easier to rerun; it is the last step of both the `deploy` workflow and `infra/deploy.ps1`.
 
 **Image build**
 
-Out of Terraform's scope. Build locally or in Cloud Build, push to Artifact Registry, pass the digest as a variable. Pin the digest rather than a tag so `terraform apply` is honest about what changes.
+Out of Terraform's scope. Built and pushed to Artifact Registry by the `deploy` workflow (or by `infra/deploy.ps1` on the fallback path), with the resulting digest passed as a variable. Pin the digest rather than a tag so `terraform apply` is honest about what changes.
+
+**Deployment**
+
+Manual (`workflow_dispatch`-only) GitHub Actions workflows — `plan`, `deploy`, `destroy` — authenticating to GCP with Workload Identity Federation, so no service account key is stored in GitHub. Nothing runs on a push: this repository's Terraform manages a live service and its data. `infra/deploy.ps1` runs the same sequence from a workstation as a fallback.
 
 ## Configuration and secrets
 
@@ -341,7 +347,7 @@ The admin watches the queue on a phone. If nobody is available to moderate, turn
 
 - [ ] Download the `originals/` prefix if anyone wants the photos
 - [ ] `deleteWebhook` on the bot, then delete the bot via BotFather
-- [ ] `terraform destroy`
+- [ ] `terraform destroy` — via the `destroy` workflow, or from a workstation
 - [ ] Confirm the bucket is gone, not just emptied — with no database to delete, the bucket is the only stateful resource left
 
 **Cost**

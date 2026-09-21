@@ -89,8 +89,10 @@ opening `/show` on a different machine.
       the bot's `/start` reply already promises this, so people are expecting it
 - [ ] `deleteWebhook` on the bot (`https://api.telegram.org/bot<token>/deleteWebhook`),
       then delete the bot itself via BotFather
-- [ ] `terraform -chdir=infra destroy` — leaves no bucket, secret or service
-      behind
+- [ ] Run the **destroy** workflow from the Actions tab (type the project id
+      to confirm) — leaves no bucket, secret or service behind. From a
+      workstation instead: `terraform -chdir=infra destroy`, against the same
+      shared state
 - [ ] Confirm the bucket is gone in the console or with
       `gcloud storage buckets list --project PROJECT_ID`, not just that it
       looks empty — an emptied bucket is not a destroyed one, and the whole
@@ -106,8 +108,11 @@ opening `/show` on a different machine.
 
 If the event repeats (a second party, a second Sunday), destroying and
 redeploying from scratch is the intended pattern — there is no state that
-carries over on purpose, and rerunning `infra/deploy.ps1` against a fresh
-project takes minutes.
+carries over on purpose, and rerunning the **deploy** workflow takes
+minutes. The one-time setup (state bucket, WIF, repository variables) stays
+in place between events; only the secret versions have to be added again
+after a destroy, since destroying the secret resources takes their versions
+with them.
 
 ## Acceptance criteria
 
@@ -183,17 +188,20 @@ several depend on state left by the one before.
       from its next poll with no images or approvals lost — state is
       reloaded from `state.json` at the new instance's startup. Do **not**
       use `infra/deploy.ps1 -SkipBuild` for this check while the event is
-      live: it re-registers the webhook with `drop_pending_updates: true`,
+      live, and do not run the **deploy** workflow either: both re-register
+      the webhook with `drop_pending_updates: true`,
       which discards anything Telegram is holding for the webhook at that
       moment — a photo sent in that window vanishes with no error to the
       sender or the admin. `deploy.ps1` is for before/after the event, or a
       scratch project; `gcloud run services update` is the mid-event tool.
-- [ ] **`terraform destroy` leaves nothing behind.** From a clean clone,
-      `infra/`'s own state has never been initialized in this checkout, so
-      run `terraform -chdir=infra init -backend-config="bucket=<state bucket
-      from One-time setup>"` first (see **One-time setup** above), then
-      `terraform -chdir=infra destroy` (in a scratch project first if you
-      want to check this without touching the real event's data). Pass: the
+- [ ] **`terraform destroy` leaves nothing behind.** Normally this is the
+      **destroy** workflow from the Actions tab. To check it from a
+      workstation instead: from a clean clone `infra/`'s own state has never
+      been initialized in this checkout, so run `terraform -chdir=infra init
+      -backend-config="bucket=<state bucket from One-time setup>"` first (see
+      **One-time setup** above), then `terraform -chdir=infra destroy` (in a
+      scratch project first if you want to check this without touching the
+      real event's data). Pass: the
       bucket, all five secrets, and the Cloud Run service are all gone
       afterwards — check with `gcloud storage buckets list`, `gcloud secrets
       list`, and `gcloud run services list`, all scoped `--project
@@ -228,14 +236,13 @@ terraform apply -var "project_id=PROJECT_ID"
 terraform output -raw bucket_name    # -> the -StateBucket / TF_STATE_BUCKET value used below
 ```
 
-**2. Workload Identity Federation (`infra/wif/`)** — only needed for the
-GitHub Actions path; skip it if you only ever deploy from a workstation.
-Creates the pool, provider (locked to this one GitHub repository) and the
-service account the workflows act as, and grants that service account the
-roles it needs to run Terraform against `infra/` and to push images to
-Artifact Registry. See the GHA report
-(`.superpowers/sdd/2026-09-20-event-photo-bot/gha-report.md`) for why each
-role is there.
+**2. Workload Identity Federation (`infra/wif/`)** — required for the GitHub
+Actions path, which is how this project is deployed; skip it only if you
+intend to deploy exclusively from a workstation. Creates the pool, provider
+(locked to this one GitHub repository) and the service account the workflows
+act as, and grants that service account the roles it needs to run Terraform
+against `infra/` and to push images to Artifact Registry. Each role is
+justified in a comment next to it in `infra/wif/main.tf`.
 
 Confirm the exact `OWNER/REPO` value before applying — the provider's
 attribute condition compares it byte for byte against the `repository`
@@ -273,8 +280,8 @@ first time through — `deploy.ps1` and the workflows both pass
 `-backend-config`/`-StateBucket` themselves on every run regardless (see
 below).
 
-**4. GitHub repository variables** — only needed for the GitHub Actions
-path. Under **Settings → Secrets and variables → Actions → Variables**, set:
+**4. GitHub repository variables** — required for the GitHub Actions path.
+Under **Settings → Secrets and variables → Actions → Variables**, set:
 
 | Variable | Value |
 | --- | --- |
@@ -302,52 +309,17 @@ printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --da
 
 ## Deploying
 
-Needs the state bucket from **One-time setup** above to already exist —
-`-StateBucket` below is where its name goes.
+Both the application and the Terraform apply run from **GitHub Actions**.
+That is the path this project deploys through; `infra/deploy.ps1` (below)
+is the workstation fallback, kept interchangeable with it rather than as the
+normal route.
 
-```bash
-pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party" -StateBucket eventphoto-tfstate-my-event-project
-```
-
-The script bootstraps the registry, bucket and secret resources, prints the
-`gcloud secrets versions add` commands for you to run by hand (secret values
-never pass through Terraform — a value passed as a Terraform variable ends up
-in plaintext in state), builds and pushes the image, applies the full
-configuration pinned to that image's digest, and registers the Telegram
-webhook. It is safe to rerun: pass `-SkipBuild` to skip rebuilding the image
-on a rerun where only the secrets or the Terraform apply needed a retry.
-
-`-StateBucket` points `terraform init` at the same remote state the GitHub
-Actions workflows use, on purpose — see **One-time setup** above. A
-workstation deploy and a CI deploy of the same project share one Terraform
-state so neither can drift into believing it owns resources the other
-created. Omitting `-StateBucket` fails immediately with a message pointing
-back to **One-time setup**, rather than a raw Terraform
-backend-initialization error.
-
-On success it prints the slideshow URL, the admin URL, and confirms the
-webhook registered.
-
-If any step fails, the script stops there and reports which command failed.
-Fix whatever it reports (usually a missing secret version or a `gcloud`
-auth issue) and rerun the whole command — every step is safe to repeat.
-
-## Deploying from GitHub Actions
-
-An alternative to running `deploy.ps1` from a workstation: three manual
-(`workflow_dispatch`-only) workflows in `.github/workflows/` — `plan`,
-`deploy` and `destroy`. Nothing here runs on a push; every one of them has to
-be started by hand from the Actions tab. They authenticate to GCP with
-Workload Identity Federation — no service account key is stored in GitHub.
-
-Both paths stay interchangeable: `deploy.ps1` and the `deploy` workflow run
-the same sequence — a targeted bootstrap apply for the Artifact Registry
-repository and the secret resources (needed on a fresh project before
-there's anywhere to push an image or add a secret version to), build, push,
-capture the digest, `terraform apply` pinned to it, register the webhook the
-same way — and both read and write the same Terraform state. See
-**One-time setup** above, all four steps of which this path needs (including
-the GitHub repository variables).
+Three manual (`workflow_dispatch`-only) workflows live in
+`.github/workflows/` — `plan`, `deploy` and `destroy`. Nothing here runs on a
+push; every one of them has to be started by hand from the Actions tab. They
+authenticate to GCP with Workload Identity Federation — no service account
+key is stored in GitHub. This path needs all four steps of **One-time setup**
+above, including the GitHub repository variables.
 
 ### Running the workflows
 
@@ -370,6 +342,44 @@ All three live under the **Actions** tab, run via **Run workflow**.
 A concurrency group shared by all three (`eventphoto-terraform`) means only
 one of plan/deploy/destroy runs at a time, so two runs can't write to the
 same remote state simultaneously.
+
+### Deploying from a workstation (`infra/deploy.ps1`) — fallback
+
+The same sequence the `deploy` workflow runs, from a machine with `gcloud`,
+`docker`, `terraform` and PowerShell 7. Use it when the Actions path is
+unavailable (no network access to GitHub, a broken WIF trust, or debugging
+the apply interactively). Needs the state bucket from **One-time setup**
+above to already exist — `-StateBucket` is where its name goes.
+
+```bash
+pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party" -StateBucket eventphoto-tfstate-my-event-project
+```
+
+The script bootstraps the registry, bucket and secret resources, prints the
+`gcloud secrets versions add` commands for you to run by hand (secret values
+never pass through Terraform — a value passed as a Terraform variable ends up
+in plaintext in state), builds and pushes the image, applies the full
+configuration pinned to that image's digest, and registers the Telegram
+webhook. It is safe to rerun: pass `-SkipBuild` to skip rebuilding the image
+on a rerun where only the secrets or the Terraform apply needed a retry.
+
+The two paths stay interchangeable: `deploy.ps1` and the `deploy` workflow
+run the same steps — a targeted bootstrap apply for the Artifact Registry
+repository and the secret resources (needed on a fresh project before
+there's anywhere to push an image or add a secret version to), build, push,
+capture the digest, `terraform apply` pinned to it, register the webhook the
+same way — and both read and write the same Terraform state.
+
+`-StateBucket` points `terraform init` at exactly the state the workflows
+use, on purpose — see **One-time setup** above. Omitting it fails
+immediately with a message pointing back there, rather than a raw Terraform
+backend-initialization error.
+
+On success it prints the slideshow URL, the admin URL, and confirms the
+webhook registered. If any step fails, the script stops there and reports
+which command failed. Fix whatever it reports (usually a missing secret
+version or a `gcloud` auth issue) and rerun the whole command — every step
+is safe to repeat.
 
 ### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
 
