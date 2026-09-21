@@ -27,6 +27,31 @@ public sealed class ImageRecord
     public required string OriginalExtension { get; set; }
 }
 
+/// <summary>
+/// What the bot does with a person's photos. Absence from the roster is the
+/// fourth case and needs no member: that person has not redeemed the join code,
+/// nothing is stored for them, and their photos are declined.
+/// </summary>
+public enum SenderStatus
+{
+    /// <summary>Redeemed the join code. Photos go to the approval queue.</summary>
+    Known,
+
+    /// <summary>A pre-approved photographer. Photos go straight to the screen.</summary>
+    AutoApprove,
+
+    /// <summary>Blocked. Messages are dropped silently, nothing is downloaded.</summary>
+    Banned,
+}
+
+public sealed class Sender
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public SenderStatus Status { get; set; }
+    public DateTimeOffset FirstSeen { get; set; }
+}
+
 public sealed class WhitelistEntry
 {
     public long Id { get; set; }
@@ -54,6 +79,7 @@ public sealed class Settings
     public List<WhitelistEntry> Whitelist { get; set; } = [];
     public bool PairingMode { get; set; }
     public List<SeenSender> SeenSenders { get; set; } = [];
+    public List<Sender> Senders { get; set; } = [];
 }
 
 public sealed class EventState

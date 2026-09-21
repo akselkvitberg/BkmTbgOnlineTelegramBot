@@ -6,6 +6,33 @@ namespace EventPhotoBot.Tests;
 public class StateModelTests
 {
     [Fact]
+    public void A_sender_roster_round_trips_through_json()
+    {
+        var state = new EventState();
+        state.Settings.Senders.Add(new Sender
+        {
+            Id = 42,
+            Name = "Guest",
+            Status = SenderStatus.AutoApprove,
+            FirstSeen = new DateTimeOffset(2026, 9, 21, 12, 0, 0, TimeSpan.Zero),
+        });
+
+        var json = JsonSerializer.SerializeToUtf8Bytes(state, StateJson.Options);
+        var round = JsonSerializer.Deserialize<EventState>(json, StateJson.Options)!;
+
+        var sender = Assert.Single(round.Settings.Senders);
+        Assert.Equal(42, sender.Id);
+        Assert.Equal(SenderStatus.AutoApprove, sender.Status);
+        Assert.Contains("\"autoApprove\"", System.Text.Encoding.UTF8.GetString(json));
+    }
+
+    [Fact]
+    public void A_fresh_state_has_an_empty_roster()
+    {
+        Assert.Empty(new EventState().Settings.Senders);
+    }
+
+    [Fact]
     public void State_round_trips_through_json_with_camel_case_enums()
     {
         var state = new EventState();
