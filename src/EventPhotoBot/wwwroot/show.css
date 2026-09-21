@@ -30,12 +30,18 @@ html, body {
   filter: blur(48px) brightness(0.45);
 }
 
+/* `width/height: 100%` rather than `max-width/max-height`: the max- form caps an
+   image at the viewport but leaves a smaller one at its natural size, floating in
+   the middle of the screen. The display copy is never upscaled server-side (see
+   ImagePipeline.DisplayMaxEdge), so a screenshot or an old phone photo arrives
+   well under 1080p and used to show as a small picture in a big blurred frame.
+   `object-fit: contain` keeps the aspect ratio, so this scales up to fill one
+   axis; the backdrop still fills whatever letterboxing the other axis leaves. */
 .slide img {
   position: absolute;
   inset: 0;
-  margin: auto;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 

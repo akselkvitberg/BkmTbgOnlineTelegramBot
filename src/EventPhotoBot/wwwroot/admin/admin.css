@@ -144,7 +144,24 @@ button:disabled { opacity: 0.5; cursor: default; }
   gap: 12px;
 }
 
-.grid figure { margin: 0; background: var(--panel); border-radius: 10px; overflow: hidden; }
+.grid figure { position: relative; margin: 0; background: var(--panel); border-radius: 10px; overflow: hidden; }
+
+/* A pinned photo looks identical to any other in a grid of thumbnails, and the
+   Pin/Unpin button only says what the click would do - not what the photo is.
+   The marker sits on the thumbnail so pinned ones are findable at a glance. */
+.grid figure.pinned { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.grid .pin-flag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  pointer-events: none;
+}
 .grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 .grid .row { padding: 8px; margin: 0; gap: 4px; }
 .grid button { padding: 6px 10px; font-size: 0.85rem; }

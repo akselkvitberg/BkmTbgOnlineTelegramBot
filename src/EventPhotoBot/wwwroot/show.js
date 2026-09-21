@@ -66,11 +66,35 @@
     captionText.textContent = currentImage.caption ?? '';
   }
 
+  // ---- fullscreen ----------------------------------------------------------
+
+  /// F11 covers a desktop browser, but not a tablet or a kiosk shell without a
+  /// function row, and the page has no visible chrome to click (the cursor is
+  /// hidden). The Fullscreen API needs a user gesture, which a keypress is.
+  function toggleFullscreen() {
+    const root = document.documentElement;
+    const request = root.requestFullscreen ?? root.webkitRequestFullscreen;
+    const exit = document.exitFullscreen ?? document.webkitExitFullscreen;
+    const active = document.fullscreenElement ?? document.webkitFullscreenElement;
+
+    // Rejects if the browser refuses (an unattended gesture, a disallowed
+    // iframe); nothing to recover, and an unhandled rejection is noise.
+    Promise.resolve(active ? exit?.call(document) : request?.call(root)).catch(() => {});
+  }
+
   document.addEventListener('keydown', event => {
-    if (event.key !== 'c' && event.key !== 'C') return;
-    captionsEnabled = !captionsEnabled;
-    saveCaptionsEnabled(captionsEnabled);
-    updateCaptionOverlay();
+    // Leave browser shortcuts (Ctrl/Cmd+F, Alt+C) alone.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const key = event.key?.toLowerCase();
+
+    if (key === 'c') {
+      captionsEnabled = !captionsEnabled;
+      saveCaptionsEnabled(captionsEnabled);
+      updateCaptionOverlay();
+    } else if (key === 'f') {
+      toggleFullscreen();
+    }
   });
 
   // The shortcut has no other affordance, so give it a few seconds of

@@ -55,8 +55,11 @@
         return;
       }
       grid.innerHTML = images.map(image => `
-        <figure data-id="${image.id}">
+        <figure data-id="${image.id}" class="${image.pin === 'recurring' ? 'pinned' : ''}">
           <img src="${Admin.imageUrl(image.id, 'thumb')}" alt="" loading="lazy">
+          ${image.pin === 'recurring'
+            ? '<span class="pin-flag" title="Pinned: shown again every few slides">📌</span>'
+            : ''}
           <div class="row">
             <button onclick="setStatus('${image.id}','${image.status === 'hidden' ? 'approved' : 'hidden'}')">
               ${image.status === 'hidden' ? 'Show' : 'Hide'}
