@@ -20,7 +20,8 @@ public sealed record SettingsPatch(
     int? TransitionMs,
     string? Order,
     bool? NewestFirstBoost,
-    int? RecurringEvery);
+    int? RecurringEvery,
+    bool? KenBurns);
 
 public static class ApiEndpoints
 {
@@ -66,6 +67,7 @@ public static class ApiEndpoints
                 Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
                 s.NewestFirstBoost,
                 s.RecurringEvery,
+                s.KenBurns,
                 s.TakeoverImageId,
                 s.TakeoverUntil,
                 // Projected by hand, like the image status above: responses go through
@@ -290,6 +292,7 @@ public static class ApiEndpoints
                 if (patch.Order is { } o) s.Order = o == "newest-first" ? SlideOrder.NewestFirst : SlideOrder.Shuffle;
                 if (patch.NewestFirstBoost is { } boost) s.NewestFirstBoost = boost;
                 if (patch.RecurringEvery is { } every) s.RecurringEvery = Math.Clamp(every, 1, 100);
+                if (patch.KenBurns is { } kenBurns) s.KenBurns = kenBurns;
             });
 
             return Results.Ok();

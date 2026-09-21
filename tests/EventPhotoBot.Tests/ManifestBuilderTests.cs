@@ -24,6 +24,17 @@ public class ManifestBuilderTests
         Assert.Null(manifest.Settings.JoinUrl);
     }
 
+    [Fact]
+    public void The_manifest_carries_the_ken_burns_setting()
+    {
+        var state = new EventState();
+        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.KenBurns);
+
+        state.Settings.KenBurns = false;
+
+        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.KenBurns);
+    }
+
     private static EventState StateWith(params (string Id, ImageStatus Status, PinKind Pin)[] images)
     {
         var state = new EventState();

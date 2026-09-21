@@ -29,6 +29,7 @@
       <option value="newest-first">Newest first</option>
     </select>
     <label><input id="newestFirstBoost" type="checkbox"> Jump new photos to the front</label>
+    <label><input id="kenBurns" type="checkbox"> Slow zoom on each photo</label>
     <label for="recurringEvery">Show a pinned image every N photos</label>
     <input id="recurringEvery" type="number" min="1" max="100">
     <div class="row"><button class="primary" onclick="saveSlideshow()">Save</button></div>
@@ -77,6 +78,7 @@
       const orderEl = document.getElementById('order');
       if (document.activeElement !== orderEl) orderEl.value = settings.order;
       document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
+      document.getElementById('kenBurns').checked = settings.kenBurns;
       renderSenders();
     }
 
@@ -129,6 +131,7 @@
       order: document.getElementById('order').value,
       newestFirstBoost: document.getElementById('newestFirstBoost').checked,
       recurringEvery: Number(document.getElementById('recurringEvery').value),
+      kenBurns: document.getElementById('kenBurns').checked,
     }).then(load);
 
     // Without this, an admin watching this page during the event sees nothing happen
