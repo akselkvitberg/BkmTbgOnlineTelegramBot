@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Last opp</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Kø<span class="badge"></span></a>
+    <a href="/admin/images">Bilder</a>
+    <a href="/upload" class="active">Last opp</a>
+    <a href="/admin/settings">Innstillinger</a>
+    <a href="/show">Skjerm</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
+  </nav>
+
+  <main>
+    <!--
+      No `capture` attribute, deliberately: it forces the camera and collapses the
+      picker to a single shot on both iOS and Android, which is the one thing this
+      page exists not to do. UploadPageTests guards that.
+    -->
+    <input type="file" id="picker" accept="image/*" multiple hidden>
+    <label class="pick" for="picker">Velg bilder</label>
+    <p class="muted pick-hint">Du kan velge flere om gangen. Bildene lastes opp i full størrelse.</p>
+
+    <div class="row" id="actions" hidden>
+      <button class="primary" id="start">Last opp</button>
+      <button id="clear">Tøm listen</button>
+    </div>
+
+    <p class="muted" id="progress" hidden></p>
+
+    <ul class="upload-list" id="list"></ul>
+  </main>
+
+  <script>
+    'use strict';
+
+    const picker = document.getElementById('picker');
+    const list = document.getElementById('list');
+    const actions = document.getElementById('actions');
+    const progress = document.getElementById('progress');
+    const startButton = document.getElementById('start');
+    const clearButton = document.getElementById('clear');
+
+    // One entry per chosen file: { file, url, state, error }. state is one of
+    // waiting | uploading | done | failed.
+    let items = [];
+    let running = false;
+
+    picker.addEventListener('change', () => {
+      // Append rather than replace. The native picker closes after one album, and
+      // a second trip through it is the normal way to gather photos from two places.
+      for (const file of picker.files) {
+        items.push({ file, url: URL.createObjectURL(file), state: 'waiting', error: null });
+      }
+      picker.value = '';
+      render();
+    });
+
+    startButton.addEventListener('click', () => { run(); });
+
+    clearButton.addEventListener('click', () => {
+      if (running) return;
+      for (const item of items) if (item.url) URL.revokeObjectURL(item.url);
+      items = [];
+      render();
+    });
+
+    /**
+     * Sequential on purpose. The service runs on a single 1 GiB Cloud Run instance
+     * with a 120 s request timeout, and every upload decodes a full-size photo and
+     * rewrites state.json; a phone firing twenty of these at once is an out-of-memory
+     * kill that takes the slideshow down with it, not just a failed upload.
+     */
+    async function run() {
+      if (running) return;
+      running = true;
+      const wakeLock = await holdScreenAwake();
+      render();
+
+      try {
+        for (const item of items) {
+          if (item.state === 'done' || item.state === 'uploading') continue;
+
+          item.state = 'uploading';
+          item.error = null;
+          render();
+
+          try {
+            await upload(item.file);
+            item.state = 'done';
+            // A phone holding object URLs for thirty full-size photos runs out of
+            // memory on its own; the thumbnail has done its job once the file is up.
+            if (item.url) { URL.revokeObjectURL(item.url); item.url = null; }
+          } catch (error) {
+            if (error === UNAUTHORIZED) return;
+            item.state = 'failed';
+            item.error = error.message;
+          }
+          render();
+        }
+      } finally {
+        running = false;
+        wakeLock?.release().catch(() => { /* already gone; nothing to undo */ });
+        render();
+      }
+    }
+
+    const UNAUTHORIZED = Symbol('unauthorized');
+
+    async function upload(file) {
+      const form = new FormData();
+      form.append('file', file);
+
+      let response;
+      try {
+        response = await fetch('/api/images', { method: 'POST', body: form });
+      } catch {
+        // fetch only rejects on a transport failure — on a phone that is the walk
+        // out of wifi range, not anything wrong with the photo.
+        throw new Error('Mistet nettforbindelsen.');
+      }
+
+      if (response.status === 401) { location.href = '/login'; throw UNAUTHORIZED; }
+      if (response.status === 413) throw new Error('Filen er for stor.');
+      if (!response.ok) throw new Error(await explain(response));
+    }
+
+    /** The API answers errors as {"error": "..."}; fall back to whatever came back. */
+    async function explain(response) {
+      const body = await response.text();
+      try {
+        return JSON.parse(body).error || `Det gikk ikke (${response.status}).`;
+      } catch {
+        return body.trim() || `Det gikk ikke (${response.status}).`;
+      }
+    }
+
+    /**
+     * An upload dies when the tab suspends, which on a phone means the moment the
+     * screen locks. Unsupported (and a refusal) is fine — the page just works the
+     * way it did before.
+     */
+    async function holdScreenAwake() {
+      try { return await navigator.wakeLock?.request('screen'); } catch { return null; }
+    }
+
+    const LABELS = {
+      waiting: 'Venter',
+      uploading: 'Laster opp …',
+      done: 'Lastet opp',
+    };
+
+    function render() {
+      list.replaceChildren(...items.map(renderItem));
+
+      const done = items.filter(i => i.state === 'done').length;
+      const failed = items.filter(i => i.state === 'failed').length;
+
+      const pending = items.length - done;
+
+      actions.hidden = items.length === 0;
+      startButton.hidden = pending === 0;
+      startButton.disabled = running;
+      startButton.textContent = failed > 0 && !running
+        ? `Prøv ${failed} på nytt`
+        : `Last opp ${pending} ${pending === 1 ? 'bilde' : 'bilder'}`;
+      clearButton.disabled = running;
+
+      progress.hidden = items.length === 0;
+      progress.textContent = failed > 0
+        ? `${done} av ${items.length} lastet opp — ${failed} feilet`
+        : `${done} av ${items.length} lastet opp`;
+    }
+
+    function renderItem(item) {
+      const row = document.createElement('li');
+      row.className = 'upload-item';
+      row.dataset.state = item.state;
+
+      if (item.url) {
+        const thumb = document.createElement('img');
+        thumb.src = item.url;
+        thumb.alt = '';
+        row.appendChild(thumb);
+      } else {
+        row.appendChild(document.createElement('span')).className = 'upload-placeholder';
+      }
+
+      const info = document.createElement('div');
+      info.className = 'upload-info';
+
+      const name = document.createElement('span');
+      name.className = 'upload-name';
+      // textContent, not innerHTML: the filename comes off the device unfiltered.
+      name.textContent = item.file.name;
+      info.appendChild(name);
+
+      const state = document.createElement('span');
+      state.className = 'upload-state muted';
+      state.textContent = item.error ?? LABELS[item.state];
+      info.appendChild(state);
+
+      row.appendChild(info);
+
+      if (item.state !== 'done' && !running) {
+        const remove = document.createElement('button');
+        remove.className = 'upload-remove';
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `Fjern ${item.file.name}`);
+        remove.textContent = '✕';
+        remove.onclick = () => {
+          if (item.url) URL.revokeObjectURL(item.url);
+          items = items.filter(i => i !== item);
+          render();
+        };
+        row.appendChild(remove);
+      }
+
+      return row;
+    }
+
+    render();
+  </script>
+</body>
+</html>

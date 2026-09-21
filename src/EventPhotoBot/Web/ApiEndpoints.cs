@@ -237,9 +237,25 @@ public static class ApiEndpoints
                 {
                     processed = ImagePipeline.Process(original);
                 }
+                catch (ImageTooLargeException e)
+                {
+                    // The pipeline writes this message for the sender's eyes; folding it
+                    // into the generic reply below would tell someone their perfectly
+                    // good photo is unreadable.
+                    return Results.BadRequest(new { error = e.Message });
+                }
                 catch
                 {
-                    return Results.BadRequest(new { error = "Den filen er ikke et bilde jeg kan lese." });
+                    // The upload page is used from a phone, where this is the one
+                    // rejection that happens for a reason the uploader can act on.
+                    return Results.BadRequest(new
+                    {
+                        error = ImagePipeline.LooksLikeHeif(original)
+                            ? "HEIC-bilder kan jeg ikke lese. Velg bildet fra Fotobibliotek "
+                              + "i stedet for Filer, eller sett Innstillinger → Kamera → Formater "
+                              + "til «Mest kompatibelt»."
+                            : "Den filen er ikke et bilde jeg kan lese.",
+                    });
                 }
 
                 var id = Ulid.NewUlid().ToString();

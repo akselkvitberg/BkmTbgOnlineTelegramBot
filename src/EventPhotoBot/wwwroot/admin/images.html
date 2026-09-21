@@ -10,6 +10,7 @@
   <nav>
     <a href="/admin/queue">Kø<span class="badge"></span></a>
     <a href="/admin/images">Bilder</a>
+    <a href="/upload">Last opp</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -31,8 +32,7 @@
         <option value="rejected">Avviste</option>
         <option value="">Alt</option>
       </select>
-      <input type="file" id="upload" accept="image/*" style="width:auto">
-      <button onclick="uploadFile()">Last opp</button>
+      <a class="link-button" href="/upload">Last opp bilder</a>
     </div>
 
     <div class="grid" id="grid"></div>
@@ -92,16 +92,6 @@
         return;
       }
       await Admin.api('PUT', '/api/takeover', { imageId: id, minutes });
-      load();
-    }
-
-    async function uploadFile() {
-      const input = document.getElementById('upload');
-      if (!input.files.length) return;
-      const form = new FormData();
-      form.append('file', input.files[0]);
-      await Admin.api('POST', '/api/images', form);
-      input.value = '';
       load();
     }
 

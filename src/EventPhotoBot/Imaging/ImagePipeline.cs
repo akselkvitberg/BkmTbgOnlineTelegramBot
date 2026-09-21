@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
@@ -31,8 +32,27 @@ public static class ImagePipeline
     private static readonly HashSet<string> Supported =
         new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/jpg", "image/png", "image/webp" };
 
+    // The HEIF brands an Apple device actually writes. ImageSharp decodes none of
+    // them, so the only use for this list is telling the two failures apart: a
+    // photo in a format we cannot read, versus a file that is not a photo at all.
+    private static readonly HashSet<string> HeifBrands =
+        new(StringComparer.Ordinal)
+        {
+            "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "mif1", "msf1",
+        };
+
     public static bool IsSupportedMimeType(string? mimeType) =>
         mimeType is not null && Supported.Contains(mimeType);
+
+    /// <summary>
+    /// Sniffs the ISO base media file format header an iPhone photo carries. Every
+    /// such file opens with a four-byte box length, the literal "ftyp", and a brand;
+    /// that is all this reads, and it never touches pixel data.
+    /// </summary>
+    public static bool LooksLikeHeif(ReadOnlySpan<byte> bytes) =>
+        bytes.Length >= 12
+        && bytes[4..8].SequenceEqual("ftyp"u8)
+        && HeifBrands.Contains(Encoding.ASCII.GetString(bytes[8..12]));
 
     /// <summary>
     /// Decode, apply EXIF orientation, strip metadata, produce both derivatives.
