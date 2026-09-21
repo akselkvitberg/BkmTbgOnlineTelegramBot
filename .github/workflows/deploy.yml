@@ -1,0 +1,251 @@
+name: Deploy
+
+# Manual only. Build, push, apply, register the webhook — the same sequence
+# infra/deploy.ps1 runs from a workstation; see that script's own comments
+# for the reasoning behind each step, in particular the webhook one.
+on:
+  workflow_dispatch:
+    inputs:
+      event_name:
+        description: "Event name shown on the slideshow's empty state (var.event_name)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # required to exchange this run's OIDC token for GCP credentials
+
+concurrency:
+  group: eventphoto-terraform
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Every value this job reads from vars/inputs is passed through env here
+    # and referenced as "$NAME" in the run: scripts below, rather than
+    # spliced in with ${{ }} — that keeps an operator's own input from ever
+    # being interpreted as shell syntax instead of a plain string.
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      EVENT_NAME: ${{ inputs.event_name }}
+    steps:
+      - name: Check required inputs and repository variables
+        run: |
+          missing=()
+          [ -z "$GCP_PROJECT_ID" ] && missing+=("repository variable GCP_PROJECT_ID")
+          [ -z "$GCP_WORKLOAD_IDENTITY_PROVIDER" ] && missing+=("repository variable GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -z "$GCP_DEPLOY_SERVICE_ACCOUNT" ] && missing+=("repository variable GCP_DEPLOY_SERVICE_ACCOUNT")
+          [ -z "$TF_STATE_BUCKET" ] && missing+=("repository variable TF_STATE_BUCKET")
+          [ -z "$EVENT_NAME" ] && missing+=("workflow input event_name")
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf 'Missing: %s\n' "${missing[@]}" >&2
+            echo "Set repository variables under Settings -> Secrets and variables -> Actions -> Variables." >&2
+            echo "See docs/RUNBOOK.md for where each value comes from." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Authenticate to GCP (Workload Identity Federation, keyless)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Resolve configuration
+        id: cfg
+        run: |
+          # region/name fall back to the same defaults as variables.tf
+          # (europe-north1 / eventphoto) when the repository variable is
+          # unset, via plain bash parameter expansion — not TF_VAR_*, which
+          # would set an *empty string* rather than leaving the Terraform
+          # variable unset, silently breaking resource/image names instead
+          # of falling back to variables.tf's default.
+          region="${GCP_REGION:-europe-north1}"
+          name="${APP_NAME:-eventphoto}"
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "registry=$region-docker.pkg.dev/$GCP_PROJECT_ID/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+
+      # On a fresh project the Artifact Registry repository this workflow is
+      # about to `docker push` into does not exist yet, and neither do the
+      # secret resources docs/RUNBOOK.md tells the operator to add versions
+      # to — both are created here, not by the full apply below, which is
+      # pinned to a real image digest that can't exist before a push has
+      # somewhere to land. This mirrors infra/deploy.ps1's own targeted
+      # bootstrap apply line for line (-target, placeholder digest, same
+      # vars), which is what keeps the two paths genuinely interchangeable
+      # rather than the workflow silently assuming the bucket-and-WIF
+      # one-time setup also created these — it doesn't; only a bootstrap
+      # apply does.
+      - name: Terraform bootstrap apply (registry + secrets)
+        working-directory: infra
+        env:
+          REGION: ${{ steps.cfg.outputs.region }}
+          NAME: ${{ steps.cfg.outputs.name }}
+        run: |
+          terraform apply -input=false -auto-approve \
+            -target=google_artifact_registry_repository.images \
+            -target=google_secret_manager_secret.secrets \
+            -var "project_id=$GCP_PROJECT_ID" \
+            -var "region=$REGION" \
+            -var "name=$NAME" \
+            -var "event_name=$EVENT_NAME" \
+            -var "image_digest=placeholder"
+
+      - name: Build and push image
+        env:
+          REGION: ${{ steps.cfg.outputs.region }}
+          REGISTRY: ${{ steps.cfg.outputs.registry }}
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -t "$REGISTRY/app:latest" .
+          docker push "$REGISTRY/app:latest"
+
+      - name: Resolve image digest
+        id: image
+        env:
+          REGISTRY: ${{ steps.cfg.outputs.registry }}
+        run: |
+          set -euo pipefail
+          # Pin by digest, not tag, so `terraform apply` is honest about what
+          # changes — same reasoning as infra/deploy.ps1.
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY/app:latest")
+          if [ -z "$digest" ]; then
+            echo "Could not resolve a digest for the pushed image." >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          REGION: ${{ steps.cfg.outputs.region }}
+          NAME: ${{ steps.cfg.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var "project_id=$GCP_PROJECT_ID" \
+            -var "region=$REGION" \
+            -var "name=$NAME" \
+            -var "event_name=$EVENT_NAME" \
+            -var "image_digest=$IMAGE_DIGEST"
+
+      - name: Get service URL
+        id: url
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          url=$(terraform output -raw service_url)
+          if [ -z "$url" ]; then
+            echo "service_url output is empty." >&2
+            exit 1
+          fi
+          echo "service_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Register the Telegram webhook
+        env:
+          NAME: ${{ steps.cfg.outputs.name }}
+          SERVICE_URL: ${{ steps.url.outputs.service_url }}
+        run: |
+          set -euo pipefail
+
+          # Each fetch is guarded individually rather than with a trailing
+          # `[ -z ... ]` check after all three: under `set -e`, a `gcloud`
+          # call that fails outright (no version at all — the common case
+          # for a secret nobody has added yet) aborts the script at the
+          # assignment itself, so a check placed after all three assignments
+          # never runs for that case; it would only ever fire for the much
+          # rarer "version exists but is empty" case. `cmd || { ...; }` is a
+          # checked context (`-e` does not trigger on the left side of `||`,
+          # same as the `&&` idiom the preflight steps use above), so each
+          # failure is caught right where it happens, with a message naming
+          # which secret is missing rather than gcloud's own bare NOT_FOUND.
+          bot_token=$(gcloud secrets versions access latest --secret "$NAME-bot-token" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-bot-token'. Add one with 'gcloud secrets versions add $NAME-bot-token --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          webhook_path=$(gcloud secrets versions access latest --secret "$NAME-webhook-path" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-webhook-path'. Add one with 'gcloud secrets versions add $NAME-webhook-path --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          webhook_secret=$(gcloud secrets versions access latest --secret "$NAME-webhook-secret" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-webhook-secret'. Add one with 'gcloud secrets versions add $NAME-webhook-secret --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+
+          # Mask immediately, in the same breath they're captured. These are
+          # never registered as GitHub *secrets* (the constraint on this repo
+          # is that no bot token, password or signing key is ever configured
+          # as one), so nothing masks them automatically the way secrets.*
+          # values are — this line is what stands in for that. Nothing below
+          # may echo, printf, or `set -x` these three variables.
+          echo "::add-mask::$bot_token"
+          echo "::add-mask::$webhook_path"
+          echo "::add-mask::$webhook_secret"
+
+          # drop_pending_updates=true is safe here ONLY because this call
+          # fires when the webhook URL, path or secret is being (re)registered
+          # from a clean state — see infra/deploy.ps1's comment on this exact
+          # call, which this step mirrors line for line. Do NOT rerun this
+          # workflow mid-event: it would discard any update Telegram is
+          # holding for a momentarily-unreachable webhook, and a photo sent
+          # in that window vanishes with no error to either the sender or the
+          # admin. A mid-event redeploy goes through `gcloud run services
+          # update` instead, which never touches webhook registration.
+          #
+          # The whole request goes through `-K -` (a config file on stdin)
+          # rather than flags on the command line: curl's argv is world-
+          # readable on Linux via /proc/<pid>/cmdline for the life of the
+          # process, so a bot token or secret passed as `-X POST
+          # ".../bot$bot_token/..."` would sit there in plain sight for any
+          # other process on the runner, however briefly. Reading the same
+          # values from stdin instead means they never appear as a process
+          # argument at all.
+          http_status=$(curl -sS -o response.json -w '%{http_code}' -K - <<CURLCFG
+          request = "POST"
+          url = "https://api.telegram.org/bot${bot_token}/setWebhook"
+          data-urlencode = "url=${SERVICE_URL}/tg/${webhook_path}"
+          data-urlencode = "secret_token=${webhook_secret}"
+          data-urlencode = "max_connections=4"
+          data-urlencode = "drop_pending_updates=true"
+          CURLCFG
+          )
+
+          ok=$(jq -r '.ok // false' response.json)
+          if [ "$http_status" != "200" ] || [ "$ok" != "true" ]; then
+            echo "setWebhook failed (HTTP $http_status):" >&2
+            cat response.json >&2
+            exit 1
+          fi
+          rm -f response.json
+
+      - name: Summary
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SERVICE_URL: ${{ steps.url.outputs.service_url }}
+        run: |
+          {
+            echo "## Deployed"
+            echo
+            echo "- Event: \`$EVENT_NAME\`"
+            echo "- Image digest: \`$IMAGE_DIGEST\`"
+            echo "- Slideshow: $SERVICE_URL/show"
+            echo "- Admin: $SERVICE_URL/admin/queue"
+            echo "- Webhook registered."
+          } >> "$GITHUB_STEP_SUMMARY"

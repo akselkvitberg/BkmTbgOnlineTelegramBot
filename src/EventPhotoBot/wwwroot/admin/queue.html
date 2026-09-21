@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Queue</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Queue<span class="badge"></span></a>
+    <a href="/admin/images">Images</a>
+    <a href="/admin/settings">Settings</a>
+    <a href="/show">Screen</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
+  </nav>
+
+  <main>
+    <div id="pairing-banner" hidden>
+      <strong>Pairing mode is on</strong>
+      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
+    </div>
+    <div id="takeover-banner" hidden></div>
+    <p class="muted">Press <kbd>A</kbd> to approve or <kbd>R</kbd> to reject the top photo.</p>
+    <div id="queue"></div>
+  </main>
+
+  <script src="/admin/admin.js"></script>
+  <script>
+    // The manifest carries only approved images, so the queue needs the pending
+    // ones separately. /api/manifest reports the count; this page lists them.
+    let pending = [];
+
+    async function loadPending() {
+      const response = await fetch('/api/images?status=pending', { cache: 'no-store' });
+      if (!response.ok) return;
+      pending = await response.json();
+      render();
+    }
+
+    function render() {
+      const container = document.getElementById('queue');
+      if (pending.length === 0) {
+        container.innerHTML = '<p class="empty">Nothing waiting. Enjoy the party.</p>';
+        return;
+      }
+      container.innerHTML = pending.map(image => `
+        <div class="queue-item" data-id="${image.id}">
+          <img src="${Admin.imageUrl(image.id, 'display')}" alt="" loading="lazy">
+          <div class="row">
+            <strong>${Admin.escapeHtml(image.senderName ?? 'Unknown')}</strong>
+            <span class="muted">${Admin.escapeHtml(image.caption ?? '')}</span>
+          </div>
+          <div class="row">
+            <button class="primary" onclick="decide('${image.id}','approved')">Approve</button>
+            <button class="danger" onclick="decide('${image.id}','rejected')">Reject</button>
+          </div>
+        </div>`).join('');
+    }
+
+    // Guards the A/R shortcut against a second decision landing on the same photo:
+    // pending only refreshes after the round trip below plus a full loadPending(),
+    // which is easily over a second on an admin phone at one bar. Without this, five
+    // quick taps of "A" - or one held key at the OS auto-repeat rate - sent five
+    // `approved` writes against pending[0] and left photos 2-5 untouched, each write
+    // still bumping the generation and forcing every connected client to refetch.
+    let deciding = false;
+
+    async function decide(id, status) {
+      if (deciding) return;
+      deciding = true;
+      try {
+        const response = await Admin.api('POST', `/api/images/${id}/status`, { status });
+        // Admin.api already alerted the admin on failure. Leave `pending` untouched
+        // on failure so the photo stays visible and the next shortcut press retries
+        // it, rather than silently moving on to the next photo in the backlog.
+        if (!response) return;
+        // Remove the decided item locally instead of re-fetching: the manifest
+        // subscription (Admin.onManifest below) already brings the authoritative
+        // list once the write's generation bump reaches it, and the immediate
+        // loadPending() this replaces was a second round trip for the same result.
+        pending = pending.filter(image => image.id !== id);
+        render();
+      } finally {
+        deciding = false;
+      }
+    }
+
+    document.addEventListener('keydown', event => {
+      // event.repeat is true for the synthetic keydown events an OS sends while a
+      // key is held, at the auto-repeat rate - each one otherwise a full decide().
+      if (event.repeat || pending.length === 0) return;
+      const key = event.key.toLowerCase();
+      if (key === 'a') decide(pending[0].id, 'approved');
+      if (key === 'r') decide(pending[0].id, 'rejected');
+    });
+
+    Admin.onManifest(() => loadPending());
+    loadPending();
+  </script>
+</body>
+</html>

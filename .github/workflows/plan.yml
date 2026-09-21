@@ -1,0 +1,119 @@
+name: Terraform plan
+
+# Manual only: this repository's Terraform manages a live Cloud Run service
+# and its data, and nothing here should run because of a push.
+on:
+  workflow_dispatch:
+    inputs:
+      event_name:
+        description: "Event name shown on the slideshow's empty state (maps to var.event_name)."
+        required: true
+        type: string
+      image_digest:
+        description: "Full image ref by digest to plan against (var.image_digest). Leave as 'placeholder' before any image has ever been built and pushed — this mirrors infra/deploy.ps1's own bootstrap apply, which uses the same placeholder for the same reason."
+        required: false
+        type: string
+        default: placeholder
+
+permissions:
+  contents: read
+  id-token: write # required to exchange this run's OIDC token for GCP credentials
+
+concurrency:
+  group: eventphoto-terraform
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    # Every value this job reads from vars/inputs is passed through env here
+    # and referenced as "$NAME" in the run: scripts below, rather than
+    # spliced in with ${{ }} — that keeps an operator's own input from ever
+    # being interpreted as shell syntax instead of a plain string.
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      EVENT_NAME: ${{ inputs.event_name }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+    steps:
+      - name: Check required inputs and repository variables
+        run: |
+          missing=()
+          [ -z "$GCP_PROJECT_ID" ] && missing+=("repository variable GCP_PROJECT_ID")
+          [ -z "$GCP_WORKLOAD_IDENTITY_PROVIDER" ] && missing+=("repository variable GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -z "$GCP_DEPLOY_SERVICE_ACCOUNT" ] && missing+=("repository variable GCP_DEPLOY_SERVICE_ACCOUNT")
+          [ -z "$TF_STATE_BUCKET" ] && missing+=("repository variable TF_STATE_BUCKET")
+          [ -z "$EVENT_NAME" ] && missing+=("workflow input event_name")
+          [ -z "$IMAGE_DIGEST" ] && missing+=("workflow input image_digest")
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf 'Missing: %s\n' "${missing[@]}" >&2
+            echo "Set repository variables under Settings -> Secrets and variables -> Actions -> Variables." >&2
+            echo "See docs/RUNBOOK.md for where each value comes from." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Authenticate to GCP (Workload Identity Federation, keyless)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+
+      - name: Terraform plan
+        working-directory: infra
+        run: |
+          # GitHub's default shell for run: steps is `bash -e {0}` — -e, but
+          # NOT pipefail. Without pipefail, `terraform plan | tee plan.txt`
+          # takes its exit status from `tee`, which succeeds even when
+          # terraform fails, so a bad variable, a backend permission error or
+          # a provider error would print to stderr, the step would go green,
+          # and the job summary below would publish an empty fenced block
+          # that reads exactly like a clean no-op plan — for the one workflow
+          # whose entire purpose is to be trusted before an apply. set -euo
+          # pipefail (matching every step in deploy.yml that pipes output)
+          # makes the pipeline's exit status the failing command's, so `-e`
+          # actually stops the job. 2>&1 folds stderr into the same capture
+          # so the failure reason lands in the summary, not just the log.
+          set -euo pipefail
+          # region/name fall back to the same defaults as variables.tf
+          # (europe-north1 / eventphoto) when the repository variable is
+          # unset, via plain bash parameter expansion — not TF_VAR_*, which
+          # would set an *empty string* rather than leaving the Terraform
+          # variable unset, silently breaking resource names instead of
+          # falling back to variables.tf's default.
+          region="${GCP_REGION:-europe-north1}"
+          name="${APP_NAME:-eventphoto}"
+          terraform plan -input=false -no-color \
+            -var "project_id=$GCP_PROJECT_ID" \
+            -var "region=$region" \
+            -var "name=$name" \
+            -var "event_name=$EVENT_NAME" \
+            -var "image_digest=$IMAGE_DIGEST" \
+            -out=tfplan 2>&1 | tee plan.txt
+
+      - name: Publish plan to the job summary
+        working-directory: infra
+        run: |
+          {
+            echo "## Terraform plan — event \`$EVENT_NAME\`"
+            echo
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

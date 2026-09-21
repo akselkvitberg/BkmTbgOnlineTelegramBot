@@ -1,0 +1,113 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+  cursor: none;
+}
+
+#stage { position: fixed; inset: 0; }
+
+.slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--transition, 800ms) ease-in-out;
+}
+
+.slide.visible { opacity: 1; }
+
+/* A blurred copy of the image fills the letterboxing rather than flat black. */
+.slide .backdrop {
+  position: absolute;
+  inset: -5%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(48px) brightness(0.45);
+}
+
+.slide img {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+#caption {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 24px 32px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  font-size: clamp(1rem, 2vw, 1.6rem);
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+#caption-sender { font-weight: 600; opacity: 0.85; }
+#caption-text { opacity: 0.95; }
+
+#empty {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 8px;
+  padding: 32px;
+}
+
+#empty h1 { font-size: clamp(1.8rem, 5vw, 4rem); margin: 0; font-weight: 600; }
+#empty p { font-size: clamp(1rem, 2vw, 1.5rem); margin: 0; opacity: 0.7; }
+#empty[hidden] { display: none; }
+
+/* Scoped as `#empty #empty-event-name` (specificity 2-0-0), not the bare id
+   (1-0-0): `#empty p` above is 1-0-1 and, being more specific, was winning
+   over both font-size and opacity regardless of source order - the
+   `!important` this used to carry on opacity was a symptom of that, not a
+   fix, and is no longer needed now that specificity actually wins here. */
+#empty #empty-event-name {
+  font-size: clamp(0.9rem, 1.6vw, 1.2rem);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.55;
+}
+#empty-event-name[hidden] { display: none; }
+
+#offline {
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(190, 60, 60, 0.85);
+  font-size: 0.9rem;
+}
+
+#offline[hidden] { display: none; }
+#caption[hidden] { display: none; }
+
+/* Top-left, not bottom: the caption bar spans the full width of the bottom edge
+   (see #caption above), so a hint placed there overlapped it for its whole
+   8-second visible window on any image with a caption or sender name. */
+#caption-hint {
+  position: fixed;
+  left: 16px;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  font-size: 0.85rem;
+  opacity: 0.85;
+  transition: opacity 600ms ease-in-out;
+}
+
+#caption-hint[hidden] { display: none; }
+
+#keepawake { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

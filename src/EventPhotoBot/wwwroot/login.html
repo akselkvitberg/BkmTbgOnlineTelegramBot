@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sign in</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
+           font: 16px/1.5 system-ui, sans-serif; background: #111; color: #eee; padding: 16px; }
+    form { display: grid; gap: 12px; width: min(320px, 100%); }
+    h1 { font-size: 1.25rem; margin: 0 0 4px; font-weight: 600; }
+    input, button { font: inherit; padding: 12px; border-radius: 8px; border: 1px solid #444; }
+    input { background: #1c1c1c; color: inherit; }
+    button { background: #2f6fed; color: #fff; border-color: transparent; cursor: pointer; }
+    .error { color: #ff8a8a; font-size: 0.9rem; min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h1>Event photos</h1>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password"
+           autofocus required>
+    <button type="submit">Sign in</button>
+    <p class="error" id="error"></p>
+  </form>
+  <script>
+    const reason = new URLSearchParams(location.search).get('error');
+    if (reason === 'bad') document.getElementById('error').textContent = 'Wrong password.';
+    if (reason === 'rate') document.getElementById('error').textContent =
+      'Too many attempts. Wait a minute and try again.';
+  </script>
+</body>
+</html>

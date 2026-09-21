@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone regenerator for the ImagePipelineTests fixtures. Deliberately NOT part of
+    EventPhotoBot.slnx and NOT referenced by EventPhotoBot.Tests.csproj: it is a throwaway
+    utility, run by hand only when the fixtures need to be recreated. The parent test
+    project excludes this folder from its own Compile items (see the
+    <Compile Remove="TestAssets\**\*.cs" /> in EventPhotoBot.Tests.csproj) so this
+    program's entry point never leaks into the test assembly.
+
+    Only SixLabors.ImageSharp is referenced, matching the version in the shipped
+    EventPhotoBot.csproj. An earlier version of this generator used
+    SixLabors.ImageSharp.Drawing's Fill(...) extension methods, but ImageSharp.Drawing
+    3.x is a ground-up rewrite (a stateful "canvas" model) that dropped that API shape
+    entirely, so it's simpler and more stable to fill the flat-color test images with a
+    plain pixel loop (see FillRect below) than to chase that dependency's API across
+    major versions for something this small.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+</Project>
