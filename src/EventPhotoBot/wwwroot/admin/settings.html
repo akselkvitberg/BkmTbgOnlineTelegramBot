@@ -16,10 +16,6 @@
   </nav>
 
   <main>
-    <div id="pairing-banner" hidden>
-      <strong>Pairing mode is on</strong>
-      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
-    </div>
     <div id="takeover-banner" hidden></div>
 
     <h2>Slideshow</h2>
@@ -37,38 +33,36 @@
     <input id="recurringEvery" type="number" min="1" max="100">
     <div class="row"><button class="primary" onclick="saveSlideshow()">Save</button></div>
 
-    <h2>Senders</h2>
-    <label><input id="autoApproveTrusted" type="checkbox">
-      Trusted senders skip the queue</label>
-    <label><input id="pairingMode" type="checkbox">
-      Pairing mode — anyone who messages the bot gets their id back</label>
-    <div class="row"><button class="primary" onclick="saveSenders()">Save</button></div>
-
-    <h3>Whitelist</h3>
-    <table id="whitelist"></table>
+    <h2>People</h2>
+    <p class="muted">
+      People appear here when they scan the QR on the screen. Review first means
+      their photos wait in the queue; auto-approve sends them straight to the screen;
+      banned drops them and rejects everything they have already sent.
+    </p>
+    <table id="senders"></table>
     <div class="row">
       <input id="newId" type="number" placeholder="Telegram id" style="width:auto">
-      <input id="newName" type="text" placeholder="Name" style="width:auto">
-      <button onclick="addEntry()">Add</button>
+      <button onclick="addSender()">Pre-approve a photographer</button>
     </div>
-
-    <h3>Seen while pairing</h3>
-    <table id="seen"></table>
-    <div class="row"><button onclick="clearSeen()">Clear the list</button></div>
   </main>
 
   <script src="/admin/admin.js"></script>
   <script>
     let settings = null;
-    let whitelist = [];
-    let seen = [];
+    let senders = [];
+
+    const STATUSES = ['known', 'autoApprove', 'banned'];
+    const LABELS = {
+      known: 'Review first',
+      autoApprove: 'Auto-approve',
+      banned: 'Banned',
+    };
 
     async function load() {
       const response = await fetch('/api/settings', { cache: 'no-store' });
       if (!response.ok) return;
       settings = await response.json();
-      whitelist = settings.whitelist ?? [];
-      seen = settings.seenSenders ?? [];
+      senders = settings.senders ?? [];
 
       // The manifest subscription below can call load() at any moment - e.g. another
       // admin approves a photo while this one is mid-keystroke in "Seconds per
@@ -83,70 +77,51 @@
       const orderEl = document.getElementById('order');
       if (document.activeElement !== orderEl) orderEl.value = settings.order;
       document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
-      document.getElementById('autoApproveTrusted').checked = settings.autoApproveTrusted;
-      document.getElementById('pairingMode').checked = settings.pairingMode;
-      renderWhitelist();
-      renderSeen();
+      renderSenders();
     }
 
-    function renderWhitelist() {
-      document.getElementById('whitelist').innerHTML =
-        whitelist.length === 0
-          ? '<tr><td class="muted">Nobody yet. Turn on pairing mode and share the bot.</td></tr>'
-          : whitelist.map((entry, index) => `
+    function renderSenders() {
+      // Only the id - a number - goes into the onchange attribute. A sender's name
+      // is attacker-controlled (a Telegram display name), so it is escaped into the
+      // cell and never embedded in a JS argument, where HTML-escaping alone would
+      // still leave a way to break out of the quoted string.
+      document.getElementById('senders').innerHTML =
+        senders.length === 0
+          ? '<tr><td class="muted">Nobody yet. People appear here once they scan the QR.</td></tr>'
+          : senders.map(sender => `
             <tr>
-              <td>${Admin.escapeHtml(entry.name)}</td>
-              <td class="muted">${entry.id}</td>
-              <td><label><input type="checkbox" ${entry.trusted ? 'checked' : ''}
-                    onchange="toggleTrusted(${index}, this.checked)"> trusted</label></td>
-              <td><button class="danger" onclick="removeEntry(${index})">Remove</button></td>
-            </tr>`).join('');
-    }
-
-    function renderSeen() {
-      document.getElementById('seen').innerHTML =
-        seen.length === 0
-          ? '<tr><td class="muted">Nobody has messaged the bot while pairing was on.</td></tr>'
-          // Only the id - a number - goes into the onclick attribute. The
-          // sender's name is attacker-controlled (a Telegram display name),
-          // so it is looked up by id inside addSeen() instead of being
-          // embedded in a string here: HTML-escaping alone would still
-          // leave a way to break out of the single-quoted JS argument the
-          // old version built.
-          : seen.map(sender => `
-            <tr>
-              <td>${Admin.escapeHtml(sender.name)}</td>
+              <td>${Admin.escapeHtml(sender.name) || '<span class="muted">(no name)</span>'}</td>
               <td class="muted">${sender.id}</td>
-              <td><button onclick="addSeen(${sender.id})">Add to whitelist</button></td>
+              <td>
+                <select onchange="setStatus(${sender.id}, this.value)">
+                  ${STATUSES.map(value => `
+                    <option value="${value}" ${sender.status === value ? 'selected' : ''}>
+                      ${LABELS[value]}
+                    </option>`).join('')}
+                </select>
+              </td>
             </tr>`).join('');
     }
 
-    const saveWhitelist = () => Admin.api('PATCH', '/api/settings', { whitelist }).then(load);
-
-    function toggleTrusted(index, trusted) { whitelist[index].trusted = trusted; saveWhitelist(); }
-    function removeEntry(index) { whitelist.splice(index, 1); saveWhitelist(); }
-
-    function addEntry() {
-      const id = Number(document.getElementById('newId').value);
-      const name = document.getElementById('newName').value.trim() || String(id);
-      if (!Number.isFinite(id) || id <= 0) { alert('Enter a numeric Telegram id.'); return; }
-      if (whitelist.some(e => e.id === id)) { alert('Already on the list.'); return; }
-      whitelist.push({ id, name, trusted: false });
-      document.getElementById('newId').value = '';
-      document.getElementById('newName').value = '';
-      saveWhitelist();
+    async function setStatus(id, status) {
+      if (status === 'banned'
+          && !confirm('Ban this person? Every photo they have already sent is rejected, '
+                      + 'including any already on the screen. This cannot be undone.')) {
+        renderSenders();   // put the dropdown back where it was
+        return;
+      }
+      await Admin.api('POST', `/api/senders/${id}/status`, { status });
+      await load();
     }
 
-    function addSeen(id) {
-      if (whitelist.some(e => e.id === id)) return;
-      const sender = seen.find(s => s.id === id);
-      if (!sender) return;
-      whitelist.push({ id, name: sender.name, trusted: false });
-      saveWhitelist();
+    async function addSender() {
+      const input = document.getElementById('newId');
+      const id = Number(input.value);
+      if (!Number.isSafeInteger(id) || id <= 0) { alert('Enter a numeric Telegram id.'); return; }
+      input.value = '';
+      await Admin.api('POST', `/api/senders/${id}/status`, { status: 'autoApprove' });
+      await load();
     }
-
-    const clearSeen = () =>
-      Admin.api('PATCH', '/api/settings', { clearSeenSenders: true }).then(load);
 
     const saveSlideshow = () => Admin.api('PATCH', '/api/settings', {
       slideSeconds: Number(document.getElementById('slideSeconds').value),
@@ -156,17 +131,10 @@
       recurringEvery: Number(document.getElementById('recurringEvery').value),
     }).then(load);
 
-    const saveSenders = () => Admin.api('PATCH', '/api/settings', {
-      autoApproveTrusted: document.getElementById('autoApproveTrusted').checked,
-      pairingMode: document.getElementById('pairingMode').checked,
-    }).then(load);
-
-    // Without this, the admin sits on the settings page during pairing mode (this
-    // page's primary onboarding flow, and the runbook's first acceptance check),
-    // shares the bot's handle, and watches nothing happen as senders message it -
-    // load() only ever ran once, at page open. Admin.onManifest fires on every
-    // change that bumps the manifest generation, and adding a SeenSender does
-    // exactly that (see AdminApiTests), so the signal was already there.
+    // Without this, an admin watching this page during the event sees nothing happen
+    // as people scan the QR and join - load() would only ever run once, at page open.
+    // Admin.onManifest fires on every change that bumps the manifest generation, and
+    // redeeming the join code does exactly that, so the signal is already there.
     Admin.onManifest(() => load());
     load();
   </script>
