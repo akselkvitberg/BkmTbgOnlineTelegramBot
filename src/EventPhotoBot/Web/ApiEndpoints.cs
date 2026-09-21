@@ -41,6 +41,48 @@ public static class ApiEndpoints
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
 
+    /// <summary>
+    /// Parses one of an enum's declared names, case-insensitively. The only way an
+    /// enum should be read off the wire in this app.
+    ///
+    /// Enum.TryParse on its own is not that check, which is the trap: it also accepts
+    /// a numeric string, so a body of {"status": "99"} comes back true with
+    /// (ImageStatus)99 — a value no switch arm, no ToString() and no admin page has
+    /// ever heard of. It would be written into state.json, survive a restart, and be
+    /// served back to every client as the status of a real photo. Enum.IsDefined is
+    /// what closes that, and every call site below goes through here so the rule is
+    /// one thing rather than five that can drift.
+    ///
+    /// Enum.IsDefined alone would not finish the job, which is why the digit check
+    /// comes first: "99" is caught by IsDefined, but "0" and "1" land on declared
+    /// values and would quietly mean Pending, or None, or Known. No client sends a
+    /// number and no admin page produces one, so a name that begins like a number is
+    /// not a name at all. IsDefined still earns its place behind it — TryParse also
+    /// accepts a comma-separated list and ORs the results together, even for an enum
+    /// that is not [Flags], and "pending,approved" is not a declared name either.
+    ///
+    /// A null name is simply not a declared name: System.Text.Json deserializes a
+    /// missing property into null regardless of the record's nullable annotation, so
+    /// this is reached in practice and not only by a client sending literal null.
+    /// </summary>
+    private static bool TryParseName<T>(string? name, out T value) where T : struct, Enum
+    {
+        value = default;
+
+        // Trimmed before the digit check, not after: Enum.TryParse trims for itself,
+        // so " 0 " would otherwise slip past a check that only looked at the space.
+        var trimmed = name?.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return false;
+        if (char.IsAsciiDigit(trimmed[0]) || trimmed[0] is '-' or '+') return false;
+
+        if (!Enum.TryParse<T>(trimmed, ignoreCase: true, out var parsed)
+            || !Enum.IsDefined(parsed))
+            return false;
+
+        value = parsed;
+        return true;
+    }
+
     public static void MapApi(this WebApplication app)
     {
         app.MapGet("/api/images", (string? status, StateStore store) =>
@@ -49,7 +91,7 @@ public static class ApiEndpoints
 
             if (status is not null)
             {
-                if (!Enum.TryParse<ImageStatus>(status, ignoreCase: true, out var wanted))
+                if (!TryParseName<ImageStatus>(status, out var wanted))
                     return Results.BadRequest(new { error = "Ukjent status." });
                 images = images.Where(i => i.Status == wanted);
             }
@@ -119,7 +161,7 @@ public static class ApiEndpoints
         app.MapPost("/api/images/{id}/status",
             async (string id, StatusRequest request, StateStore store) =>
             {
-                if (!Enum.TryParse<ImageStatus>(request.Status, ignoreCase: true, out var status)
+                if (!TryParseName<ImageStatus>(request.Status, out var status)
                     || status == ImageStatus.Pending)
                     return Results.BadRequest(
                         new { error = "status må være approved, hidden eller rejected." });
@@ -142,7 +184,7 @@ public static class ApiEndpoints
             async (string id, PinRequest request, StateStore store) =>
             {
                 // "takeover" is deliberately not a pin value — see PUT /api/takeover.
-                if (!Enum.TryParse<PinKind>(request.Pin, ignoreCase: true, out var pin))
+                if (!TryParseName<PinKind>(request.Pin, out var pin))
                     return Results.BadRequest(new { error = "pin må være none eller recurring." });
 
                 return await store.MutateAsync(state =>
@@ -316,12 +358,7 @@ public static class ApiEndpoints
             SlideLayout? layout = null;
             if (patch.Layout is { } layoutName)
             {
-                // Enum.TryParse alone is not enough: it happily parses a numeric string,
-                // so "99" would come back true with an undefined enum value and be
-                // written to the state file, where it would render as a layout name no
-                // screen has ever heard of.
-                if (!Enum.TryParse<SlideLayout>(layoutName, ignoreCase: true, out var parsed)
-                    || !Enum.IsDefined(parsed))
+                if (!TryParseName<SlideLayout>(layoutName, out var parsed))
                     return Results.BadRequest(new
                     {
                         error = "layout må være single, mosaic, polaroid, filmstrip, "
@@ -356,7 +393,7 @@ public static class ApiEndpoints
         app.MapPost("/api/senders/{id:long}/status",
             async (long id, SenderStatusRequest request, StateStore store) =>
             {
-                if (!Enum.TryParse<SenderStatus>(request.Status, ignoreCase: true, out var status))
+                if (!TryParseName<SenderStatus>(request.Status, out var status))
                     return Results.BadRequest(
                         new { error = "status må være known, autoApprove eller banned." });
 
