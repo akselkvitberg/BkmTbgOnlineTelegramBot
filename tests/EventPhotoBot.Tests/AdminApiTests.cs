@@ -236,6 +236,19 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task The_join_invite_can_be_turned_off_and_back_on()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite); // on unless asked otherwise
+
+        await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = false });
+        Assert.False(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+
+        await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = true });
+        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+    }
+
+    [Fact]
     public async Task A_settings_change_advances_the_manifest_etag()
     {
         var client = _factory.CreateAuthenticatedClient();

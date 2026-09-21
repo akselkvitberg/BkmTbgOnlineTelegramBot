@@ -35,6 +35,30 @@ public class ManifestBuilderTests
         Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.KenBurns);
     }
 
+    [Fact]
+    public void The_manifest_carries_the_join_invite_setting()
+    {
+        var state = new EventState();
+        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.ShowJoinInvite);
+
+        state.Settings.ShowJoinInvite = false;
+
+        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.ShowJoinInvite);
+    }
+
+    [Fact]
+    public void Hiding_the_join_invite_leaves_the_join_url_intact()
+    {
+        // The setting is a screen-side choice, not a change to who may join: the
+        // link keeps working for anyone who already has it, so the manifest still
+        // carries it and only the slideshow's rendering changes.
+        var state = new EventState { Settings = { ShowJoinInvite = false } };
+
+        var manifest = ManifestBuilder.Build(state, 1, Now, "Party", "https://t.me/bot?start=code");
+
+        Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
+    }
+
     private static EventState StateWith(params (string Id, ImageStatus Status, PinKind Pin)[] images)
     {
         var state = new EventState();

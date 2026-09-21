@@ -29,6 +29,8 @@
   const joinQrEl = document.getElementById('join-qr');
   const joinHandleEl = document.getElementById('join-handle');
   const joinBadgeEl = document.getElementById('join-badge');
+  const emptyInviteEl = document.getElementById('empty-invite');
+  const emptyQuietEl = document.getElementById('empty-quiet');
 
   let manifest = null;
   let etag = null;
@@ -167,17 +169,31 @@
   /// than reassigned on every two-second poll. joinUrl is null when the bot's
   /// username could not be resolved at startup, in which case no QR is shown at
   /// all — the slideshow is not worth failing over a missing affordance.
+  ///
+  /// Visibility, unlike the src, is decided on every poll: showJoinInvite can be
+  /// turned off mid-event, and the screen it is turned off for is one that must
+  /// stop asking the room for photos within a poll, not at the next page load.
+  /// When it is off nothing on screen invites anyone to send anything — no QR,
+  /// no handle, and a holding card that says only that photos are coming.
   function applyJoin(next) {
     const joinUrl = next.settings.joinUrl;
-    if (joinUrl && !joinReady) {
+    const inviting = next.settings.showJoinInvite ?? true;
+
+    // A hidden <img> still fetches its src, so the QR is armed only once the
+    // screen is actually inviting anyone — turning the setting on mid-event
+    // arms it on that poll instead.
+    if (joinUrl && inviting && !joinReady) {
       joinQrEl.src = '/api/join-qr.svg';
       joinBadgeEl.src = '/api/join-qr.svg';
       joinHandleEl.textContent = handleFrom(joinUrl);
-      joinEl.hidden = false;
       joinReady = true;
     }
+
+    joinEl.hidden = !joinReady || !inviting;
     // Large in the empty state, small in the corner once there are photos to show.
-    joinBadgeEl.hidden = !joinReady || next.images.length === 0;
+    joinBadgeEl.hidden = !joinReady || !inviting || next.images.length === 0;
+    emptyInviteEl.hidden = !inviting;
+    emptyQuietEl.hidden = inviting;
   }
 
   function handleFrom(joinUrl) {

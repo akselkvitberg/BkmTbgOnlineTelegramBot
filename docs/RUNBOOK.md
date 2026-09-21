@@ -26,7 +26,13 @@ resource name appears.
 - [ ] Pre-approved photographers added by Telegram id and set to Auto-approve
       (see "Who can send" below)
 - [ ] QR on the slideshow checked from the back of the room, on the actual
-      display machine — a QR nobody can scan makes the whole join flow useless
+      display machine — a QR nobody can scan makes the whole join flow useless.
+      A screen the wrong public can see — a foyer, a street-facing window —
+      should instead have "Vis QR-kode og invitasjon" turned off on the settings
+      page, which hides the QR, the bot handle and the wording that asks for
+      photos. That is a change to what the screen shows, not to who may send:
+      anyone already holding the join link keeps it, so a screen that must
+      genuinely stop accepting photos needs the senders list, not this toggle.
 - [ ] Programme and menu images uploaded via `/upload` and pinned as
       recurring from the images page
 - [ ] Takeover set and cleared once, so whoever runs the screen has done it

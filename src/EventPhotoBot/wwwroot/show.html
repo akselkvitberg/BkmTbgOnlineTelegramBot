@@ -17,13 +17,21 @@
     <span id="caption-text"></span>
   </div>
 
+  <!-- Two holding cards, one shown at a time. The inviting one asks the room for
+       photos; the quiet one is for a screen that must not ask (see showJoinInvite
+       in Settings), where the heading would be an invitation in its own right. -->
   <div id="empty">
     <p id="empty-event-name" hidden></p>
-    <h1>Send oss bildene dine</h1>
-    <p id="empty-detail">De dukker opp her så snart en arrangør har godkjent dem.</p>
-    <div id="join" hidden>
-      <img id="join-qr" alt="Skann for å sende bilder">
-      <p id="join-handle"></p>
+    <div id="empty-invite">
+      <h1>Send oss bildene dine</h1>
+      <p id="empty-detail">De dukker opp her så snart en arrangør har godkjent dem.</p>
+      <div id="join" hidden>
+        <img id="join-qr" alt="Skann for å sende bilder">
+        <p id="join-handle"></p>
+      </div>
+    </div>
+    <div id="empty-quiet" hidden>
+      <h1>Bildene kommer snart</h1>
     </div>
   </div>
 
