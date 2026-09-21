@@ -300,12 +300,36 @@ That secret material stays in Secret Manager, added by hand the same way
 regardless of which deploy path is used — but not yet: the four steps above
 create the state bucket and the WIF trust, not the app's own secret
 *resources*. Those come from either path's own bootstrap step (`deploy.ps1`'s
-targeted apply, or the `deploy` workflow's "Terraform bootstrap apply"
-step) — run one of those first, then add versions:
+targeted apply, or the `deploy` workflow's "Terraform bootstrap apply" step).
+
+**5. The first deploy takes two runs, and the first one fails.** This is
+expected, not a misconfiguration. Terraform creates the secret *resources*;
+a secret resource with no version is not something Cloud Run can mount, and
+the webhook step has no token to read. So the first `deploy` run gets as far
+as creating the registry and the five secrets, builds and pushes the image,
+and then fails at "Terraform apply" or "Register the Telegram webhook".
+Add the versions at that point, from a workstation authenticated against the
+project:
 
 ```bash
-printf '%s' 'YOUR_VALUE' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID
+printf '%s' 'YOUR_BOT_TOKEN'        | gcloud secrets versions add eventphoto-bot-token      --data-file=- --project PROJECT_ID
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-webhook-secret --data-file=- --project PROJECT_ID
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-webhook-path   --data-file=- --project PROJECT_ID
+printf '%s' 'A_PASSWORD_YOU_CHOOSE' | gcloud secrets versions add eventphoto-admin-password --data-file=- --project PROJECT_ID
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-cookie-key     --data-file=- --project PROJECT_ID
 ```
+
+`printf '%s'` rather than `echo`, and never an interactive `--data-file=-`
+prompt: both of those store a trailing newline in the secret. AppConfig trims
+whitespace on load so it is no longer fatal, but a webhook path that silently
+differs by one character is not a good debugging session.
+
+Then run `deploy` again. That run applies cleanly and registers the webhook.
+Every subsequent deploy is a single run.
+
+Note that `workflow_dispatch` workflows only appear in the Actions tab once
+the workflow file is on the repository's **default branch** — a first deploy
+from a feature branch has nothing to click until that branch is merged.
 
 ## Deploying
 
