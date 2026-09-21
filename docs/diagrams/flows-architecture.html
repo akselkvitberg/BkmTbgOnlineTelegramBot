@@ -60,7 +60,7 @@
 
     <svg viewBox="0 0 1080 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-arch-title epb-arch-desc">
       <title id="epb-arch-title">EventPhotoBot — three flows, one state</title>
-      <desc id="epb-arch-desc">Three paths converge on a single in-memory StateStore: a whitelisted phone sends a photo through the Telegram Bot API to the webhook, which strips EXIF and writes three objects to the event bucket before recording the image; an admin browser approves or hides it; and the display polls a manifest served from memory, fetching image bytes from the bucket only when the playlist changes.</desc>
+      <desc id="epb-arch-desc">Three paths converge on a single in-memory StateStore: a phone that has joined by scanning the QR sends a photo through the Telegram Bot API to the webhook, which strips EXIF and writes three objects to the event bucket before recording the image; an admin browser approves, hides or bans; and the display polls a manifest served from memory, fetching image bytes from the bucket only when the playlist changes.</desc>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
         <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
@@ -112,7 +112,7 @@
       <text x="784" y="429" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
 
       <rect x="378" y="260" width="80" height="12" rx="2" fill="#f7f6f3"/>
-      <text x="418" y="269" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">APPROVE · HIDE</text>
+      <text x="418" y="269" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">APPROVE · BAN</text>
 
       <rect x="483" y="356" width="60" height="12" rx="2" fill="#f7f6f3"/>
       <text x="513" y="365" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">IN MEMORY</text>
@@ -131,7 +131,7 @@
       <rect x="92" y="94" width="28" height="12" rx="2" fill="transparent" stroke="rgba(118,147,145,0.40)" stroke-width="0.8"/>
       <text x="106" y="103" fill="#769391" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
       <text x="174" y="126" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sender's phone</text>
-      <text x="174" y="142" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">whitelisted</text>
+      <text x="174" y="142" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">scanned the QR</text>
 
       <!-- N2 telegram -->
       <rect x="328" y="88" width="180" height="64" rx="6" fill="#f7f6f3"/>

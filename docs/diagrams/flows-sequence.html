@@ -60,7 +60,7 @@
 
     <svg viewBox="0 0 1040 820" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-seq-title epb-seq-desc">
       <title id="epb-seq-title">EventPhotoBot — one photo, end to end</title>
-      <desc id="epb-seq-desc">Time-ordered exchange between a sender's phone, the Telegram Bot API, the bot service, the display and the event bucket: the bot fetches the file it was told about, decodes and hashes it, writes its objects before writing state, acknowledges the sender, and then serves a repeating manifest poll from memory — returning a fresh playlist only when the generation counter has moved.</desc>
+      <desc id="epb-seq-desc">Time-ordered exchange between a sender's phone, the Telegram Bot API, the bot service, the display and the event bucket: having checked the sender's roster status, the bot fetches the file it was told about, decodes and hashes it, writes its objects before writing state, acknowledges the sender, and then serves a repeating manifest poll from memory — returning a fresh playlist only when the generation counter has moved.</desc>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
         <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
@@ -162,7 +162,7 @@
       <rect x="48" y="64" width="144" height="56" rx="6" fill="#f7f6f3"/>
       <rect x="48" y="64" width="144" height="56" rx="6" fill="rgba(73,112,109,0.10)" stroke="#769391" stroke-width="1"/>
       <text x="120" y="92" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sender's phone</text>
-      <text x="120" y="108" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">whitelisted</text>
+      <text x="120" y="108" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">on the roster</text>
 
       <rect x="248" y="64" width="144" height="56" rx="6" fill="#f7f6f3"/>
       <rect x="248" y="64" width="144" height="56" rx="6" fill="rgba(39,39,39,0.03)" stroke="rgba(39,39,39,0.30)" stroke-width="1"/>

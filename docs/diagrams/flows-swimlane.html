@@ -60,7 +60,7 @@
 
     <svg viewBox="0 0 1080 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-lane-title epb-lane-desc">
       <title id="epb-lane-title">EventPhotoBot — a photo's path to the wall</title>
-      <desc id="epb-lane-desc">Five lanes — sender, Telegram, bot service, admin and display — trace one photo from send to screen: the bot checks the whitelist and either declines with a rate-limited reply or decodes the image, writes its objects before recording state, and hands the pending image to an admin whose single approval puts it on the display at the next poll.</desc>
+      <desc id="epb-lane-desc">Five lanes — sender, Telegram, bot service, admin and display — trace one photo from send to screen: the bot looks the sender up in the roster and either points an unrecognised sender at the QR with a rate-limited reply, or decodes the image, writes its objects before recording state, and hands the pending image to an admin whose single approval puts it on the display at the next poll. The banned case is not drawn here; it is in the sender-states diagram.</desc>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
         <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
@@ -107,7 +107,7 @@
       <text x="461" y="295" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WEBHOOK</text>
 
       <rect x="614" y="226" width="60" height="12" rx="2" fill="#f7f6f3"/>
-      <text x="644" y="235" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NOT LISTED</text>
+      <text x="644" y="235" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NOT JOINED</text>
 
       <rect x="790" y="366" width="46" height="12" rx="2" fill="#f7f6f3"/>
       <text x="813" y="375" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PENDING</text>
@@ -132,14 +132,14 @@
       <!-- 3 whitelist + decode -->
       <rect x="532" y="296" width="144" height="48" rx="6" fill="#f7f6f3"/>
       <rect x="532" y="296" width="144" height="48" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
-      <text x="604" y="318" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Whitelist + decode</text>
+      <text x="604" y="318" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Roster + decode</text>
       <text x="604" y="334" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">exif · sha256</text>
 
       <!-- 4 decline (branch) -->
       <rect x="708" y="120" width="144" height="48" rx="6" fill="#f7f6f3"/>
       <rect x="708" y="120" width="144" height="48" rx="6" fill="rgba(39,39,39,0.02)" stroke="rgba(39,39,39,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
-      <text x="780" y="142" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Decline reply</text>
-      <text x="780" y="158" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 per minute</text>
+      <text x="780" y="142" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Scan the QR</text>
+      <text x="780" y="158" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 reply per minute</text>
 
       <!-- 5 write + record -->
       <rect x="708" y="296" width="144" height="48" rx="6" fill="#f7f6f3"/>
