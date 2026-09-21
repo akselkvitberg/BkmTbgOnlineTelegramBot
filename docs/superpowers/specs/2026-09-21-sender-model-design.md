@@ -233,12 +233,15 @@ hour on the actual display machine" check is where it gets validated.
 
 ## Infrastructure
 
-- `infra/main.tf` — a sixth secret, `eventphoto-join-code`, and its
-  `secretEnvironmentVariables` entry on the Cloud Run service. The bootstrap
-  target list grows by one.
+- `infra/main.tf` — a sixth entry in `local.secret_ids`, `eventphoto-join-code`,
+  and its `secretEnvironmentVariables` entry on the Cloud Run service. The
+  secret resource and its IAM binding both `for_each` over that map, so they
+  need no other change.
 - `infra/deploy.ps1` — prints the `gcloud secrets versions add` line for the new
   secret alongside the existing five.
-- `.github/workflows/deploy.yml` — the bootstrap apply targets the new secret.
+- `.github/workflows/deploy.yml` — **no change.** Its bootstrap apply targets
+  `google_secret_manager_secret.secrets` as a whole, which already covers every
+  member of the `for_each`.
 
 No new GitHub variables or secrets: the join code is secret material and stays
 in Secret Manager, consistent with the existing rule that no secret value is
