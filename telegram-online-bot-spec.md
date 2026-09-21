@@ -168,7 +168,7 @@ Image bytes are served by the app, not from public bucket URLs, so the gate cove
 **Slideshow — `/show`**
 
 - Fullscreen, black background, image fitted with `object-fit: contain` over a blurred copy of itself.
-- Sender name and caption in a corner overlay, dismissible via a settings toggle.
+- Sender name and caption in a corner overlay, hidden by default and toggled with the `C` key (the choice is remembered per machine).
 - Preloads the next two images so transitions do not stall on a slow fetch.
 - Polls `/api/manifest` every two seconds with `If-None-Match`. A 304 is the common case and costs nothing. On a changed ETag it reconciles: removed images disappear after the current slide, newly approved ones are inserted near the front when `newestFirstBoost` is on.
 - Keeps the last manifest in memory and keeps running if polls fail, backing off to ten seconds after a few consecutive failures and showing a small corner indicator while offline. Recovery needs no special handling — the next successful poll carries the current state.

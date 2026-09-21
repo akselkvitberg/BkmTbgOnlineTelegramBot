@@ -53,12 +53,12 @@
   function loadCaptionsEnabled() {
     try {
       const stored = localStorage.getItem(CAPTIONS_KEY);
-      return stored === null ? true : stored === '1';
+      return stored === null ? false : stored === '1';
     } catch {
       // A locked-down browser profile can throw on any localStorage access.
-      // The overlay must still work (default on) even though the choice
-      // won't survive a reload in that profile.
-      return true;
+      // The overlay stays at its default (off) there; the C key still toggles
+      // it for the session, the choice just won't survive a reload.
+      return false;
     }
   }
 
