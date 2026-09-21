@@ -21,7 +21,8 @@ public sealed record SettingsPatch(
     string? Order,
     bool? NewestFirstBoost,
     int? RecurringEvery,
-    bool? KenBurns);
+    bool? KenBurns,
+    bool? ShowJoinInvite);
 
 public static class ApiEndpoints
 {
@@ -68,6 +69,7 @@ public static class ApiEndpoints
                 s.NewestFirstBoost,
                 s.RecurringEvery,
                 s.KenBurns,
+                s.ShowJoinInvite,
                 s.TakeoverImageId,
                 s.TakeoverUntil,
                 // Projected by hand, like the image status above: responses go through
@@ -309,6 +311,7 @@ public static class ApiEndpoints
                 if (patch.NewestFirstBoost is { } boost) s.NewestFirstBoost = boost;
                 if (patch.RecurringEvery is { } every) s.RecurringEvery = Math.Clamp(every, 1, 100);
                 if (patch.KenBurns is { } kenBurns) s.KenBurns = kenBurns;
+                if (patch.ShowJoinInvite is { } showJoinInvite) s.ShowJoinInvite = showJoinInvite;
             });
 
             return Results.Ok();

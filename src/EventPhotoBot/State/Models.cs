@@ -67,6 +67,16 @@ public sealed class Settings
     /// keep the animation smooth — a stutter is worse than no movement at all.
     /// </summary>
     public bool KenBurns { get; set; } = true;
+
+    /// <summary>
+    /// Whether the screen invites people to send photos — the QR code, the bot
+    /// handle, and the wording on the holding card. On by default: that invitation
+    /// is how an event gets any photos at all. Off is for a screen the wrong public
+    /// can see, a foyer or a street-facing window, where the room should not be
+    /// asked to contribute. Visual only: the join link keeps working for anyone who
+    /// already has it, and photos already sent keep arriving.
+    /// </summary>
+    public bool ShowJoinInvite { get; set; } = true;
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
     public List<Sender> Senders { get; set; } = [];

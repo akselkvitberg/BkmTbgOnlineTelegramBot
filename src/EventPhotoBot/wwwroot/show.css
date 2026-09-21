@@ -99,6 +99,12 @@ html, body {
   padding: 32px;
 }
 
+/* The two holding cards repeat the grid and gap of #empty itself, so wrapping
+   their contents leaves the spacing exactly as it was when heading, detail and
+   QR were grid items of #empty directly. */
+#empty-invite, #empty-quiet { display: grid; gap: 8px; }
+#empty-invite[hidden], #empty-quiet[hidden] { display: none; }
+
 #empty h1 { font-size: clamp(1.8rem, 5vw, 4rem); margin: 0; font-weight: 600; }
 #empty p { font-size: clamp(1rem, 2vw, 1.5rem); margin: 0; opacity: 0.7; }
 #empty[hidden] { display: none; }
