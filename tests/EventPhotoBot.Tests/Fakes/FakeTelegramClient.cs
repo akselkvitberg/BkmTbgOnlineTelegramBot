@@ -1,4 +1,3 @@
-// Stub for now, completed in Task 10.
 using EventPhotoBot.Telegram;
 
 namespace EventPhotoBot.Tests.Fakes;
@@ -21,4 +20,12 @@ public sealed class FakeTelegramClient : ITelegramClient
         Sent.Add((chatId, text));
         return Task.CompletedTask;
     }
+
+    public string? Username { get; set; } = "eventphotobot";
+    public bool GetMeThrows { get; set; }
+
+    public Task<string?> GetMeAsync(CancellationToken ct = default) =>
+        GetMeThrows
+            ? throw new HttpRequestException("getMe unavailable")
+            : Task.FromResult(Username);
 }

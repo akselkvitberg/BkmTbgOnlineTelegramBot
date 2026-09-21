@@ -31,4 +31,18 @@ public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<Te
         if (!response.IsSuccessStatusCode)
             logger.LogWarning("sendMessage failed: {StatusCode}", (int)response.StatusCode);
     }
+
+    public async Task<string?> GetMeAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"{Api}/getMe", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("getMe failed: {StatusCode}", (int)response.StatusCode);
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
+        return document.RootElement.GetProperty("result")
+            .TryGetProperty("username", out var username) ? username.GetString() : null;
+    }
 }
