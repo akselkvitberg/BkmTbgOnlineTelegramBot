@@ -341,6 +341,7 @@ Under **Settings → Secrets and variables → Actions → Variables**, set:
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of step 2 |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | Output of step 2 |
 | `TF_STATE_BUCKET` | Output of step 1 |
+| `EVENT_NAME` | The event name shown on the slideshow, e.g. `Summer Party 2026` |
 | `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
 | `APP_NAME` | Optional — defaults to `eventphoto` if unset |
 
@@ -430,11 +431,16 @@ above, including the GitHub repository variables.
 
 All three live under the **Actions** tab, run via **Run workflow**.
 
-- **plan** — takes `event_name` and an optional `image_digest` (leave it as
-  the default `placeholder` before the first image has ever been built —
-  the same bootstrap convention `deploy.ps1` uses). Writes the plan to the
-  run's job summary, so reviewing it doesn't mean digging through logs.
-- **deploy** — takes `event_name`. Builds and pushes the image, applies
+Both `plan` and `deploy` take the event name from the `EVENT_NAME` repository
+variable, so there is nothing to type on a normal run. Each also has an
+`event_name` input that overrides it for that run only — for a one-off deploy
+under a different name, without editing the variable. Leave it empty otherwise.
+
+- **plan** — takes an optional `image_digest` (leave it as the default
+  `placeholder` before the first image has ever been built — the same
+  bootstrap convention `deploy.ps1` uses). Writes the plan to the run's job
+  summary, so reviewing it doesn't mean digging through logs.
+- **deploy** — builds and pushes the image, applies
   pinned to the resulting digest, and registers the webhook. **Do not run
   this mid-event** — same warning as `deploy.ps1 -SkipBuild`: registering the
   webhook drops whatever Telegram is holding for the moment the webhook is
