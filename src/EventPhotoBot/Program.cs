@@ -102,6 +102,7 @@ app.UseSessionGate(config);
 app.UseStaticFiles();
 app.MapApi();
 app.MapImages();
+app.MapJoinQr();
 
 app.MapGet("/show", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "show.html"), "text/html"));

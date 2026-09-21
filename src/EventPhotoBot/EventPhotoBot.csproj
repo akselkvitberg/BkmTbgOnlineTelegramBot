@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Google.Cloud.Storage.V1" Version="4.16.0" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
     <!--
       Pinned to 3.1.12 deliberately — do not bump to 4.x. SixLabors.ImageSharp 4.x gates
       CoreCompile on a license-enrollment check that is a hard build ERROR (not a warning)
