@@ -103,6 +103,12 @@ shows a banner naming the image holding takeover, with a one-tap clear. A
 takeover set to "until I clear it" is the most likely way to strand a photo
 on the wall for the rest of the night — that banner is the fix.
 
+**Do not merge anything to `master` while the event is running.** A push to
+`master` deploys, and deploying re-registers the Telegram webhook, which
+discards whatever Telegram is holding at that moment — a photo sent in that
+window is gone, silently. If a fix genuinely cannot wait, roll it out with
+`gcloud run services update` by hand instead, and merge afterwards.
+
 **Caption overlay on the slideshow** is a local, per-machine preference, not
 a server setting: press `c` on the display machine's keyboard to toggle it.
 It does not sync to any other viewer of `/show`, and does not survive
@@ -424,16 +430,24 @@ That is the path this project deploys through; `infra/deploy.ps1` (below)
 is the workstation fallback, kept interchangeable with it rather than as the
 normal route.
 
-Three manual (`workflow_dispatch`-only) workflows live in
-`.github/workflows/` — `plan`, `deploy` and `destroy`. Nothing here runs on a
-push; every one of them has to be started by hand from the Actions tab. They
-authenticate to GCP with Workload Identity Federation — no service account
-key is stored in GitHub. This path needs all four steps of **One-time setup**
-above, including the GitHub repository variables.
+Three workflows live in `.github/workflows/` — `plan`, `deploy` and
+`destroy`. **`deploy` runs automatically on every push to `master`**, and can
+also be started by hand; `plan` and `destroy` are manual
+(`workflow_dispatch`-only) and never run on a push. They authenticate to GCP
+with Workload Identity Federation — no service account key is stored in
+GitHub. This path needs all four steps of **One-time setup** above, including
+the GitHub repository variables.
+
+Because a merge to `master` is a deploy, anyone who can merge can reach GCP
+with the deploy service account's permissions, and can trigger the webhook
+re-registration described below. Branch protection on `master` is what gates
+that — `infra/wif/`'s trust condition only checks which *repository* the run
+came from, not which branch.
 
 ### Running the workflows
 
-All three live under the **Actions** tab, run via **Run workflow**.
+All three live under the **Actions** tab, run via **Run workflow**; `deploy`
+additionally fires on its own whenever something lands on `master`.
 
 Both `plan` and `deploy` take the event name from the `EVENT_NAME` repository
 variable, so there is nothing to type on a normal run. Each also has an
@@ -444,11 +458,15 @@ under a different name, without editing the variable. Leave it empty otherwise.
   `placeholder` before the first image has ever been built — the same
   bootstrap convention `deploy.ps1` uses). Writes the plan to the run's job
   summary, so reviewing it doesn't mean digging through logs.
-- **deploy** — builds and pushes the image, applies
-  pinned to the resulting digest, and registers the webhook. **Do not run
-  this mid-event** — same warning as `deploy.ps1 -SkipBuild`: registering the
-  webhook drops whatever Telegram is holding for the moment the webhook is
-  unreachable. Mid-event, use `gcloud run services update` by hand instead.
+- **deploy** — builds and pushes the image, applies pinned to the resulting
+  digest, and registers the webhook. Runs on every push to `master` as well
+  as on demand. **Do not deploy mid-event, and do not merge to `master`
+  mid-event** — they are now the same act. Registering the webhook drops
+  whatever Telegram is holding at that moment, so a photo sent in that window
+  vanishes with no error to either the sender or the admin. If something must
+  change mid-event, use `gcloud run services update` by hand, which never
+  touches the webhook registration, and leave `master` alone until the event
+  is over.
 - **destroy** — takes `confirm_project_id`. It must match this repository's
   `GCP_PROJECT_ID` variable exactly, or the job fails before touching GCP.
   Runs `terraform destroy` in `infra/` — see **Teardown** below for what

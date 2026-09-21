@@ -68,11 +68,15 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   # any GitHub repository that learned this provider's resource name could
   # exchange its own OIDC token for one impersonating the deploy service
   # account — this line is the difference between "keyless" and "an open
-  # door with extra steps". Deliberately not also restricted to a ref/branch:
-  # every workflow that uses this provider is workflow_dispatch-only, so
-  # there is no "untrusted branch" push path to additionally guard against —
-  # only who is allowed to manually invoke it, which is a repository
-  # permission, not something WIF can see.
+  # door with extra steps". Deliberately not also restricted to a ref/branch,
+  # though the reason is narrower than it once was: the deploy workflow now
+  # runs on push to master as well as on demand, so a merge to master reaches
+  # GCP with this identity, and the gate on that is who can push to or merge
+  # into master — a repository permission, not something WIF can see. A
+  # ref condition pinning master would match the deploy trigger but would
+  # break `plan` and `destroy`, which stay manual-only and are legitimately
+  # dispatched from a feature branch. Branch protection on master is the
+  # control that matters here, not this line.
   attribute_condition = "assertion.repository == \"${var.repository}\""
 
   oidc {

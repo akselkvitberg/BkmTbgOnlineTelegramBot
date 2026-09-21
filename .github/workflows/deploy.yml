@@ -1,9 +1,17 @@
 name: Deploy
 
-# Manual only. Build, push, apply, register the webhook — the same sequence
+# Build, push, apply, register the webhook — the same sequence
 # infra/deploy.ps1 runs from a workstation; see that script's own comments
 # for the reasoning behind each step, in particular the webhook one.
+#
+# Runs on every push to master, and on demand. The push trigger means a merge
+# is a deploy: read the webhook warning on the "Register the Telegram webhook"
+# step below before merging anything while an event is running, because that
+# step drops whatever Telegram is holding at the moment it fires. `plan` and
+# `destroy` remain manual-only.
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       event_name:
