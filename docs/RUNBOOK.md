@@ -18,8 +18,15 @@ resource name appears.
       one less thing to debug:
       `printf '%s' 'YOUR_TOKEN' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID`,
       `/setuserpic` and description set so it looks deliberate
-- [ ] Whitelist collected via pairing mode, then pairing mode turned off (see
-      "Collecting the whitelist" below)
+- [ ] Join code chosen and stored:
+      `printf '%s' 'YOUR_CODE' | gcloud secrets versions add eventphoto-join-code --data-file=- --project PROJECT_ID`
+      — letters, digits, `_` and `-` only, at most 64 characters. Anything else
+      fails startup, on purpose: Telegram silently drops a deep-link payload
+      outside that set, so a code with a space would ship a QR nobody can use.
+- [ ] Pre-approved photographers added by Telegram id and set to Auto-approve
+      (see "Who can send" below)
+- [ ] QR on the slideshow checked from the back of the room, on the actual
+      display machine — a QR nobody can scan makes the whole join flow useless
 - [ ] Programme and menu images uploaded via the images page and pinned as
       recurring
 - [ ] Takeover set and cleared once, so whoever runs the screen has done it
@@ -44,26 +51,45 @@ resource name appears.
       destroying everything is that it happens, and a manual step with no
       reminder is the one that gets forgotten.
 
-### Collecting the whitelist (pairing mode)
+### Who can send
 
-1. Open admin settings, turn pairing mode on.
-2. Share the bot's handle with the group.
-3. Each person who messages the bot gets nothing stored yet — they appear
-   under "Seen while pairing" in settings with their numeric Telegram id.
-   Nothing they send is stored while they are unlisted.
-4. Add the ones you want, one tap each, from that list.
-5. **Turn pairing mode off.** Anyone not added is now declined, silently
-   rate-limited to one reply per minute so a stranger poking the bot can't
-   turn it into a spam relay.
+Every person the bot knows about has one of three statuses, set from admin
+settings or from the approval queue:
 
-Adding a sender takes effect on their very next message — no redeploy needed.
+- **Review first** — the default for anyone who joins by scanning the QR. Their
+  photos land in the approval queue.
+- **Auto-approve** — pre-approved photographers. Their photos go straight to the
+  screen with no queue step. Set this before the event by adding their Telegram
+  id by hand, or promote them once they have scanned.
+- **Banned** — messages are dropped silently, and **every photo they already
+  sent is rejected in the same action**, including any already on screen. This
+  cannot be undone from the UI: un-banning restores their ability to send but
+  does not bring the photos back.
+
+Anyone not on the list at all has not scanned the QR. Their photos are declined
+with a message pointing at the screen, at most one reply per minute, and nothing
+is downloaded or stored. Status changes take effect on that person's very next
+message — no redeploy needed.
+
+People join by scanning the QR shown on the slideshow. It encodes
+`https://t.me/<bot>?start=<join code>`; scanning opens the bot chat with a Start
+button, and tapping it sends the code. That is the whole flow — one scan, one
+tap.
+
+The join code is the `eventphoto-join-code` secret, chosen at deploy time.
+Changing it means a redeploy, so treat it as fixed once the event starts. It is
+not a password: everyone in the room can see the QR, and so can anyone shown a
+photo of the screen. It stops someone who merely guesses the bot handle, nothing
+more. The banlist is what handles a person you actually want out.
 
 ## During the event
 
 The admin watches the approval queue on a phone. If nobody is free to
-moderate, turn on auto-approve for trusted senders in settings and mark
-everyone trusted — the whitelist is then the only control left, which is a
-reasonable posture for a known group.
+moderate, set everyone in the People list to Auto-approve — the join code and
+the banlist are then the only controls left, which is a reasonable posture for
+a room full of people you know. Be aware it applies to everyone already on the
+list, not to people who scan later: new joiners still arrive as "Review first",
+so the queue keeps filling unless you promote them too.
 
 **If the screen freezes:** reload the page. The slideshow polls the manifest
 every couple of seconds and picks up from there; nothing is lost by
@@ -120,24 +146,26 @@ These are checks a person runs against the deployed service. Each one is
 written so it has an unambiguous pass or fail — do them in order, since
 several depend on state left by the one before.
 
-- [ ] **Pairing mode reveals a sender's id.** Open admin settings, turn on
-      pairing mode, message the bot from a phone that has never talked to it.
-      Pass: the phone's numeric id appears under "Seen while pairing" within
-      a few seconds.
-- [ ] **Adding a sender takes effect immediately.** Add that phone with one
-      tap, turn pairing mode off, and send a photo from the same phone
-      *without redeploying anything*. Pass: the photo appears in the
-      approval queue.
-- [ ] **A whitelisted photo reaches the queue within five seconds.** Send one
-      photo from the whitelisted phone and time it with a stopwatch from
-      send to appearance in `/admin/queue`. Pass: under five seconds. If you
-      send an album of five and it's slower, that's expected — Telegram
-      delivers album members as separate updates in series, not the bot
-      being slow.
-- [ ] **A non-whitelisted sender is declined and nothing is stored.** From a
-      second, never-added phone, send a photo. Pass: the phone gets a decline
-      message, and `gcloud storage ls -r gs://BUCKET_NAME/originals` (before
-      and after, compared) shows no new object.
+- [ ] **Scanning the QR admits a new sender.** From a phone that has never
+      messaged the bot, scan the QR on the screen and tap Start. Pass: the bot
+      replies "You are in", and the phone appears under People in admin
+      settings with status "Review first".
+- [ ] **A newly admitted photo reaches the queue within five seconds.** Send
+      one photo from that phone and time it with a stopwatch from send to
+      appearance in `/admin/queue`. Pass: under five seconds. If you send an
+      album of five and it's slower, that's expected — Telegram delivers album
+      members as separate updates in series, not the bot being slow.
+- [ ] **An auto-approve sender skips the queue.** Set that phone to
+      Auto-approve in settings, then send another photo *without redeploying
+      anything*. Pass: it reaches the slideshow with no approval step.
+- [ ] **Someone who has not scanned is declined and nothing is stored.** From a
+      second phone, message the bot directly without scanning. Pass: the reply
+      points at the QR, and `gcloud storage ls -r gs://BUCKET_NAME/originals`
+      (before and after, compared) shows no new object.
+- [ ] **Banning revokes what a sender already sent.** With one approved photo
+      from a test phone in the rotation, ban that sender from its queue card.
+      Pass: the photo leaves the rotation within two seconds, and a further
+      photo from that phone produces no reply at all and no new object.
 - [ ] **Approving an image updates an open slideshow live.** Have `/show`
       open in a browser tab already, approve a pending image from another
       device. Pass: it appears in the rotation within two seconds, with no
@@ -194,6 +222,12 @@ several depend on state left by the one before.
       moment — a photo sent in that window vanishes with no error to the
       sender or the admin. `deploy.ps1` is for before/after the event, or a
       scratch project; `gcloud run services update` is the mid-event tool.
+
+      A deploy that changes the `state.json` shape carries a second mid-event
+      hazard on top of that one: the People list lives in `state.json` and
+      there is no migration, so everyone would have to re-scan the QR. The
+      sender-roster release (three statuses, join code, banlist) is exactly
+      such a change — fine before an event, unacceptable during one.
 - [ ] **`terraform destroy` leaves nothing behind.** Normally this is the
       **destroy** workflow from the Actions tab. To check it from a
       workstation instead: from a clean clone `infra/`'s own state has never
@@ -202,7 +236,7 @@ several depend on state left by the one before.
       **One-time setup** above), then `terraform -chdir=infra destroy` (in a
       scratch project first if you want to check this without touching the
       real event's data). Pass: the
-      bucket, all five secrets, and the Cloud Run service are all gone
+      bucket, all six secrets, and the Cloud Run service are all gone
       afterwards — check with `gcloud storage buckets list`, `gcloud secrets
       list`, and `gcloud run services list`, all scoped `--project
       PROJECT_ID`.
@@ -222,6 +256,24 @@ holds **regardless of which path you use to deploy** — a local apply
 sharing state with CI is deliberate, not a quirk of the GitHub Actions setup.
 
 Do the following once per GCP project, not per event.
+
+**0. Enable the Cloud Resource Manager API.** Do this first, before any
+Terraform runs:
+
+```bash
+gcloud services enable cloudresourcemanager.googleapis.com --project PROJECT_ID
+```
+
+Every Terraform config here manages `google_project_service` resources, and
+the provider calls Resource Manager to do it. A workstation apply can get
+away without this — user credentials bill their API quota somewhere else, so
+the call succeeds — which makes the gap invisible until the first GitHub
+Actions run: the deploy service account's calls bill the target project, and
+Terraform fails at the bootstrap apply with `Error 403 ... SERVICE_DISABLED`
+naming `cloudresourcemanager.googleapis.com`, not naming the resource you
+were actually trying to create. The app's own APIs (run, artifactregistry,
+secretmanager, storage, iamcredentials) do *not* need enabling by hand —
+`infra/main.tf` turns those on itself.
 
 **1. State bucket (`infra/backend/`)** — required before the *first* deploy
 from either path, including the very first `deploy.ps1` run. Creates the GCS
@@ -306,7 +358,7 @@ targeted apply, or the `deploy` workflow's "Terraform bootstrap apply" step).
 expected, not a misconfiguration. Terraform creates the secret *resources*;
 a secret resource with no version is not something Cloud Run can mount, and
 the webhook step has no token to read. So the first `deploy` run gets as far
-as creating the registry and the five secrets, builds and pushes the image,
+as creating the registry and the six secrets, builds and pushes the image,
 and then fails at "Terraform apply" or "Register the Telegram webhook".
 Add the versions at that point, from a workstation authenticated against the
 project:
@@ -324,8 +376,37 @@ prompt: both of those store a trailing newline in the secret. AppConfig trims
 whitespace on load so it is no longer fatal, but a webhook path that silently
 differs by one character is not a good debugging session.
 
+Those are bash (Git Bash on Windows is fine). **PowerShell has no `printf`**,
+and `'value' | gcloud ... --data-file=-` there appends a CRLF. Use a temp
+file instead, one secret at a time:
+
+```powershell
+$f = (New-TemporaryFile).FullName
+[System.IO.File]::WriteAllText($f, 'YOUR_VALUE', [System.Text.UTF8Encoding]::new($false))
+gcloud secrets versions add eventphoto-bot-token --data-file="$f" --project PROJECT_ID
+Remove-Item $f
+```
+
+The three random values (`webhook-secret`, `webhook-path`, `cookie-key`) can
+be generated straight into the command so they are never typed, pasted or
+shown:
+
+```bash
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-webhook-path --data-file=- --project PROJECT_ID
+```
+
 Then run `deploy` again. That run applies cleanly and registers the webhook.
 Every subsequent deploy is a single run.
+
+This whole sequence — steps 0 to 5 and both `deploy` runs — was walked
+end to end against a fresh personal GCP project on 2026-09-21, and the
+steps above are what actually worked, including the two corrections this
+paragraph sits between (step 0, and the PowerShell form of the secret
+commands). The failure points are the documented ones: the first `deploy`
+run stops at "Terraform apply" with `Secret .../versions/latest was not
+found` listing all six secrets. Cloud Run's startup probe hits `/healthz`
+from inside the service; do not be alarmed if that same path answers 404
+through an outbound proxy while the revision reports healthy.
 
 Note that `workflow_dispatch` workflows only appear in the Actions tab once
 the workflow file is on the repository's **default branch** — a first deploy
@@ -408,7 +489,7 @@ is safe to repeat.
 ### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
 
 `terraform destroy` in `infra/` removes the Cloud Run service, the images
-bucket, the five secrets, the runtime service account and the Artifact
+bucket, the six secrets, the runtime service account and the Artifact
 Registry repository — the same set `deploy.ps1`'s counterpart apply created.
 It does **not** touch:
 

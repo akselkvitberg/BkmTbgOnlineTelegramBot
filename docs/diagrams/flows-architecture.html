@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EventPhotoBot — three flows, one state</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f7f6f3;
+      --color-ink:     #272727;
+      --color-muted:   #49706d;
+      --color-accent:  #bd8167;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · EventPhotoBot</p>
+    <h1>Three flows, one state</h1>
+
+    <svg viewBox="0 0 1080 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-arch-title epb-arch-desc">
+      <title id="epb-arch-title">EventPhotoBot — three flows, one state</title>
+      <desc id="epb-arch-desc">Three paths converge on a single in-memory StateStore: a phone that has joined by scanning the QR sends a photo through the Telegram Bot API to the webhook, which strips EXIF and writes three objects to the event bucket before recording the image; an admin browser approves, hides or bans; and the display polls a manifest served from memory, fetching image bytes from the bucket only when the playlist changes.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#004d48"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f7f6f3"/>
+
+      <!-- ===== arrows (drawn before nodes) ===== -->
+
+      <!-- A1  phone -> telegram -->
+      <line x1="264" y1="120" x2="328" y2="120" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A2  telegram -> webhook -->
+      <line x1="508" y1="120" x2="572" y2="120" stroke="#004d48" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- A3  webhook -> bucket (objects first) -->
+      <path d="M 752,120 H 898 Q 906,120 906,128 V 272" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A4  webhook -> statestore -->
+      <line x1="662" y1="152" x2="662" y2="248" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A5  statestore -> bucket (state last) -->
+      <path d="M 716,312 V 352 Q 716,360 724,360 H 816" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A6  image endpoint -> bucket -->
+      <line x1="752" y1="440" x2="816" y2="440" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A7  admin -> statestore -->
+      <line x1="264" y1="280" x2="572" y2="280" stroke="#004d48" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- A8  statestore -> manifest -->
+      <path d="M 608,312 V 368 Q 608,376 600,376 H 426 Q 418,376 418,384 V 408" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A9  display -> manifest -->
+      <line x1="264" y1="440" x2="328" y2="440" stroke="#004d48" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- A10 display -> image endpoint -->
+      <path d="M 174,472 V 496 Q 174,504 182,504 H 654 Q 662,504 662,496 V 472" fill="none" stroke="#004d48" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+
+      <!-- ===== arrow labels ===== -->
+      <rect x="278" y="100" width="36" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="296" y="109" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PHOTO</text>
+
+      <rect x="517" y="100" width="46" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="540" y="109" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WEBHOOK</text>
+
+      <rect x="803" y="100" width="44" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="825" y="109" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">OBJECTS</text>
+
+      <rect x="672" y="194" width="46" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="695" y="203" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">MUTATE</text>
+
+      <rect x="726" y="326" width="60" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="756" y="335" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">STATE.JSON</text>
+
+      <rect x="767" y="420" width="34" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="784" y="429" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+
+      <rect x="378" y="260" width="80" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="418" y="269" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">APPROVE · BAN</text>
+
+      <rect x="483" y="356" width="60" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="513" y="365" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">IN MEMORY</text>
+
+      <rect x="274" y="420" width="44" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="296" y="429" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">POLL 2s</text>
+
+      <rect x="392" y="484" width="52" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="418" y="493" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">GET /IMG</text>
+
+      <!-- ===== nodes ===== -->
+
+      <!-- N1 sender phone -->
+      <rect x="84" y="88" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="84" y="88" width="180" height="64" rx="6" fill="rgba(73,112,109,0.10)" stroke="#769391" stroke-width="1"/>
+      <rect x="92" y="94" width="28" height="12" rx="2" fill="transparent" stroke="rgba(118,147,145,0.40)" stroke-width="0.8"/>
+      <text x="106" y="103" fill="#769391" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+      <text x="174" y="126" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sender's phone</text>
+      <text x="174" y="142" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">scanned the QR</text>
+
+      <!-- N2 telegram -->
+      <rect x="328" y="88" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="328" y="88" width="180" height="64" rx="6" fill="rgba(39,39,39,0.03)" stroke="rgba(39,39,39,0.30)" stroke-width="1"/>
+      <rect x="336" y="94" width="24" height="12" rx="2" fill="transparent" stroke="rgba(39,39,39,0.30)" stroke-width="0.8"/>
+      <text x="348" y="103" fill="rgba(39,39,39,0.65)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+      <text x="418" y="126" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Telegram Bot API</text>
+      <text x="418" y="142" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">20 MB cap</text>
+
+      <!-- N3 webhook + pipeline -->
+      <rect x="572" y="88" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="572" y="88" width="180" height="64" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <rect x="580" y="94" width="24" height="12" rx="2" fill="transparent" stroke="rgba(39,39,39,0.40)" stroke-width="0.8"/>
+      <text x="592" y="103" fill="rgba(39,39,39,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SVC</text>
+      <text x="662" y="126" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Webhook + pipeline</text>
+      <text x="662" y="142" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">exif strip · 2560px</text>
+
+      <!-- N4 admin browser -->
+      <rect x="84" y="248" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="84" y="248" width="180" height="64" rx="6" fill="rgba(73,112,109,0.10)" stroke="#769391" stroke-width="1"/>
+      <rect x="92" y="254" width="28" height="12" rx="2" fill="transparent" stroke="rgba(118,147,145,0.40)" stroke-width="0.8"/>
+      <text x="106" y="263" fill="#769391" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+      <text x="174" y="286" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Admin browser</text>
+      <text x="174" y="302" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/admin/queue</text>
+
+      <!-- N5 statestore (focal) -->
+      <rect x="572" y="248" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="572" y="248" width="180" height="64" rx="6" fill="rgba(189,129,103,0.08)" stroke="#bd8167" stroke-width="1"/>
+      <rect x="580" y="254" width="34" height="12" rx="2" fill="transparent" stroke="rgba(189,129,103,0.50)" stroke-width="0.8"/>
+      <text x="597" y="263" fill="#bd8167" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+      <text x="662" y="286" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">StateStore</text>
+      <text x="662" y="302" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">generation++</text>
+
+      <!-- N6 display -->
+      <rect x="84" y="408" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="84" y="408" width="180" height="64" rx="6" fill="rgba(73,112,109,0.10)" stroke="#769391" stroke-width="1"/>
+      <rect x="92" y="414" width="28" height="12" rx="2" fill="transparent" stroke="rgba(118,147,145,0.40)" stroke-width="0.8"/>
+      <text x="106" y="423" fill="#769391" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+      <text x="174" y="446" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Display /show</text>
+      <text x="174" y="462" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">one browser tab</text>
+
+      <!-- N7 manifest -->
+      <rect x="328" y="408" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="328" y="408" width="180" height="64" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <rect x="336" y="414" width="24" height="12" rx="2" fill="transparent" stroke="rgba(39,39,39,0.40)" stroke-width="0.8"/>
+      <text x="348" y="423" fill="rgba(39,39,39,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GET</text>
+      <text x="418" y="446" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Manifest</text>
+      <text x="418" y="462" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">etag → 304</text>
+
+      <!-- N8 image bytes -->
+      <rect x="572" y="408" width="180" height="64" rx="6" fill="#f7f6f3"/>
+      <rect x="572" y="408" width="180" height="64" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <rect x="580" y="414" width="24" height="12" rx="2" fill="transparent" stroke="rgba(39,39,39,0.40)" stroke-width="0.8"/>
+      <text x="592" y="423" fill="rgba(39,39,39,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GET</text>
+      <text x="662" y="446" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Image bytes</text>
+      <text x="662" y="462" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/img/{id}/display</text>
+
+      <!-- N9 bucket -->
+      <rect x="816" y="272" width="180" height="180" rx="6" fill="#f7f6f3"/>
+      <rect x="816" y="272" width="180" height="180" rx="6" fill="rgba(39,39,39,0.05)" stroke="#49706d" stroke-width="1"/>
+      <rect x="824" y="278" width="24" height="12" rx="2" fill="transparent" stroke="rgba(73,112,109,0.40)" stroke-width="0.8"/>
+      <text x="836" y="287" fill="#49706d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GCS</text>
+      <text x="906" y="316" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Event bucket</text>
+      <line x1="832" y1="330" x2="980" y2="330" stroke="rgba(39,39,39,0.12)" stroke-width="0.8"/>
+      <text x="906" y="350" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">originals/</text>
+      <text x="906" y="368" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">display/ · thumb/</text>
+      <text x="906" y="386" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">state/state.json</text>
+      <line x1="832" y1="402" x2="980" y2="402" stroke="rgba(39,39,39,0.12)" stroke-width="0.8"/>
+      <text x="906" y="422" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">destroyed after event</text>
+
+      <!-- ===== legend ===== -->
+      <line x1="84" y1="528" x2="996" y2="528" stroke="rgba(39,39,39,0.12)" stroke-width="0.8"/>
+      <text x="84" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <rect x="180" y="543" width="12" height="12" rx="2" fill="rgba(73,112,109,0.10)" stroke="#769391" stroke-width="1"/>
+      <text x="198" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">PHONE / BROWSER</text>
+
+      <rect x="350" y="543" width="12" height="12" rx="2" fill="rgba(39,39,39,0.03)" stroke="rgba(39,39,39,0.30)" stroke-width="1"/>
+      <text x="368" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">EXTERNAL</text>
+
+      <rect x="520" y="543" width="12" height="12" rx="2" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="538" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">APP ENDPOINT</text>
+
+      <rect x="690" y="543" width="12" height="12" rx="2" fill="rgba(189,129,103,0.08)" stroke="#bd8167" stroke-width="1"/>
+      <text x="708" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">IN-MEMORY HUB</text>
+
+      <rect x="860" y="543" width="12" height="12" rx="2" fill="rgba(39,39,39,0.05)" stroke="#49706d" stroke-width="1"/>
+      <text x="878" y="552" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">OBJECT STORE</text>
+    </svg>
+  </div>
+</body>
+</html>

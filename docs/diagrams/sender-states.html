@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sender states</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f7f6f3;
+      --color-ink:     #272727;
+      --color-muted:   #49706d;
+      --color-accent:  #bd8167;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1100px; width: 100%; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">State machine · EventPhotoBot</p>
+    <h1>What the bot does with a person</h1>
+
+    <svg viewBox="0 0 1000 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-states-title epb-states-desc">
+      <title id="epb-states-title">Sender states</title>
+      <desc id="epb-states-desc">Three stored statuses and the transitions between them: scanning the QR and sending the join code admits a person as review-first, an organiser can promote them to auto-approve or demote them back, and banning from either state also rejects every photo that person already sent. Someone absent from the roster has not scanned, and is declined without anything being stored.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#004d48"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f7f6f3"/>
+
+      <!-- ===== transitions (drawn before states) ===== -->
+
+      <!-- T1 start -> review first -->
+      <line x1="88" y1="200" x2="200" y2="200" stroke="#004d48" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- T2 review first -> auto-approve -->
+      <path d="M 400,180 H 452 Q 460,180 460,172 V 108 Q 460,100 468,100 H 520" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- T3 auto-approve -> review first -->
+      <path d="M 520,124 H 444 Q 436,124 436,132 V 212 Q 436,220 428,220 H 400" fill="none" stroke="#49706d" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- T4 review first -> banned -->
+      <path d="M 300,240 V 332 Q 300,340 308,340 H 520" fill="none" stroke="#bd8167" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <!-- T5 auto-approve -> banned -->
+      <path d="M 720,100 H 772 Q 780,100 780,108 V 332 Q 780,340 772,340 H 720" fill="none" stroke="#bd8167" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <!-- T6 banned -> review first -->
+      <path d="M 620,380 V 432 Q 620,440 612,440 H 268 Q 260,440 260,432 V 240" fill="none" stroke="#49706d" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- ===== transition labels ===== -->
+      <rect x="108" y="180" width="70" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="143" y="189" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">/start CODE</text>
+
+      <rect x="464" y="128" width="52" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="490" y="137" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROMOTE</text>
+
+      <rect x="446" y="166" width="52" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="472" y="175" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DEMOTE</text>
+
+      <rect x="310" y="278" width="96" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="358" y="287" fill="#bd8167" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">BAN · REVOKES ALL</text>
+
+      <rect x="790" y="210" width="96" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="838" y="219" fill="#bd8167" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">BAN · REVOKES ALL</text>
+
+      <rect x="396" y="418" width="132" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="462" y="427" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">UN-BAN · PHOTOS STAY GONE</text>
+
+      <!-- ===== start marker ===== -->
+      <circle cx="80" cy="200" r="6" fill="#272727"/>
+      <text x="80" y="170" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">NOT ON THE ROSTER</text>
+      <text x="80" y="234" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">declined · nothing stored</text>
+
+      <!-- ===== states ===== -->
+
+      <!-- Review first -->
+      <rect x="200" y="160" width="200" height="80" rx="8" fill="#f7f6f3"/>
+      <rect x="200" y="160" width="200" height="80" rx="8" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="300" y="196" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Review first</text>
+      <text x="300" y="214" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">photos wait in the queue</text>
+
+      <!-- Auto-approve -->
+      <rect x="520" y="60" width="200" height="80" rx="8" fill="#f7f6f3"/>
+      <rect x="520" y="60" width="200" height="80" rx="8" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="620" y="96" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Auto-approve</text>
+      <text x="620" y="114" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">straight to the screen</text>
+
+      <!-- Banned (focal) -->
+      <rect x="520" y="300" width="200" height="80" rx="8" fill="#f7f6f3"/>
+      <rect x="520" y="300" width="200" height="80" rx="8" fill="rgba(189,129,103,0.08)" stroke="#bd8167" stroke-width="1"/>
+      <text x="620" y="336" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Banned</text>
+      <text x="620" y="354" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">silent · no download</text>
+
+      <!-- ===== legend ===== -->
+      <line x1="60" y1="480" x2="940" y2="480" stroke="rgba(39,39,39,0.12)" stroke-width="0.8"/>
+      <text x="60" y="504" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <circle cx="166" cy="500" r="5" fill="#272727"/>
+      <text x="180" y="504" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">NOT YET SCANNED</text>
+
+      <rect x="350" y="494" width="12" height="12" rx="2" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="368" y="504" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">STORED STATUS</text>
+
+      <line x1="540" y1="500" x2="572" y2="500" stroke="#bd8167" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <text x="582" y="504" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">DESTRUCTIVE</text>
+
+      <line x1="760" y1="500" x2="792" y2="500" stroke="#49706d" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <text x="802" y="504" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">REVERSIBLE</text>
+    </svg>
+  </div>
+</body>
+</html>

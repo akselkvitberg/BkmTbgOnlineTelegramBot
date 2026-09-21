@@ -15,6 +15,10 @@
   const emptyEventNameEl = document.getElementById('empty-event-name');
   const offlineEl = document.getElementById('offline');
   const captionHintEl = document.getElementById('caption-hint');
+  const joinEl = document.getElementById('join');
+  const joinQrEl = document.getElementById('join-qr');
+  const joinHandleEl = document.getElementById('join-handle');
+  const joinBadgeEl = document.getElementById('join-badge');
 
   let manifest = null;
   let etag = null;
@@ -28,6 +32,7 @@
   let seenIds = new Set();
   let currentImageId = null;
   let currentImage = null; // last image passed to render(), for instant caption toggling
+  let joinReady = false;   // the QR src is set once, not on every two-second poll
 
   const imageUrl = id => `/img/${encodeURIComponent(id)}/display`;
 
@@ -66,11 +71,35 @@
     captionText.textContent = currentImage.caption ?? '';
   }
 
+  // ---- fullscreen ----------------------------------------------------------
+
+  /// F11 covers a desktop browser, but not a tablet or a kiosk shell without a
+  /// function row, and the page has no visible chrome to click (the cursor is
+  /// hidden). The Fullscreen API needs a user gesture, which a keypress is.
+  function toggleFullscreen() {
+    const root = document.documentElement;
+    const request = root.requestFullscreen ?? root.webkitRequestFullscreen;
+    const exit = document.exitFullscreen ?? document.webkitExitFullscreen;
+    const active = document.fullscreenElement ?? document.webkitFullscreenElement;
+
+    // Rejects if the browser refuses (an unattended gesture, a disallowed
+    // iframe); nothing to recover, and an unhandled rejection is noise.
+    Promise.resolve(active ? exit?.call(document) : request?.call(root)).catch(() => {});
+  }
+
   document.addEventListener('keydown', event => {
-    if (event.key !== 'c' && event.key !== 'C') return;
-    captionsEnabled = !captionsEnabled;
-    saveCaptionsEnabled(captionsEnabled);
-    updateCaptionOverlay();
+    // Leave browser shortcuts (Ctrl/Cmd+F, Alt+C) alone.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const key = event.key?.toLowerCase();
+
+    if (key === 'c') {
+      captionsEnabled = !captionsEnabled;
+      saveCaptionsEnabled(captionsEnabled);
+      updateCaptionOverlay();
+    } else if (key === 'f') {
+      toggleFullscreen();
+    }
   });
 
   // The shortcut has no other affordance, so give it a few seconds of
@@ -122,6 +151,33 @@
     offlineEl.hidden = true;
   }
 
+  // ---- join QR -------------------------------------------------------------
+
+  /// The QR is fixed for the life of the instance, so its src is set once rather
+  /// than reassigned on every two-second poll. joinUrl is null when the bot's
+  /// username could not be resolved at startup, in which case no QR is shown at
+  /// all — the slideshow is not worth failing over a missing affordance.
+  function applyJoin(next) {
+    const joinUrl = next.settings.joinUrl;
+    if (joinUrl && !joinReady) {
+      joinQrEl.src = '/api/join-qr.svg';
+      joinBadgeEl.src = '/api/join-qr.svg';
+      joinHandleEl.textContent = handleFrom(joinUrl);
+      joinEl.hidden = false;
+      joinReady = true;
+    }
+    // Large in the empty state, small in the corner once there are photos to show.
+    joinBadgeEl.hidden = !joinReady || next.images.length === 0;
+  }
+
+  function handleFrom(joinUrl) {
+    try {
+      return '@' + new URL(joinUrl).pathname.replace(/^\//, '');
+    } catch {
+      return '';
+    }
+  }
+
   // ---- reconciliation ------------------------------------------------------
 
   function applyManifest(next) {
@@ -134,6 +190,8 @@
     const eventName = next.settings.eventName || '';
     emptyEventNameEl.textContent = eventName;
     emptyEventNameEl.hidden = eventName.length === 0;
+
+    applyJoin(next);
 
     const incoming = next.images;
 

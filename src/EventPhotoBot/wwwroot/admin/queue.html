@@ -54,8 +54,21 @@
           <div class="row">
             <button class="primary" onclick="decide('${image.id}','approved')">Approve</button>
             <button class="danger" onclick="decide('${image.id}','rejected')">Reject</button>
+            ${image.senderId
+              ? `<button class="danger" onclick="banSender(${image.senderId})">Ban sender</button>`
+              : ''}
           </div>
         </div>`).join('');
+    }
+
+    // Noticing a bad sender happens while looking at their photo, not while reading
+    // the settings page. Only the numeric id goes into the attribute; the name is
+    // attacker-controlled and stays in an escaped cell.
+    async function banSender(senderId) {
+      if (!confirm('Ban this sender? Every photo they have already sent is rejected, '
+                   + 'including any already on the screen. This cannot be undone.')) return;
+      await Admin.api('POST', `/api/senders/${senderId}/status`, { status: 'banned' });
+      await loadPending();
     }
 
     // Guards the A/R shortcut against a second decision landing on the same photo:

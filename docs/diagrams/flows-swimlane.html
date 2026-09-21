@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EventPhotoBot — a photo's path to the wall</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f7f6f3;
+      --color-ink:     #272727;
+      --color-muted:   #49706d;
+      --color-accent:  #bd8167;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Swimlane · EventPhotoBot</p>
+    <h1>A photo's path to the wall</h1>
+
+    <svg viewBox="0 0 1080 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="epb-lane-title epb-lane-desc">
+      <title id="epb-lane-title">EventPhotoBot — a photo's path to the wall</title>
+      <desc id="epb-lane-desc">Five lanes — sender, Telegram, bot service, admin and display — trace one photo from send to screen: the bot looks the sender up in the roster and either points an unrecognised sender at the QR with a rate-limited reply, or decodes the image, writes its objects before recording state, and hands the pending image to an admin whose single approval puts it on the display at the next poll. The banned case is not drawn here; it is in the sender-states diagram.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#49706d"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bd8167"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#004d48"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f7f6f3"/>
+
+      <!-- ===== lanes ===== -->
+      <line x1="40" y1="100" x2="1040" y2="100" stroke="#d3cfc9" stroke-width="1"/>
+      <line x1="40" y1="188" x2="1040" y2="188" stroke="rgba(39,39,39,0.12)" stroke-width="1"/>
+      <line x1="40" y1="276" x2="1040" y2="276" stroke="rgba(39,39,39,0.12)" stroke-width="1"/>
+      <line x1="40" y1="364" x2="1040" y2="364" stroke="rgba(39,39,39,0.12)" stroke-width="1"/>
+      <line x1="40" y1="452" x2="1040" y2="452" stroke="rgba(39,39,39,0.12)" stroke-width="1"/>
+      <line x1="40" y1="540" x2="1040" y2="540" stroke="#d3cfc9" stroke-width="1"/>
+      <line x1="158" y1="100" x2="158" y2="540" stroke="rgba(39,39,39,0.12)" stroke-width="1"/>
+
+      <text x="40" y="147" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SENDER</text>
+      <text x="40" y="235" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">TELEGRAM</text>
+      <text x="40" y="323" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">BOT SERVICE</text>
+      <text x="40" y="411" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ADMIN</text>
+      <text x="40" y="499" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">DISPLAY</text>
+
+      <!-- ===== arrows ===== -->
+
+      <!-- B1 send -> deliver -->
+      <path d="M 252,168 V 224 Q 252,232 260,232 H 356" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- B2 deliver -> whitelist -->
+      <path d="M 428,256 V 312 Q 428,320 436,320 H 532" fill="none" stroke="#004d48" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- B3 whitelist -> write -->
+      <line x1="676" y1="320" x2="708" y2="320" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- B4 whitelist -> decline (branch) -->
+      <path d="M 604,296 V 152 Q 604,144 612,144 H 708" fill="none" stroke="rgba(39,39,39,0.35)" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- B5 write -> approve -->
+      <path d="M 780,344 V 400 Q 780,408 788,408 H 884" fill="none" stroke="#49706d" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- B6 approve -> screen (the human gate) -->
+      <line x1="956" y1="432" x2="956" y2="472" stroke="#bd8167" stroke-width="1.6" marker-end="url(#arrow-accent)"/>
+
+      <!-- ===== arrow labels ===== -->
+      <rect x="262" y="198" width="36" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="280" y="207" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PHOTO</text>
+
+      <rect x="438" y="286" width="46" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="461" y="295" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WEBHOOK</text>
+
+      <rect x="614" y="226" width="60" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="644" y="235" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NOT JOINED</text>
+
+      <rect x="790" y="366" width="46" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="813" y="375" fill="#769391" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PENDING</text>
+
+      <rect x="966" y="446" width="56" height="12" rx="2" fill="#f7f6f3"/>
+      <text x="994" y="455" fill="#bd8167" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NEXT POLL</text>
+
+      <!-- ===== steps ===== -->
+
+      <!-- 1 send photo -->
+      <rect x="180" y="120" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="180" y="120" width="144" height="48" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="252" y="142" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Send photo</text>
+      <text x="252" y="158" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">photo or album</text>
+
+      <!-- 2 deliver update -->
+      <rect x="356" y="208" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="356" y="208" width="144" height="48" rx="6" fill="rgba(39,39,39,0.03)" stroke="rgba(39,39,39,0.30)" stroke-width="1"/>
+      <text x="428" y="230" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Deliver update</text>
+      <text x="428" y="246" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/tg/{secret}</text>
+
+      <!-- 3 whitelist + decode -->
+      <rect x="532" y="296" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="532" y="296" width="144" height="48" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="604" y="318" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Roster + decode</text>
+      <text x="604" y="334" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">exif · sha256</text>
+
+      <!-- 4 decline (branch) -->
+      <rect x="708" y="120" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="708" y="120" width="144" height="48" rx="6" fill="rgba(39,39,39,0.02)" stroke="rgba(39,39,39,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="780" y="142" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Scan the QR</text>
+      <text x="780" y="158" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 reply per minute</text>
+
+      <!-- 5 write + record -->
+      <rect x="708" y="296" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="708" y="296" width="144" height="48" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="780" y="318" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Write + record</text>
+      <text x="780" y="334" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">objects, then state</text>
+
+      <!-- 6 approve (focal — the human gate) -->
+      <rect x="884" y="384" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="884" y="384" width="144" height="48" rx="6" fill="rgba(189,129,103,0.08)" stroke="#bd8167" stroke-width="1"/>
+      <text x="956" y="406" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Approve in queue</text>
+      <text x="956" y="422" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">one tap</text>
+
+      <!-- 7 on screen -->
+      <rect x="884" y="472" width="144" height="48" rx="6" fill="#f7f6f3"/>
+      <rect x="884" y="472" width="144" height="48" rx="6" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="956" y="494" fill="#272727" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Appears on screen</text>
+      <text x="956" y="510" fill="#49706d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">no reload</text>
+
+      <!-- ===== legend ===== -->
+      <line x1="40" y1="580" x2="1040" y2="580" stroke="rgba(39,39,39,0.12)" stroke-width="0.8"/>
+      <text x="40" y="604" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <rect x="180" y="595" width="12" height="12" rx="2" fill="#ffffff" stroke="#272727" stroke-width="1"/>
+      <text x="198" y="604" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">STEP</text>
+
+      <rect x="330" y="595" width="12" height="12" rx="2" fill="rgba(39,39,39,0.03)" stroke="rgba(39,39,39,0.30)" stroke-width="1"/>
+      <text x="348" y="604" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">EXTERNAL</text>
+
+      <rect x="520" y="595" width="12" height="12" rx="2" fill="rgba(39,39,39,0.02)" stroke="rgba(39,39,39,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="538" y="604" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">REJECTED BRANCH</text>
+
+      <rect x="740" y="595" width="12" height="12" rx="2" fill="rgba(189,129,103,0.08)" stroke="#bd8167" stroke-width="1"/>
+      <text x="758" y="604" fill="#49706d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">HUMAN GATE</text>
+    </svg>
+  </div>
+</body>
+</html>

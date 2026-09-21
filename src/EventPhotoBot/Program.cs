@@ -39,6 +39,7 @@ builder.Services.AddSingleton<StateStore>();
 builder.Services.AddHttpClient<ITelegramClient, TelegramClient>(
     client => client.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddSingleton<UpdateHandler>();
+builder.Services.AddSingleton<BotIdentity>();
 builder.Services.AddLoginRateLimiter();
 
 // Cloud Run terminates TLS and proxies every request, so Connection.RemoteIpAddress
@@ -61,6 +62,12 @@ config.LogLoaded(app.Logger);
 
 // Load state once, at startup. This is the only read of state.json.
 await app.Services.GetRequiredService<StateStore>().LoadAsync();
+
+// Vanity, not correctness: a failure here omits the join QR and nothing else,
+// so unlike the state load above it must never stop the revision coming up.
+await app.Services.GetRequiredService<BotIdentity>().ResolveAsync(
+    app.Services.GetRequiredService<ITelegramClient>(),
+    app.Services.GetRequiredService<ILogger<BotIdentity>>());
 
 app.UseForwardedHeaders();
 
@@ -95,6 +102,7 @@ app.UseSessionGate(config);
 app.UseStaticFiles();
 app.MapApi();
 app.MapImages();
+app.MapJoinQr();
 
 app.MapGet("/show", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "show.html"), "text/html"));

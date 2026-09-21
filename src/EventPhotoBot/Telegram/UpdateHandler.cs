@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 
@@ -7,6 +9,7 @@ public sealed class UpdateHandler(
     StateStore store,
     IObjectStore objects,
     ITelegramClient telegram,
+    AppConfig config,
     ILogger<UpdateHandler> logger)
 {
     private const long MaxDownloadBytes = 20L * 1024 * 1024;
@@ -30,24 +33,33 @@ public sealed class UpdateHandler(
 
     /// <summary>
     /// The bot handle is effectively public once shared, and a decline that answers
-    /// every message is a free way to make the bot talk. Throttles replies to a
-    /// sender who is not on the whitelist, in both pairing mode and normal operation;
-    /// in-memory only, so a redeploy simply resets the cooldown.
+    /// every message is a free way to make the bot talk. Throttles the "scan the QR"
+    /// reply to a sender who has not redeemed the join code; in-memory only, so a
+    /// redeploy simply resets the cooldown. Redemption itself is never throttled —
+    /// see HandleUnredeemedAsync.
     /// </summary>
     private readonly Dictionary<long, DateTimeOffset> _lastUnlistedReplyAt = [];
     private static readonly TimeSpan UnlistedReplyCooldown = TimeSpan.FromSeconds(60);
+
+    private const string JoinPrompt =
+        "You are not on the list for this event yet. Scan the QR code on the screen — " +
+        "it will send me the code and you can start sending photos straight away.";
 
     public async Task HandleAsync(TgUpdate update, CancellationToken ct = default)
     {
         var message = update.Message;
         if (message?.From is not { } sender || message.Chat is not { } chat) return;
 
-        var settings = store.Snapshot.Settings;
-        var entry = settings.Whitelist.FirstOrDefault(w => w.Id == sender.Id);
+        var entry = store.Snapshot.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+
+        // Banned first, and before anything that costs a download, a reply or a
+        // write. A banned sender gets no signal at all — a reply would both confirm
+        // the ban landed and make the bot a reply relay for whoever earned it.
+        if (entry is { Status: SenderStatus.Banned }) return;
 
         if (entry is null)
         {
-            await HandleUnlistedAsync(sender, chat, settings.PairingMode, ct);
+            await HandleUnredeemedAsync(message, sender, chat, ct);
             return;
         }
 
@@ -76,32 +88,71 @@ public sealed class UpdateHandler(
         await IngestAsync(message, sender, chat, entry, candidate, ct);
     }
 
-    private async Task HandleUnlistedAsync(
-        TgUser sender, TgChat chat, bool pairingMode, CancellationToken ct)
+    /// <summary>
+    /// Nobody in the roster. Either they are redeeming the join code, or they found
+    /// the bot some other way and need pointing at the QR. Nothing is stored in the
+    /// second case: recording every stranger who pokes the bot would let anyone who
+    /// finds the handle grow the roster with writes nobody authorised.
+    /// </summary>
+    private async Task HandleUnredeemedAsync(
+        TgMessage message, TgUser sender, TgChat chat, CancellationToken ct)
     {
-        if (!pairingMode)
+        if (message.Text is { } text && TryReadJoinCode(text, out var supplied)
+            && JoinCodeMatches(config.JoinCode, supplied))
         {
-            if (ShouldReplyToUnlisted(sender.Id))
-                await telegram.SendMessageAsync(chat.Id,
-                    "You are not on the list for this event, so I cannot accept photos from you.", ct);
+            await store.MutateAsync(state =>
+            {
+                // Re-checked under the store's lock: two /start messages racing must
+                // not produce two rows, and a row added by an admin in the meantime
+                // must not be overwritten with a weaker status.
+                if (state.Settings.Senders.Any(s => s.Id == sender.Id)) return;
+                state.Settings.Senders.Add(new Sender
+                {
+                    Id = sender.Id,
+                    Name = sender.DisplayName,
+                    Status = SenderStatus.Known,
+                    FirstSeen = DateTimeOffset.UtcNow,
+                });
+            }, ct);
+
+            // Deliberately outside the throttle: being rate-limited out of joining is
+            // the worst possible moment to go quiet on somebody.
+            await telegram.SendMessageAsync(chat.Id,
+                "You are in. Send me photos and they will go up on the screen once an " +
+                "organiser approves them. Everything is deleted after the event.", ct);
             return;
         }
 
-        await store.MutateAsync(state =>
-        {
-            if (state.Settings.SeenSenders.Any(s => s.Id == sender.Id)) return;
-            state.Settings.SeenSenders.Add(new SeenSender
-            {
-                Id = sender.Id,
-                Name = sender.DisplayName,
-                FirstSeen = DateTimeOffset.UtcNow,
-            });
-        });
-
         if (ShouldReplyToUnlisted(sender.Id))
-            await telegram.SendMessageAsync(chat.Id,
-                $"Your Telegram id is {sender.Id}. An organiser can add you to the list now — " +
-                "try again once they have.", ct);
+            await telegram.SendMessageAsync(chat.Id, JoinPrompt, ct);
+    }
+
+    /// <summary>"/start CODE" — the payload Telegram appends from a deep link.</summary>
+    private static bool TryReadJoinCode(string text, out string code)
+    {
+        code = "";
+        if (!text.StartsWith("/start", StringComparison.Ordinal)) return false;
+
+        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries
+                                       | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2) return false;
+
+        code = parts[1];
+        return true;
+    }
+
+    /// <summary>
+    /// Constant-time, hashing both sides first. Same reasoning as the webhook
+    /// secret check in Program.cs: this is reachable by anyone who finds the bot,
+    /// and FixedTimeEquals on its own leaks length through its argument check.
+    /// </summary>
+    private static bool JoinCodeMatches(string expected, string supplied)
+    {
+        Span<byte> hashA = stackalloc byte[32];
+        Span<byte> hashB = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(expected), hashA);
+        SHA256.HashData(Encoding.UTF8.GetBytes(supplied), hashB);
+        return CryptographicOperations.FixedTimeEquals(hashA, hashB);
     }
 
     /// <summary>
@@ -163,7 +214,7 @@ public sealed class UpdateHandler(
 
     private async Task IngestAsync(
         TgMessage message, TgUser sender, TgChat chat,
-        WhitelistEntry entry, Candidate candidate, CancellationToken ct)
+        Sender entry, Candidate candidate, CancellationToken ct)
     {
         // Fast-path pre-check: saves a download for the obvious case of a resend.
         // Not authoritative by itself — it reads a Snapshot taken before the download
@@ -246,7 +297,7 @@ public sealed class UpdateHandler(
                 i.FileUniqueId == candidate.FileUniqueId || i.Sha256 == processed.Sha256);
             if (isDuplicate) return false;
 
-            approved = entry.Trusted && state.Settings.AutoApproveTrusted;
+            approved = entry.Status == SenderStatus.AutoApprove;
             var now = DateTimeOffset.UtcNow;
             state.Images[id] = new ImageRecord
             {

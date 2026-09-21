@@ -1,7 +1,9 @@
 # Event photo bot
 
-Guests on a whitelist send photos to a Telegram bot, an admin approves them,
-and approved photos run as a slideshow on a projector. The whole web side
+Guests scan a QR on the screen to join a Telegram bot and send it photos, an
+admin approves them, and approved photos run as a slideshow on a projector.
+Named photographers can be set to skip the queue, and a sender can be banned
+outright, which also pulls everything they already sent. The whole web side
 sits behind one shared password. It is built to be deployed for one event and
 destroyed afterwards.
 

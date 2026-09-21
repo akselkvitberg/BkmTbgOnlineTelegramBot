@@ -30,12 +30,18 @@ html, body {
   filter: blur(48px) brightness(0.45);
 }
 
+/* `width/height: 100%` rather than `max-width/max-height`: the max- form caps an
+   image at the viewport but leaves a smaller one at its natural size, floating in
+   the middle of the screen. The display copy is never upscaled server-side (see
+   ImagePipeline.DisplayMaxEdge), so a screenshot or an old phone photo arrives
+   well under 1080p and used to show as a small picture in a big blurred frame.
+   `object-fit: contain` keeps the aspect ratio, so this scales up to fill one
+   axis; the backdrop still fills whatever letterboxing the other axis leaves. */
 .slide img {
   position: absolute;
   inset: 0;
-  margin: auto;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
@@ -109,5 +115,39 @@ html, body {
 }
 
 #caption-hint[hidden] { display: none; }
+
+/* Large in the empty state, a small corner badge once photos are showing. Both sit
+   on solid white: a QR on a dark or textured ground is markedly harder for a phone
+   camera to lock onto, and the whole point is that it scans from across a room. */
+#join-qr {
+  width: 30vmin;
+  height: auto;
+  background: #fff;
+  padding: 2vmin;
+  border-radius: 1vmin;
+}
+
+#join-handle {
+  margin-top: 1rem;
+  font-family: ui-monospace, monospace;
+  opacity: 0.7;
+}
+
+#join[hidden] { display: none; }
+
+#join-badge {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 11vmin;
+  height: auto;
+  background: #fff;
+  padding: 1vmin;
+  border-radius: 1vmin;
+  opacity: 0.85;
+  z-index: 5;
+}
+
+#join-badge[hidden] { display: none; }
 
 #keepawake { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
