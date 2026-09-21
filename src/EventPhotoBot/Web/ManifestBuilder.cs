@@ -9,7 +9,7 @@ public sealed record TakeoverView(string Id, DateTimeOffset? Until);
 
 public sealed record SettingsView(
     int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName,
-    string? JoinUrl);
+    string? JoinUrl, bool KenBurns);
 
 public sealed record Manifest(
     long Version,
@@ -53,7 +53,7 @@ public static class ManifestBuilder
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
                 settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle", eventName,
-                joinUrl),
+                joinUrl, settings.KenBurns),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 

@@ -1,6 +1,16 @@
 (() => {
   'use strict';
 
+  // The Ken Burns move. BASE is the scale both ends of the zoom stay at or above,
+  // and DRIFT_PERCENT the sideways travel; BASE - 1 must stay above twice
+  // DRIFT_PERCENT/100 or the drift pulls an edge of the frame into view at the small
+  // end of a zoom-out (see the .slide.ken-burns rule in show.css). 1.02 is the bare
+  // minimum for 0.9% of drift and leaves under a pixel of cover on a 1024px screen -
+  // 1.03 keeps a margin that survives sub-pixel rounding.
+  const KEN_BURNS_BASE = 1.03;
+  const KEN_BURNS_ZOOM = 0.08;
+  const KEN_BURNS_DRIFT_PERCENT = 0.9;
+
   const POLL_MS = 2000;
   const POLL_BACKOFF_MS = 10000;
   const FAILURES_BEFORE_BACKOFF = 3;
@@ -311,6 +321,10 @@
     const next = slots[1 - activeSlot];
     const url = imageUrl(image.id);
 
+    // Before the markup, not after: the properties must be in place by the time the
+    // new <img> exists, or its animation starts on the previous slide's values.
+    applyKenBurns(next);
+
     next.innerHTML =
       `<div class="backdrop" style="background-image:url('${url}')"></div>` +
       `<img src="${url}" alt="">`;
@@ -318,6 +332,29 @@
     next.classList.add('visible');
     slot.classList.remove('visible');
     activeSlot = 1 - activeSlot;
+  }
+
+  /// Arms one slide's zoom. The direction is drawn per slide - in or out, toward one
+  /// of four corners - so a run of photos doesn't drift in lockstep, which is what
+  /// makes the effect look mechanical. Turning the setting off mid-event lands on the
+  /// next slide; the one on screen keeps the move it started with.
+  function applyKenBurns(slot) {
+    const enabled = manifest?.settings?.kenBurns ?? true;
+    slot.classList.toggle('ken-burns', enabled);
+    if (!enabled) return;
+
+    const near = KEN_BURNS_BASE;
+    const far = KEN_BURNS_BASE + KEN_BURNS_ZOOM;
+    const zoomIn = Math.random() < 0.5;
+    const sign = () => (Math.random() < 0.5 ? -1 : 1);
+    const seconds = manifest?.settings?.slideSeconds ?? 8;
+    const transition = manifest?.settings?.transitionMs ?? 800;
+
+    slot.style.setProperty('--kb-from', zoomIn ? near : far);
+    slot.style.setProperty('--kb-to', zoomIn ? far : near);
+    slot.style.setProperty('--kb-x', `${sign() * KEN_BURNS_DRIFT_PERCENT}%`);
+    slot.style.setProperty('--kb-y', `${sign() * KEN_BURNS_DRIFT_PERCENT}%`);
+    slot.style.setProperty('--kb-duration', `${seconds * 1000 + transition}ms`);
   }
 
   function preload(count) {

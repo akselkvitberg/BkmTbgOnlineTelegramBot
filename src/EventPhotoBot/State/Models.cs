@@ -59,6 +59,14 @@ public sealed class Settings
     public SlideOrder Order { get; set; } = SlideOrder.Shuffle;
     public bool NewestFirstBoost { get; set; } = true;
     public int RecurringEvery { get; set; } = 10;
+
+    /// <summary>
+    /// A slow zoom and drift over each slide. On by default: a still photo held for
+    /// eight seconds on a large screen reads as a frozen display, and the motion is
+    /// what tells a room the screen is live. Off is for a machine whose GPU cannot
+    /// keep the animation smooth — a stutter is worse than no movement at all.
+    /// </summary>
+    public bool KenBurns { get; set; } = true;
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
     public List<Sender> Senders { get; set; } = [];

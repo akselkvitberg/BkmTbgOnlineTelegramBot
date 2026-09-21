@@ -29,6 +29,7 @@
       <option value="newest-first">Nyeste først</option>
     </select>
     <label><input id="newestFirstBoost" type="checkbox"> La nye bilder gå foran i køen</label>
+    <label><input id="kenBurns" type="checkbox"> Sakte zoom på hvert bilde</label>
     <label for="recurringEvery">Vis et festet bilde for hvert N-te bilde</label>
     <input id="recurringEvery" type="number" min="1" max="100">
     <div class="row"><button class="primary" onclick="saveSlideshow()">Lagre</button></div>
@@ -77,6 +78,7 @@
       const orderEl = document.getElementById('order');
       if (document.activeElement !== orderEl) orderEl.value = settings.order;
       document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
+      document.getElementById('kenBurns').checked = settings.kenBurns;
       renderSenders();
     }
 
@@ -129,6 +131,7 @@
       order: document.getElementById('order').value,
       newestFirstBoost: document.getElementById('newestFirstBoost').checked,
       recurringEvery: Number(document.getElementById('recurringEvery').value),
+      kenBurns: document.getElementById('kenBurns').checked,
     }).then(load);
 
     // Without this, an admin watching this page during the event sees nothing happen

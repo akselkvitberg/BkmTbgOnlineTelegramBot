@@ -12,10 +12,14 @@ html, body {
 
 #stage { position: fixed; inset: 0; }
 
+/* `overflow: hidden` is what makes the slow zoom below safe: a scaled image
+   grows past the viewport on its filled axis, and without the clip it would
+   paint over the caption bar and the QR badge. */
 .slide {
   position: absolute;
   inset: 0;
   opacity: 0;
+  overflow: hidden;
   transition: opacity var(--transition, 800ms) ease-in-out;
 }
 
@@ -43,6 +47,32 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* The Ken Burns move: a slow zoom with a slight drift, so a photo held for eight
+   seconds on a big screen still reads as a live display rather than a frozen one.
+   show.js sets the four custom properties per slide (direction randomised) and the
+   duration, which spans the slide plus one cross-fade so the motion carries through
+   the transition instead of stopping dead behind it. The image element is rebuilt on
+   every swap, so the animation restarts on its own - no reflow trick needed.
+
+   The scale never drops to 1: the drift translates the image by --kb-x/--kb-y, and
+   at scale 1 the filled axis fits exactly, so any drift at all would pull an edge in
+   off the screen. Keeping both endpoints at or above KEN_BURNS_BASE (1.03, i.e. 1.5%
+   of overscan on each side) covers the 0.9% drift with room to spare. Change one of
+   those two numbers in show.js and the other has to follow. */
+.slide.ken-burns img {
+  animation: ken-burns var(--kb-duration, 8800ms) linear both;
+  will-change: transform;
+}
+
+@keyframes ken-burns {
+  from { transform: scale(var(--kb-from, 1.03)); }
+  to { transform: scale(var(--kb-to, 1.11)) translate(var(--kb-x, 0), var(--kb-y, 0)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide.ken-burns img { animation: none; }
 }
 
 #caption {

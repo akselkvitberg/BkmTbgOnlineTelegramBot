@@ -158,6 +158,19 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task Ken_burns_can_be_turned_off_and_back_on()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        Assert.True(_factory.Store.Snapshot.Settings.KenBurns); // on unless asked otherwise
+
+        await client.PatchAsJsonAsync("/api/settings", new { kenBurns = false });
+        Assert.False(_factory.Store.Snapshot.Settings.KenBurns);
+
+        await client.PatchAsJsonAsync("/api/settings", new { kenBurns = true });
+        Assert.True(_factory.Store.Snapshot.Settings.KenBurns);
+    }
+
+    [Fact]
     public async Task A_settings_change_advances_the_manifest_etag()
     {
         var client = _factory.CreateAuthenticatedClient();
@@ -262,6 +275,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.True(root.TryGetProperty("transitionMs", out _));
         Assert.True(root.TryGetProperty("newestFirstBoost", out _));
         Assert.True(root.TryGetProperty("recurringEvery", out _));
+        Assert.True(root.TryGetProperty("kenBurns", out _));
         Assert.True(root.TryGetProperty("takeoverImageId", out _));
         Assert.True(root.TryGetProperty("takeoverUntil", out _));
 
