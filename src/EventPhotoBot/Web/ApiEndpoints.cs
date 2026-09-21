@@ -23,7 +23,8 @@ public sealed record SettingsPatch(
     bool? NewestFirstBoost,
     int? RecurringEvery,
     bool? KenBurns,
-    bool? ShowJoinInvite);
+    bool? ShowJoinInvite,
+    string? Layout);
 
 public static class ApiEndpoints
 {
@@ -77,6 +78,7 @@ public static class ApiEndpoints
                 s.RecurringEvery,
                 s.KenBurns,
                 s.ShowJoinInvite,
+                Layout = s.Layout.ToString().ToLowerInvariant(),
                 s.TakeoverImageId,
                 s.TakeoverUntil,
                 // Projected by hand, like the image status above: responses go through
@@ -308,6 +310,26 @@ public static class ApiEndpoints
                 && order is not ("shuffle" or "newest-first"))
                 return Results.BadRequest(new { error = "order må være shuffle eller newest-first." });
 
+            // Parsed up front rather than inside the mutation: an unknown name must be
+            // a 400 the admin page can show, not a silently ignored field that leaves
+            // the picker claiming a layout the screen is not running.
+            SlideLayout? layout = null;
+            if (patch.Layout is { } layoutName)
+            {
+                // Enum.TryParse alone is not enough: it happily parses a numeric string,
+                // so "99" would come back true with an undefined enum value and be
+                // written to the state file, where it would render as a layout name no
+                // screen has ever heard of.
+                if (!Enum.TryParse<SlideLayout>(layoutName, ignoreCase: true, out var parsed)
+                    || !Enum.IsDefined(parsed))
+                    return Results.BadRequest(new
+                    {
+                        error = "layout må være single, mosaic, polaroid, filmstrip, "
+                                + "collage eller split.",
+                    });
+                layout = parsed;
+            }
+
             await store.MutateAsync(state =>
             {
                 var s = state.Settings;
@@ -325,6 +347,7 @@ public static class ApiEndpoints
                 if (patch.RecurringEvery is { } every) s.RecurringEvery = Math.Clamp(every, 1, 100);
                 if (patch.KenBurns is { } kenBurns) s.KenBurns = kenBurns;
                 if (patch.ShowJoinInvite is { } showJoinInvite) s.ShowJoinInvite = showJoinInvite;
+                if (layout is { } chosen) s.Layout = chosen;
             });
 
             return Results.Ok();

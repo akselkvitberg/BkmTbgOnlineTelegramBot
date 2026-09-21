@@ -75,6 +75,325 @@ html, body {
   .slide.ken-burns img { animation: none; }
 }
 
+/* ==========================================================================
+   The multi-photo layouts
+   ==========================================================================
+
+   Five arrangements beside the single full-bleed photo above, chosen in admin and
+   carried on the manifest. show.js owns which photo lands in which slot and holds
+   the table that says how many slots each layout has; this file owns only where
+   those slots sit and how a photo arriving in one announces itself.
+
+   Two rules run through all of them. Only `opacity` and `transform` are animated:
+   the screen runs for hours on whatever machine the venue owns, and a property that
+   forces layout every frame is a stutter the whole room sees. And the geometry is
+   fixed rather than flowed from the content, so a photo arriving at 23:00 takes a
+   slot's next turn without reshuffling everything already on screen. */
+
+:root {
+  /* Projector overscan. A tile flush against the physical edge of the frame loses
+     its corner on consumer hardware, so every layout below insets its contents.
+     The single layout does not: a photo that fills the screen is the point of it,
+     and it has no edge detail to lose. */
+  --stage-safe: 2.2vmin;
+  --stage-gap: 1.2vmin;
+  --cell-radius: 1vmin;
+  /* What the corner QR badge covers - 11vmin wide, 1vmin of padding either side,
+     16px off each edge - so the two layouts that put text near the bottom of the
+     screen can stay clear of it. Reserved only while the badge is actually up; see
+     .has-badge below. */
+  --badge-inline: calc(13vmin + 32px);
+}
+
+#stage figure { margin: 0; min-inline-size: 0; min-block-size: 0; }
+
+/* The `hidden` attribute's UA rule is `display: none`, and any display declaration
+   on the element itself beats it - which several of the figures below have. A slot
+   with no photo for it (a playlist shorter than the grid) has to actually
+   disappear, not sit there as an empty white rectangle. */
+#stage [hidden] { display: none !important; }
+
+/* The C key reaches the per-photo captions too. It only flips this class rather
+   than re-rendering the slots: re-rendering would restart every entrance animation
+   on screen for a keypress that changed nothing about which photos are up. */
+#stage.captions-off figcaption { display: none; }
+
+.layout-mosaic,
+.layout-polaroid,
+.layout-filmstrip,
+.layout-collage,
+.layout-split { padding: var(--stage-safe); }
+
+/* The polaroid's mats and the split's captions both sit low, where the corner QR
+   badge is. Reserved only while it is showing: with the invite turned off, or
+   before anyone has sent a photo, there is nothing there to avoid. */
+body.has-badge .layout-polaroid,
+body.has-badge .layout-split {
+  padding-inline-end: calc(var(--stage-safe) + var(--badge-inline));
+}
+
+/* -- mosaic: six photos on a fixed grid ---------------------------------- */
+
+/* Named areas rather than an auto-placed flow, so the shape is the same on the
+   first photo of the night and the four hundredth, and two screens on one event
+   show the same thing. One large area and five small ones: a flat 3x2 of equal
+   tiles reads as a contact sheet, and nothing on it is big enough to look at. */
+.layout-mosaic {
+  display: grid;
+  gap: var(--stage-gap);
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  grid-template-areas:
+    'a a b c'
+    'a a d d'
+    'e e f f';
+}
+
+.layout-mosaic .area-0 { grid-area: a; }
+.layout-mosaic .area-1 { grid-area: b; }
+.layout-mosaic .area-2 { grid-area: c; }
+.layout-mosaic .area-3 { grid-area: d; }
+.layout-mosaic .area-4 { grid-area: e; }
+.layout-mosaic .area-5 { grid-area: f; }
+
+.tile, .cell {
+  overflow: hidden;
+  border-radius: var(--cell-radius);
+  background: #111;
+}
+
+/* `cover` is the crop these layouts are allowed, and the areas above stay near 4:3
+   and 1:1 to limit what it costs: nothing detects a face, so the best this can do
+   is never hand a photo a slot shaped nothing like it. */
+.tile img, .cell img, .frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile { animation: cell-fades-in var(--transition, 800ms) ease-in-out both; }
+
+@keyframes cell-fades-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* -- polaroid: three prints on the dark ground --------------------------- */
+
+/* Three columns rather than a pile, because a pile has to overlap and an overlapped
+   print is somebody's photo with a corner missing. Turning each one a few degrees
+   is enough to read as handmade without hiding anything. */
+.layout-polaroid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: center;
+  gap: 4vmin;
+  /* A print is as tall as its photo plus its caption, and somebody who writes two
+     long lines makes it taller. The stage clips rather than letting a mat run off
+     the screen, which on a projector means off the wall and into the room. */
+  overflow: hidden;
+}
+
+.print {
+  display: grid;
+  gap: 1.4vmin;
+  /* A wider mat at the foot is what makes this read as a print rather than as a
+     photo with a white border. */
+  padding: 1.4vmin 1.4vmin 3.2vmin;
+  border-radius: 0.6vmin;
+  background: #f4f1ea;
+  color: #1c1c1c;
+  box-shadow: 0 1.6vmin 3.6vmin rgba(0, 0, 0, 0.55);
+  /* Declared here and not only inside the keyframe: the tilt is composition, not
+     motion, so it has to survive both prefers-reduced-motion and the moment
+     between two landings when no animation is running. */
+  transform: rotate(var(--tilt, 0deg));
+  animation: print-lands var(--transition, 800ms) ease-out both;
+  will-change: transform, opacity;
+}
+
+/* A 4:5 window, a print's own shape. The photo fills it, which is the crop the
+   metaphor costs - a print is a fixed piece of paper. */
+.print .window {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 4 / 5;
+  background: #000;
+}
+
+.print .window img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+.print figcaption {
+  display: grid;
+  gap: 0.15em;
+  text-align: center;
+  font-size: clamp(0.75rem, 1.2vw, 1.15rem);
+  /* Ink on paper: the one caption in this app that is not light laid over a photo. */
+  color: #2c2c2c;
+  overflow: hidden;
+}
+
+.print figcaption span:first-child { font-weight: 600; opacity: 0.7; }
+
+@keyframes print-lands {
+  from { opacity: 0; transform: rotate(var(--tilt, 0deg)) translateY(-4%) scale(1.04); }
+  to { opacity: 1; transform: rotate(var(--tilt, 0deg)) translateY(0) scale(1); }
+}
+
+/* -- filmstrip: a band drifting sideways --------------------------------- */
+
+.layout-filmstrip {
+  display: grid;
+  align-content: center;
+  overflow: hidden;
+  /* Block axis only. The band is meant to run off both side edges; insetting it
+     would put a black margin where the strip should be continuing. */
+  padding: var(--stage-safe) 0;
+}
+
+.track {
+  --frames: 5;
+  display: flex;
+  /* Frames size themselves from their own square window; stretching them to the
+     line would hand the band whatever height the tallest photo happened to have. */
+  align-items: center;
+  /* The stage's width, not the frames' - the drift below translates by a fraction
+     of this box, so one fifth of it is exactly one frame however many the band
+     is actually carrying. */
+  width: 100%;
+}
+
+/* A full band overflows, and must do so only to the right. A centred flex container
+   splits its overflow across both edges, which leaves the drift ending with a blank
+   fifth of the screen down the right-hand side at the end of every slide. */
+.track[data-strip='scrolling'] { justify-content: flex-start; }
+
+/* A playlist too short to fill the band sits in the middle of the screen instead of
+   hugging the left edge. Nothing overflows here, so there is nothing to split. */
+.track[data-strip='short'] { justify-content: center; }
+
+.frame {
+  flex: 0 0 calc(100% / var(--frames));
+  padding-inline: calc(var(--stage-gap) / 2);
+}
+
+/* Square, and stated on the image rather than the frame so that the gap between
+   frames is not counted into the shape. The band has to survive both orientations:
+   a phone's portrait shot and a camera's landscape one lose the same amount, which
+   is the fairest crop available to a layout that crops at all. */
+.frame img {
+  height: auto;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--cell-radius);
+  background: #111;
+}
+
+/* Exactly one frame of travel per slide. The duration is the slide clock itself,
+   handed down by renderFilmstrip, so the drift can neither outlast its slide nor
+   finish early and freeze; `linear`, because a drift that eases is a drift the eye
+   notices, which is the opposite of what this layout is for. */
+.track[data-motion='drift'] {
+  animation: strip-drifts var(--drift-duration, 8000ms) linear both;
+  will-change: transform;
+}
+
+@keyframes strip-drifts {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-100% / var(--frames))); }
+}
+
+/* -- collage: a grid that grows ------------------------------------------ */
+
+/* Auto-placed in DOM order across a fixed 4x3, so a cell keeps its position for the
+   whole evening and growth appends rather than reflows. `align-content: start` is
+   what makes a half-full grid read as a composition in progress instead of as a
+   grid with holes in the middle of it. */
+.layout-collage {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: calc((100% - var(--stage-gap) * 2) / 3);
+  gap: var(--stage-gap);
+  align-content: start;
+}
+
+.cell { animation: cell-arrives var(--transition, 800ms) ease-out both; }
+
+@keyframes cell-arrives {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* -- split: two whole photos side by side -------------------------------- */
+
+.layout-split {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 3vmin;
+}
+
+/* Both rows size to their contents and the pair is centred as a whole, rather than
+   the photo filling a 1fr row with the caption pinned under it: that put a
+   letterboxed landscape photo in the middle of the pane and its caption 200px below
+   at the foot of the screen, reading as a line of text that belonged to nothing.
+   The caption gets its own row under the photo rather than a band across it, so a
+   pane is a photo and a line of text instead of a photo with writing on it. */
+.pane {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
+  gap: 1.4vmin;
+  animation: cell-fades-in var(--transition, 800ms) ease-in-out both;
+}
+
+.pane .window {
+  display: grid;
+  place-items: center;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* `contain`, not `cover`: half a wide screen is still larger than anything a phone
+   took, so the promise that nobody's head is cut off survives the split. This is the
+   only one of the five that keeps it.
+
+   The height cap is spelled out against the viewport because the rows above size to
+   their content, which leaves the pane no definite height for a percentage to
+   resolve against - a portrait photo would take its full intrinsic height and push
+   its caption off the bottom of the screen. The 7vmin is the caption's own row plus
+   the gap above it. */
+.pane .window img {
+  max-width: 100%;
+  max-height: calc(100vh - var(--stage-safe) * 2 - 7vmin);
+  object-fit: contain;
+}
+
+.pane figcaption {
+  display: flex;
+  gap: 0.6em;
+  align-items: baseline;
+  justify-content: center;
+  font-size: clamp(0.85rem, 1.4vw, 1.4rem);
+}
+
+.pane figcaption span:first-child { font-weight: 600; opacity: 0.85; }
+.pane figcaption span:last-child { opacity: 0.95; }
+
+/* The polaroid's tilt is the one thing here that stays: it is composition rather
+   than motion, and `animation: none` leaves the print resting on the static
+   transform `.print` declares for itself above. Everything else - the fades, the
+   landing, the drift - is exactly what the preference is asking to be spared. */
+@media (prefers-reduced-motion: reduce) {
+  .tile,
+  .cell,
+  .pane,
+  .print,
+  .track[data-motion='drift'] {
+    animation: none;
+  }
+}
+
 #caption {
   position: fixed;
   left: 0; right: 0; bottom: 0;

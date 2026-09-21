@@ -26,6 +26,21 @@
     <div class="row"><button class="primary" onclick="saveEvent()">Lagre</button></div>
 
     <h2>Bildevisning</h2>
+    <label for="layout">Oppsett på skjermen</label>
+    <select id="layout">
+      <option value="single">Ett bilde om gangen</option>
+      <option value="mosaic">Mosaikk – seks bilder i rutenett</option>
+      <option value="polaroid">Polaroid – tre bilder som papirkopier</option>
+      <option value="filmstrip">Filmstripe – fem bilder som sklir sidelengs</option>
+      <option value="collage">Collage – opptil tolv bilder som fyller skjermen</option>
+      <option value="split">Delt skjerm – to bilder side om side</option>
+    </select>
+    <p class="muted">
+      «Ett bilde om gangen» viser hele bildet slik det ble tatt, og er det eneste
+      oppsettet med sakte zoom og bildetekst nederst. De andre passer når bildene
+      kommer inn fortere enn ett hvert åttende sekund. Alle bortsett fra «Delt skjerm»
+      beskjærer bildene for å fylle rutene sine.
+    </p>
     <label for="slideSeconds">Sekunder per bilde</label>
     <input id="slideSeconds" type="number" min="2" max="120">
     <label for="transitionMs">Overtoning (ms)</label>
@@ -88,8 +103,10 @@
         const input = document.getElementById(key);
         if (document.activeElement !== input) input.value = settings[key];
       }
-      const orderEl = document.getElementById('order');
-      if (document.activeElement !== orderEl) orderEl.value = settings.order;
+      for (const key of ['order', 'layout']) {
+        const select = document.getElementById(key);
+        if (document.activeElement !== select) select.value = settings[key];
+      }
       document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
       document.getElementById('kenBurns').checked = settings.kenBurns;
       document.getElementById('showJoinInvite').checked = settings.showJoinInvite;
@@ -147,6 +164,7 @@
       slideSeconds: Number(document.getElementById('slideSeconds').value),
       transitionMs: Number(document.getElementById('transitionMs').value),
       order: document.getElementById('order').value,
+      layout: document.getElementById('layout').value,
       newestFirstBoost: document.getElementById('newestFirstBoost').checked,
       recurringEvery: Number(document.getElementById('recurringEvery').value),
       kenBurns: document.getElementById('kenBurns').checked,

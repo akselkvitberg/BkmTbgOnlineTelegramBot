@@ -103,8 +103,10 @@ The slideshow is the part of this app that is already good. Takeover, the
 recurring pin, the seeded shuffle, Ken Burns, and the invite toggle are all
 worth keeping exactly as they are. What is missing is variety and reach.
 
-- More layouts than one full-bleed image: a mosaic for when photos arrive
-  faster than eight seconds apart, a filmstrip, a split for portrait pairs
+- ~~More layouts than one full-bleed image~~ — done: mosaic, polaroid,
+  filmstrip, collage and split sit beside the original single layout, chosen
+  in Settings. What is left is per-screen choice rather than per-event, which
+  is the several-screens item below
 - Per-event look — accent colour, typeface, frame — with contrast checked
   server-side rather than trusted to whoever picked the colour
 - Overlays that are not photos: the programme, a countdown, a message from

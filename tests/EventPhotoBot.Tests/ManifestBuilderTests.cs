@@ -47,6 +47,38 @@ public class ManifestBuilderTests
     }
 
     [Fact]
+    public void The_manifest_carries_the_layout_as_a_lowercase_name()
+    {
+        var state = new EventState();
+
+        // The screen it was written for, and what an event that has never touched
+        // the setting gets.
+        Assert.Equal("single", ManifestBuilder.Build(state, 1, Now).Settings.Layout);
+
+        state.Settings.Layout = SlideLayout.Filmstrip;
+
+        Assert.Equal("filmstrip", ManifestBuilder.Build(state, 2, Now).Settings.Layout);
+    }
+
+    [Theory]
+    [InlineData(SlideLayout.Single, "single")]
+    [InlineData(SlideLayout.Mosaic, "mosaic")]
+    [InlineData(SlideLayout.Polaroid, "polaroid")]
+    [InlineData(SlideLayout.Filmstrip, "filmstrip")]
+    [InlineData(SlideLayout.Collage, "collage")]
+    [InlineData(SlideLayout.Split, "split")]
+    public void Every_layout_has_a_name_the_screen_knows(SlideLayout layout, string expected)
+    {
+        // show.js looks the name up in its own layout table and falls back to the
+        // single layout on anything it does not recognise, so a mismatch here would
+        // not fail loudly - it would quietly ignore the organiser's choice. The
+        // spellings are asserted one by one for that reason.
+        var state = new EventState { Settings = { Layout = layout } };
+
+        Assert.Equal(expected, ManifestBuilder.Build(state, 1, Now).Settings.Layout);
+    }
+
+    [Fact]
     public void Hiding_the_join_invite_leaves_the_join_url_intact()
     {
         // The setting is a screen-side choice, not a change to who may join: the

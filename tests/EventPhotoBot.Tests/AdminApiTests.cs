@@ -248,6 +248,53 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite);
     }
 
+    // The store is shared across this class, so these set the layout they start from
+    // rather than assuming the default - a sibling test that changed it would
+    // otherwise decide whether this one passes. SlideLayout.Single as the default is
+    // asserted where it belongs, against a fresh EventState in ManifestBuilderTests.
+
+    [Fact]
+    public async Task The_layout_can_be_changed_from_admin()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await client.PatchAsJsonAsync("/api/settings", new { layout = "single" });
+
+        await client.PatchAsJsonAsync("/api/settings", new { layout = "mosaic" });
+        Assert.Equal(SlideLayout.Mosaic, _factory.Store.Snapshot.Settings.Layout);
+
+        await client.PatchAsJsonAsync("/api/settings", new { layout = "split" });
+        Assert.Equal(SlideLayout.Split, _factory.Store.Snapshot.Settings.Layout);
+    }
+
+    [Theory]
+    [InlineData("banana")]
+    // Enum.TryParse parses a numeric string too, and would hand back an undefined
+    // enum value to be written to the state file and served to the screen as a
+    // layout name nothing has ever heard of.
+    [InlineData("99")]
+    [InlineData("")]
+    public async Task An_unknown_layout_is_rejected_and_changes_nothing(string layout)
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await client.PatchAsJsonAsync("/api/settings", new { layout = "polaroid" });
+
+        var response = await client.PatchAsJsonAsync("/api/settings", new { layout });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(SlideLayout.Polaroid, _factory.Store.Snapshot.Settings.Layout);
+    }
+
+    [Fact]
+    public async Task Patching_other_settings_leaves_the_layout_alone()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await client.PatchAsJsonAsync("/api/settings", new { layout = "collage" });
+
+        await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 6 });
+
+        Assert.Equal(SlideLayout.Collage, _factory.Store.Snapshot.Settings.Layout);
+    }
+
     [Fact]
     public async Task The_event_name_can_be_set_and_changed_from_admin()
     {
@@ -373,6 +420,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
             s.Settings.SlideSeconds = 42;
             s.Settings.Order = SlideOrder.NewestFirst;
             s.Settings.EventName = "Sommerfest";
+            s.Settings.Layout = SlideLayout.Mosaic;
             s.Settings.Senders =
                 [new Sender { Id = 42, Name = "Guest", Status = SenderStatus.AutoApprove }];
         });
@@ -389,6 +437,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.True(root.TryGetProperty("recurringEvery", out _));
         Assert.Equal("Sommerfest", root.GetProperty("eventName").GetString());
         Assert.True(root.TryGetProperty("kenBurns", out _));
+        Assert.Equal("mosaic", root.GetProperty("layout").GetString());
         Assert.True(root.TryGetProperty("takeoverImageId", out _));
         Assert.True(root.TryGetProperty("takeoverUntil", out _));
 

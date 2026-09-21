@@ -9,7 +9,7 @@ public sealed record TakeoverView(string Id, DateTimeOffset? Until);
 
 public sealed record SettingsView(
     int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName,
-    string? JoinUrl, bool KenBurns, bool ShowJoinInvite);
+    string? JoinUrl, bool KenBurns, bool ShowJoinInvite, string Layout);
 
 public sealed record Manifest(
     long Version,
@@ -52,7 +52,13 @@ public static class ManifestBuilder
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
                 settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
-                settings.EventName, joinUrl, settings.KenBurns, settings.ShowJoinInvite),
+                settings.EventName, joinUrl, settings.KenBurns, settings.ShowJoinInvite,
+                // Every layout name is a single lowercase word, so unlike Order above
+                // there is no kebab form to spell out by hand. show.js looks the name up
+                // in its own layout table and falls back to "single" on anything it does
+                // not know, so an older screen left open across a deploy degrades to the
+                // original slideshow rather than to a black wall.
+                settings.Layout.ToString().ToLowerInvariant()),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 
