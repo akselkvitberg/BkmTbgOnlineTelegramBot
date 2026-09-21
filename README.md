@@ -9,6 +9,7 @@ destroyed afterwards.
 
 - **What to do on the day, and how to tear it down:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - **Why it is built this way:** [telegram-online-bot-spec.md](telegram-online-bot-spec.md)
+- **What it would take to keep it:** [docs/BEYOND-ONE-EVENT.md](docs/BEYOND-ONE-EVENT.md)
 
 ## Layout
 

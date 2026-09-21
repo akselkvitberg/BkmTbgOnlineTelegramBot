@@ -7,11 +7,16 @@
   <link rel="stylesheet" href="/show.css">
 </head>
 <body>
-  <div id="stage">
-    <div class="slide" data-slot="a"></div>
-    <div class="slide" data-slot="b"></div>
-  </div>
+  <!-- Filled by show.js. The stage's contents are the layout - two cross-fading
+       slides for one-photo-at-a-time, a grid of tiles for the mosaic, and so on -
+       and the layout is a setting an organiser can change mid-event, so the markup
+       cannot be written here. -->
+  <div id="stage"></div>
 
+  <!-- The caption bar belongs to the one-photo-at-a-time layout alone. The denser
+       layouts either carry a caption per photo (polaroid, split) or none at all:
+       one bar across the bottom of a six-tile mosaic says nothing about which tile
+       it means. -->
   <div id="caption" hidden>
     <span id="caption-sender"></span>
     <span id="caption-text"></span>

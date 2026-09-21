@@ -8,6 +8,28 @@ public enum ImageStatus { Pending, Approved, Hidden, Rejected }
 public enum PinKind { None, Recurring }
 public enum SlideOrder { Shuffle, NewestFirst }
 
+/// <summary>
+/// How the screen arranges the photos it is showing at any one moment.
+///
+/// A closed set rather than a free string: each value is a promise about what the
+/// room sees — how many photos are up at once, whether a guest's photo may be
+/// cropped to fill its slot, and whether a caption is still legible from the back
+/// of the hall. Those are decisions, and they belong here and in the layout table
+/// in show.js rather than being rediscovered in a stylesheet.
+///
+/// <see cref="Single"/> is the original screen and the default: one photo, whole,
+/// letterboxed on its own blurred backdrop. It is the only layout that never crops,
+/// the only one that animates the slow zoom, and the only one that carries the
+/// caption bar — so it stays the safe choice for a room where the photos matter
+/// more than the wall does.
+///
+/// The other five trade that promise for density. <see cref="Mosaic"/>,
+/// <see cref="Polaroid"/>, <see cref="Filmstrip"/> and <see cref="Collage"/> crop to
+/// fill a cell; an organiser picking one is picking that trade. <see cref="Split"/>
+/// does not crop — half a wide screen is still larger than anything a phone took.
+/// </summary>
+public enum SlideLayout { Single, Mosaic, Polaroid, Filmstrip, Collage, Split }
+
 public sealed class ImageRecord
 {
     public required string Id { get; set; }
@@ -66,6 +88,15 @@ public sealed class Settings
     public int SlideSeconds { get; set; } = 8;
     public int TransitionMs { get; set; } = 800;
     public SlideOrder Order { get; set; } = SlideOrder.Shuffle;
+
+    /// <summary>
+    /// How the screen arranges what it is showing. Single by default — one whole
+    /// photo at a time is the layout that never crops anybody out of their own
+    /// picture, and the one every other setting here was written against. The
+    /// denser layouts are for a room where photos arrive faster than one every
+    /// eight seconds, and nobody watches the screen continuously.
+    /// </summary>
+    public SlideLayout Layout { get; set; } = SlideLayout.Single;
     public bool NewestFirstBoost { get; set; } = true;
     public int RecurringEvery { get; set; } = 10;
 
