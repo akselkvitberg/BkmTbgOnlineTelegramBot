@@ -78,7 +78,6 @@ public class TelegramClientLoggingTests
         services.AddSingleton(new AppConfig
         {
             BucketName = "bucket",
-            EventName = "Party",
             BotToken = SyntheticToken,
             WebhookSecret = "whsecret",
             WebhookPath = "hookpath",

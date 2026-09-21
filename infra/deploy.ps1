@@ -7,7 +7,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $ProjectId,
-    [Parameter(Mandatory)][string] $EventName,
     [string] $StateBucket,
     [string] $Region = 'europe-north1',
     [string] $Name = 'eventphoto',
@@ -52,7 +51,7 @@ Assert-Success 'terraform init'
 terraform -chdir="$PSScriptRoot" apply `
     -target=google_artifact_registry_repository.images `
     -target=google_secret_manager_secret.secrets `
-    -var "project_id=$ProjectId" -var "event_name=$EventName" -var "region=$Region" -var "name=$Name" `
+    -var "project_id=$ProjectId" -var "region=$Region" -var "name=$Name" `
     -var "hosting_site=$HostingSite" `
     -var 'image_digest=placeholder'
 Assert-Success 'terraform apply (bootstrap)'
@@ -94,7 +93,7 @@ Write-Host "==> Image: $digest" -ForegroundColor Cyan
 
 Write-Host '==> Apply' -ForegroundColor Cyan
 terraform -chdir="$PSScriptRoot" apply `
-    -var "project_id=$ProjectId" -var "event_name=$EventName" -var "region=$Region" -var "name=$Name" `
+    -var "project_id=$ProjectId" -var "region=$Region" -var "name=$Name" `
     -var "hosting_site=$HostingSite" `
     -var "image_digest=$digest"
 Assert-Success 'terraform apply'

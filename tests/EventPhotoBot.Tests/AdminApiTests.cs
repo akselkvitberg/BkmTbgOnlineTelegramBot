@@ -249,6 +249,39 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task The_event_name_can_be_set_and_changed_from_admin()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        await client.PatchAsJsonAsync("/api/settings", new { eventName = "  Sommerfest 2026  " });
+
+        // Trimmed: the field is typed into a web form, and a stray space would
+        // show up centred on the projector.
+        Assert.Equal("Sommerfest 2026", _factory.Store.Snapshot.Settings.EventName);
+    }
+
+    [Fact]
+    public async Task An_over_long_event_name_is_truncated_rather_than_rejected()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        await client.PatchAsJsonAsync("/api/settings", new { eventName = new string('a', 300) });
+
+        Assert.Equal(100, _factory.Store.Snapshot.Settings.EventName.Length);
+    }
+
+    [Fact]
+    public async Task The_event_name_can_be_cleared()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await client.PatchAsJsonAsync("/api/settings", new { eventName = "Sommerfest" });
+
+        await client.PatchAsJsonAsync("/api/settings", new { eventName = "" });
+
+        Assert.Equal("", _factory.Store.Snapshot.Settings.EventName);
+    }
+
+    [Fact]
     public async Task A_settings_change_advances_the_manifest_etag()
     {
         var client = _factory.CreateAuthenticatedClient();
@@ -339,6 +372,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         {
             s.Settings.SlideSeconds = 42;
             s.Settings.Order = SlideOrder.NewestFirst;
+            s.Settings.EventName = "Sommerfest";
             s.Settings.Senders =
                 [new Sender { Id = 42, Name = "Guest", Status = SenderStatus.AutoApprove }];
         });
@@ -353,6 +387,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.True(root.TryGetProperty("transitionMs", out _));
         Assert.True(root.TryGetProperty("newestFirstBoost", out _));
         Assert.True(root.TryGetProperty("recurringEvery", out _));
+        Assert.Equal("Sommerfest", root.GetProperty("eventName").GetString());
         Assert.True(root.TryGetProperty("kenBurns", out _));
         Assert.True(root.TryGetProperty("takeoverImageId", out _));
         Assert.True(root.TryGetProperty("takeoverUntil", out _));

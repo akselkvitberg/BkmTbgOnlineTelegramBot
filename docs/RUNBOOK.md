@@ -23,6 +23,10 @@ resource name appears.
       — letters, digits, `_` and `-` only, at most 64 characters. Anything else
       fails startup, on purpose: Telegram silently drops a deep-link payload
       outside that set, so a code with a space would ship a QR nobody can use.
+- [ ] Event name typed into admin settings under "Arrangement". It is only
+      shown on the slideshow while no photos have arrived yet, and it is a
+      setting rather than a deploy value, so fixing a typo mid-event costs
+      nothing and needs no deploy
 - [ ] Pre-approved photographers added by Telegram id and set to Auto-approve
       (see "Who can send" below)
 - [ ] QR on the slideshow checked from the back of the room, on the actual
@@ -366,7 +370,6 @@ Under **Settings → Secrets and variables → Actions → Variables**, set:
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of step 2 |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | Output of step 2 |
 | `TF_STATE_BUCKET` | Output of step 1 |
-| `EVENT_NAME` | The event name shown on the slideshow, e.g. `Summer Party 2026` |
 | `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
 | `APP_NAME` | Optional — defaults to `eventphoto` if unset |
 | `HOSTING_SITE` | Optional — the Firebase Hosting site id, e.g. `tbg-event-photos` for `https://tbg-event-photos.web.app`. Unset means no Hosting and the `run.app` URL as the only way in. See **The friendly URL** below |
@@ -465,11 +468,6 @@ came from, not which branch.
 All three live under the **Actions** tab, run via **Run workflow**; `deploy`
 additionally fires on its own whenever something lands on `master`.
 
-Both `plan` and `deploy` take the event name from the `EVENT_NAME` repository
-variable, so there is nothing to type on a normal run. Each also has an
-`event_name` input that overrides it for that run only — for a one-off deploy
-under a different name, without editing the variable. Leave it empty otherwise.
-
 - **plan** — takes an optional `image_digest` (leave it as the default
   `placeholder` before the first image has ever been built — the same
   bootstrap convention `deploy.ps1` uses). Writes the plan to the run's job
@@ -501,7 +499,7 @@ the apply interactively). Needs the state bucket from **One-time setup**
 above to already exist — `-StateBucket` is where its name goes.
 
 ```bash
-pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party" -StateBucket eventphoto-tfstate-my-event-project
+pwsh infra/deploy.ps1 -ProjectId my-event-project -StateBucket eventphoto-tfstate-my-event-project
 ```
 
 Add `-HostingSite tbg-event-photos` to also put the friendly `.web.app` URL in

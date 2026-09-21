@@ -1,3 +1,2 @@
 project_id   = "my-event-project"
-event_name   = "Summer Party"
 image_digest = "europe-north1-docker.pkg.dev/my-event-project/eventphoto/app@sha256:REPLACE"

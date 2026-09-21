@@ -8,7 +8,7 @@ public class BotIdentityTests
 {
     private static AppConfig Config() => new()
     {
-        BucketName = "bucket", EventName = "Party", BotToken = "token",
+        BucketName = "bucket", BotToken = "token",
         WebhookSecret = "secret", WebhookPath = "abc123", AdminPassword = "hunter2",
         CookieSigningKey = "0123456789abcdef0123456789abcdef", JoinCode = "party2026",
     };

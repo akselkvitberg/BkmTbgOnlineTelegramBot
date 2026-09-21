@@ -25,8 +25,7 @@ public sealed record Manifest(
 public static class ManifestBuilder
 {
     public static Manifest Build(
-        EventState state, long generation, DateTimeOffset now, string eventName = "",
-        string? joinUrl = null)
+        EventState state, long generation, DateTimeOffset now, string? joinUrl = null)
     {
         var settings = state.Settings;
 
@@ -52,8 +51,8 @@ public static class ManifestBuilder
             Takeover: ActiveTakeover(state, now),
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
-                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle", eventName,
-                joinUrl, settings.KenBurns, settings.ShowJoinInvite),
+                settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
+                settings.EventName, joinUrl, settings.KenBurns, settings.ShowJoinInvite),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 

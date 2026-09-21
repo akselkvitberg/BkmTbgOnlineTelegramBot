@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using EventPhotoBot.State;
 
 namespace EventPhotoBot.Tests;
@@ -33,6 +34,18 @@ public class ManifestEndpointTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.NotModified, second.StatusCode);
         Assert.Empty(await second.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task The_event_name_reaches_the_screen_without_a_redeploy()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await _factory.Store.MutateAsync(s => s.Settings.EventName = "Sommerfest 2026");
+
+        var manifest = await client.GetFromJsonAsync<JsonDocument>("/api/manifest");
+
+        Assert.Equal("Sommerfest 2026",
+            manifest!.RootElement.GetProperty("settings").GetProperty("eventName").GetString());
     }
 
     [Fact]

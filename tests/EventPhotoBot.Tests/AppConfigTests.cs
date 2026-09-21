@@ -14,7 +14,6 @@ public class AppConfigTests
     private static (string, string)[] Complete() =>
     [
         ("BUCKET_NAME", "bucket"),
-        ("EVENT_NAME", "Party"),
         ("TELEGRAM_BOT_TOKEN", "token"),
         ("TELEGRAM_WEBHOOK_SECRET", "secret"),
         ("TELEGRAM_WEBHOOK_PATH", "abc123"),
@@ -29,7 +28,6 @@ public class AppConfigTests
         var config = AppConfig.Load(Config(Complete()));
 
         Assert.Equal("bucket", config.BucketName);
-        Assert.Equal("Party", config.EventName);
         Assert.Equal("abc123", config.WebhookPath);
     }
 
@@ -78,7 +76,6 @@ public class AppConfigTests
         var config = AppConfig.Load(Config(withNewlines));
 
         Assert.Equal("bucket", config.BucketName);
-        Assert.Equal("Party", config.EventName);
         Assert.Equal("token", config.BotToken);
         Assert.Equal("secret", config.WebhookSecret);
         Assert.Equal("abc123", config.WebhookPath);

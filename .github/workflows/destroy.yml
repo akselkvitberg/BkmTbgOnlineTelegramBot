@@ -89,17 +89,16 @@ jobs:
         run: |
           region="${GCP_REGION:-europe-north1}"
           name="${APP_NAME:-eventphoto}"
-          # event_name and image_digest don't affect WHICH resources destroy
-          # removes — a destroy tears down everything already in state
-          # regardless of these values, it never creates or updates
-          # anything — but the config still requires a value for every
-          # variable with no default to build its plan graph at all. These
-          # two are placeholders that satisfy that requirement, nothing more.
+          # image_digest doesn't affect WHICH resources destroy removes — a
+          # destroy tears down everything already in state regardless of its
+          # value, it never creates or updates anything — but the config still
+          # requires a value for every variable with no default to build its
+          # plan graph at all. The placeholder satisfies that requirement,
+          # nothing more.
           terraform destroy -input=false -auto-approve \
             -var "project_id=$GCP_PROJECT_ID" \
             -var "region=$region" \
             -var "name=$name" \
-            -var "event_name=teardown" \
             -var "hosting_site=$HOSTING_SITE" \
             -var "image_digest=placeholder"
 

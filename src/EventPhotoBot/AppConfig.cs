@@ -10,7 +10,6 @@ namespace EventPhotoBot;
 public sealed class AppConfig
 {
     public required string BucketName { get; init; }
-    public required string EventName { get; init; }
     public required string BotToken { get; init; }
     public required string WebhookSecret { get; init; }
     public required string WebhookPath { get; init; }
@@ -35,7 +34,7 @@ public sealed class AppConfig
     {
         string[] required =
         [
-            "BUCKET_NAME", "EVENT_NAME", .. SecretKeys,
+            "BUCKET_NAME", .. SecretKeys,
         ];
 
         var missing = required.Where(k => string.IsNullOrWhiteSpace(config[k])).ToArray();
@@ -64,7 +63,6 @@ public sealed class AppConfig
         return new AppConfig
         {
             BucketName = config["BUCKET_NAME"]!.Trim(),
-            EventName = config["EVENT_NAME"]!.Trim(),
             BotToken = config["TELEGRAM_BOT_TOKEN"]!.Trim(),
             WebhookSecret = config["TELEGRAM_WEBHOOK_SECRET"]!.Trim(),
             WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!.Trim(),
@@ -78,6 +76,6 @@ public sealed class AppConfig
     public void LogLoaded(ILogger logger)
     {
         foreach (var key in SecretKeys) logger.LogInformation("Secret {Key} loaded.", key);
-        logger.LogInformation("Bucket {Bucket}, event {Event}.", BucketName, EventName);
+        logger.LogInformation("Bucket {Bucket}.", BucketName);
     }
 }

@@ -5,10 +5,6 @@ name: Terraform plan
 on:
   workflow_dispatch:
     inputs:
-      event_name:
-        description: "Override the EVENT_NAME repository variable for this run only. Leave empty to use it."
-        required: false
-        type: string
       image_digest:
         description: "Full image ref by digest to plan against (var.image_digest). Leave as 'placeholder' before any image has ever been built and pushed — this mirrors infra/deploy.ps1's own bootstrap apply, which uses the same placeholder for the same reason."
         required: false
@@ -41,10 +37,6 @@ jobs:
       # show the Firebase Hosting resources being destroyed, which is not what
       # the next deploy would actually do.
       HOSTING_SITE: ${{ vars.HOSTING_SITE }}
-      # Set once as a repository variable; the dispatch input overrides it for a
-      # one-off run. Keeps plan and deploy reading the same name by default, so a
-      # plan cannot quietly describe a differently-named event than the deploy.
-      EVENT_NAME: ${{ inputs.event_name || vars.EVENT_NAME }}
       IMAGE_DIGEST: ${{ inputs.image_digest }}
     steps:
       - name: Check required inputs and repository variables
@@ -54,7 +46,6 @@ jobs:
           [ -z "$GCP_WORKLOAD_IDENTITY_PROVIDER" ] && missing+=("repository variable GCP_WORKLOAD_IDENTITY_PROVIDER")
           [ -z "$GCP_DEPLOY_SERVICE_ACCOUNT" ] && missing+=("repository variable GCP_DEPLOY_SERVICE_ACCOUNT")
           [ -z "$TF_STATE_BUCKET" ] && missing+=("repository variable TF_STATE_BUCKET")
-          [ -z "$EVENT_NAME" ] && missing+=("repository variable EVENT_NAME (or the event_name input)")
           [ -z "$IMAGE_DIGEST" ] && missing+=("workflow input image_digest")
           if [ "${#missing[@]}" -ne 0 ]; then
             printf 'Missing: %s\n' "${missing[@]}" >&2
@@ -110,7 +101,6 @@ jobs:
             -var "project_id=$GCP_PROJECT_ID" \
             -var "region=$region" \
             -var "name=$name" \
-            -var "event_name=$EVENT_NAME" \
             -var "hosting_site=$HOSTING_SITE" \
             -var "image_digest=$IMAGE_DIGEST" \
             -out=tfplan 2>&1 | tee plan.txt
@@ -119,7 +109,7 @@ jobs:
         working-directory: infra
         run: |
           {
-            echo "## Terraform plan — event \`$EVENT_NAME\`"
+            echo "## Terraform plan"
             echo
             echo '```'
             cat plan.txt

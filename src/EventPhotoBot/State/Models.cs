@@ -54,6 +54,15 @@ public sealed class Sender
 
 public sealed class Settings
 {
+    /// <summary>
+    /// Shown on the slideshow's empty state. Lives here rather than in deploy
+    /// configuration because it is the one thing about an event an organiser is
+    /// likely to want to fix — a typo, a renamed party — after the screen is
+    /// already up, and a redeploy mid-event drops whatever Telegram is holding.
+    /// Empty until someone types it in admin; the screen then shows no name.
+    /// </summary>
+    public string EventName { get; set; } = "";
+
     public int SlideSeconds { get; set; } = 8;
     public int TransitionMs { get; set; } = 800;
     public SlideOrder Order { get; set; } = SlideOrder.Shuffle;

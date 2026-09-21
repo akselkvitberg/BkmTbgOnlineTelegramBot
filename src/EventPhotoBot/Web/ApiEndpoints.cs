@@ -16,6 +16,7 @@ public sealed record SenderStatusRequest(string Status);
 /// revoking a banned sender's photos — see POST /api/senders/{id}/status.
 /// </summary>
 public sealed record SettingsPatch(
+    string? EventName,
     int? SlideSeconds,
     int? TransitionMs,
     string? Order,
@@ -30,6 +31,11 @@ public static class ApiEndpoints
     // takeover banner exists to catch after the fact; clamping up front means a typo
     // strands a photo for at most a day, not indefinitely.
     private const int MaxTakeoverMinutes = 24 * 60;
+
+    // Truncated rather than rejected: the name is display text on one screen, and
+    // losing the tail of an absurd paste beats handing the organiser a validation
+    // error in the middle of setting up.
+    private const int MaxEventNameLength = 100;
 
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
@@ -63,6 +69,7 @@ public static class ApiEndpoints
             var s = store.Snapshot.Settings;
             return Results.Ok(new
             {
+                s.EventName,
                 s.SlideSeconds,
                 s.TransitionMs,
                 Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
@@ -87,7 +94,7 @@ public static class ApiEndpoints
         });
 
         app.MapGet("/api/manifest",
-            (HttpContext http, StateStore store, AppConfig config, BotIdentity identity) =>
+            (HttpContext http, StateStore store, BotIdentity identity) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
@@ -104,8 +111,7 @@ public static class ApiEndpoints
             // keys off store.Generation alone, and the no-object-store-IO guarantee
             // this path is tested for is unaffected.
             return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, config.EventName,
-                identity.JoinUrl));
+                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrl));
         });
 
         app.MapPost("/api/images/{id}/status",
@@ -305,6 +311,13 @@ public static class ApiEndpoints
             await store.MutateAsync(state =>
             {
                 var s = state.Settings;
+                if (patch.EventName is { } eventName)
+                {
+                    var trimmed = eventName.Trim();
+                    s.EventName = trimmed.Length > MaxEventNameLength
+                        ? trimmed[..MaxEventNameLength]
+                        : trimmed;
+                }
                 if (patch.SlideSeconds is { } slideSeconds) s.SlideSeconds = Math.Clamp(slideSeconds, 2, 120);
                 if (patch.TransitionMs is { } transitionMs) s.TransitionMs = Math.Clamp(transitionMs, 0, 5000);
                 if (patch.Order is { } o) s.Order = o == "newest-first" ? SlideOrder.NewestFirst : SlideOrder.Shuffle;

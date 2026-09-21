@@ -93,6 +93,7 @@ Both duplicate guards are dictionary lookups against the in-memory map rather th
 
 | Field | Default | Notes |
 | --- | --- | --- |
+| `eventName` | `""` | Shown on the slideshow's empty state. Empty until an organiser types it on the settings page, and the screen then shows no name |
 | `slideSeconds` | 8 | Per-image dwell time |
 | `transitionMs` | 800 | Cross-fade duration |
 | `order` | `shuffle` | `shuffle` or `newest-first` |
@@ -316,9 +317,9 @@ Manual (`workflow_dispatch`-only) GitHub Actions workflows — `plan`, `deploy`,
 | `TELEGRAM_WEBHOOK_PATH` | Secret Manager | Random path segment, defence in depth |
 | `ADMIN_PASSWORD` | Secret Manager | The single shared password |
 | `COOKIE_SIGNING_KEY` | Secret Manager | Rotating it logs everyone out |
-| `BUCKET_NAME`, `EVENT_NAME` | Plain env vars | |
+| `BUCKET_NAME` | Plain env var | |
 
-The whitelist is deliberately absent here. It is state, not configuration — see `settings.whitelist`.
+The whitelist is deliberately absent here. It is state, not configuration — see `settings.whitelist`. The event name is absent for the same reason: it is display text an organiser may want to correct once the screen is already up, so it lives in `settings.eventName` and is edited from the admin settings page. It started out as an env var beside `BUCKET_NAME` and cost a redeploy to change, which is exactly the trade this spec rejects elsewhere.
 
 The app fails to start if any secret is missing, rather than starting in a degraded state. Log the fact that a secret was loaded, never its value.
 

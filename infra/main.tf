@@ -233,11 +233,6 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.images.name
       }
 
-      env {
-        name  = "EVENT_NAME"
-        value = var.event_name
-      }
-
       dynamic "env" {
         for_each = {
           TELEGRAM_BOT_TOKEN      = local.secret_ids.bot_token
@@ -346,7 +341,7 @@ resource "google_firebase_hosting_release" "app" {
   provider     = google-beta
   site_id      = google_firebase_hosting_site.app[0].site_id
   version_name = google_firebase_hosting_version.app[0].name
-  message      = "${var.name} — ${var.event_name}"
+  message      = var.name
 }
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,6 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("BUCKET_NAME", "test-bucket");
-        builder.UseSetting("EVENT_NAME", "Test Event");
         builder.UseSetting("TELEGRAM_BOT_TOKEN", "test-token");
         builder.UseSetting("TELEGRAM_WEBHOOK_SECRET", WebhookSecret);
         builder.UseSetting("TELEGRAM_WEBHOOK_PATH", WebhookPath);

@@ -11,7 +11,7 @@ public class ManifestBuilderTests
     public void The_manifest_carries_the_join_url()
     {
         var manifest = ManifestBuilder.Build(
-            new EventState(), generation: 1, Now, "Party", "https://t.me/bot?start=code");
+            new EventState(), generation: 1, Now, "https://t.me/bot?start=code");
 
         Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
     }
@@ -19,7 +19,7 @@ public class ManifestBuilderTests
     [Fact]
     public void The_join_url_is_null_when_the_bot_username_is_unknown()
     {
-        var manifest = ManifestBuilder.Build(new EventState(), generation: 1, Now, "Party");
+        var manifest = ManifestBuilder.Build(new EventState(), generation: 1, Now);
 
         Assert.Null(manifest.Settings.JoinUrl);
     }
@@ -54,7 +54,7 @@ public class ManifestBuilderTests
         // carries it and only the slideshow's rendering changes.
         var state = new EventState { Settings = { ShowJoinInvite = false } };
 
-        var manifest = ManifestBuilder.Build(state, 1, Now, "Party", "https://t.me/bot?start=code");
+        var manifest = ManifestBuilder.Build(state, 1, Now, "https://t.me/bot?start=code");
 
         Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
     }
@@ -305,10 +305,24 @@ public class ManifestBuilderTests
     }
 
     [Fact]
-    public void The_event_name_passed_in_is_carried_onto_the_settings_view()
+    public void The_event_name_in_settings_is_carried_onto_the_settings_view()
     {
-        var manifest = ManifestBuilder.Build(new EventState(), 0, Now, "Summer Party");
+        var state = new EventState();
+        state.Settings.EventName = "Summer Party";
+
+        var manifest = ManifestBuilder.Build(state, 0, Now);
 
         Assert.Equal("Summer Party", manifest.Settings.EventName);
+    }
+
+    [Fact]
+    public void An_event_whose_name_has_never_been_set_reports_an_empty_name()
+    {
+        // The screen's empty state hides the heading on an empty string, so a
+        // freshly deployed event with nobody in admin yet shows no name rather
+        // than the word "null".
+        var manifest = ManifestBuilder.Build(new EventState(), 0, Now);
+
+        Assert.Equal("", manifest.Settings.EventName);
     }
 }

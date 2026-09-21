@@ -15,11 +15,6 @@ variable "name" {
   description = "Prefix for every resource name."
 }
 
-variable "event_name" {
-  type        = string
-  description = "Shown on the slideshow's empty state."
-}
-
 variable "hosting_site" {
   type        = string
   default     = ""

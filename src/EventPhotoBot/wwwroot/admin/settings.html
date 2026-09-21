@@ -19,6 +19,12 @@
   <main>
     <div id="takeover-banner" hidden></div>
 
+    <h2>Arrangement</h2>
+    <label for="eventName">Navn på arrangementet</label>
+    <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
+    <p class="muted">Vises på skjermen så lenge ingen bilder har kommet inn ennå.</p>
+    <div class="row"><button class="primary" onclick="saveEvent()">Lagre</button></div>
+
     <h2>Bildevisning</h2>
     <label for="slideSeconds">Sekunder per bilde</label>
     <input id="slideSeconds" type="number" min="2" max="120">
@@ -78,7 +84,7 @@
       // out from under the admin's cursor loses the keystroke and the value they were
       // typing, so every field that accepts typed input (not the checkboxes, which
       // have no in-progress-typing state to lose) is skipped while focused.
-      for (const key of ['slideSeconds', 'transitionMs', 'recurringEvery']) {
+      for (const key of ['eventName', 'slideSeconds', 'transitionMs', 'recurringEvery']) {
         const input = document.getElementById(key);
         if (document.activeElement !== input) input.value = settings[key];
       }
@@ -132,6 +138,10 @@
       await Admin.api('POST', `/api/senders/${id}/status`, { status: 'autoApprove' });
       await load();
     }
+
+    const saveEvent = () => Admin.api('PATCH', '/api/settings', {
+      eventName: document.getElementById('eventName').value,
+    }).then(load);
 
     const saveSlideshow = () => Admin.api('PATCH', '/api/settings', {
       slideSeconds: Number(document.getElementById('slideSeconds').value),
