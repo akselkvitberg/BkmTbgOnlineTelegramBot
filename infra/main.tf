@@ -317,8 +317,28 @@ resource "google_firebase_hosting_site" "app" {
 }
 
 # A version is the config itself; a release is what publishes it. Changing the
-# rewrite below replaces both, which is how Hosting works rather than churn to
+# config below replaces both, which is how Hosting works rather than churn to
 # design out.
+#
+# The header carrying the image digest is what makes every deploy do exactly
+# that, and it is load-bearing rather than decoration. The rewrite alone names
+# the Cloud Run *service*, not the image, so it is identical from one deploy to
+# the next: Terraform created one version on the day Hosting was added and never
+# another. That is fine while the release resource is in state — both are then
+# no-ops — and it is unrecoverable the moment the release is not, which is what
+# happened here. Terraform plans a create, Firebase answers
+#
+#   Error creating Release: Can't release to `sites/<site>/channels/live`:
+#   supplied version `sites/<site>/versions/<id>` is the current active version
+#
+# and every deploy fails on it, because the only version that exists is the one
+# already live. Releasing a *new* version each deploy is Firebase's own model —
+# it is what `firebase deploy` does — and it means the release create can never
+# hit that 400, so a state that has lost the release repairs itself on the next
+# run rather than needing an operator with credentials and a release id.
+#
+# The header is worth having on its own account too: the served build is
+# readable with curl -I instead of by cross-referencing Cloud Run revisions.
 resource "google_firebase_hosting_version" "app" {
   count    = local.hosting_enabled ? 1 : 0
   provider = google-beta
@@ -331,6 +351,14 @@ resource "google_firebase_hosting_version" "app" {
       run {
         service_id = google_cloud_run_v2_service.app.name
         region     = google_cloud_run_v2_service.app.location
+      }
+    }
+
+    headers {
+      glob = "**"
+
+      headers = {
+        "X-Event-Photo-Build" = var.image_digest
       }
     }
   }
