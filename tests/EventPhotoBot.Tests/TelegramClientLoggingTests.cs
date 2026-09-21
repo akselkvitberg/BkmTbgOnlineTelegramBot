@@ -84,6 +84,7 @@ public class TelegramClientLoggingTests
             WebhookPath = "hookpath",
             AdminPassword = "pw",
             CookieSigningKey = "0123456789abcdef0123456789abcdef",
+            JoinCode = "party2026",
         });
 
         services.AddHttpClient<ITelegramClient, TelegramClient>()

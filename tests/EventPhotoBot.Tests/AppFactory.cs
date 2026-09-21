@@ -15,6 +15,7 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     public const string SigningKey = "0123456789abcdef0123456789abcdef";
     public const string WebhookPath = "hook-abc";
     public const string WebhookSecret = "tg-secret";
+    public const string JoinCode = "party2026";
 
     public InMemoryObjectStore Objects { get; } = new();
     public FakeTelegramClient Telegram { get; } = new();
@@ -30,6 +31,7 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         builder.UseSetting("TELEGRAM_WEBHOOK_PATH", WebhookPath);
         builder.UseSetting("ADMIN_PASSWORD", Password);
         builder.UseSetting("COOKIE_SIGNING_KEY", SigningKey);
+        builder.UseSetting("JOIN_CODE", JoinCode);
 
         builder.ConfigureServices(services =>
         {

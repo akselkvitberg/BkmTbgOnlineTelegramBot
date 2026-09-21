@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace EventPhotoBot;
 
 /// <summary>
@@ -14,12 +16,20 @@ public sealed class AppConfig
     public required string WebhookPath { get; init; }
     public required string AdminPassword { get; init; }
     public required string CookieSigningKey { get; init; }
+    public required string JoinCode { get; init; }
 
     private static readonly string[] SecretKeys =
     [
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_PATH",
-        "ADMIN_PASSWORD", "COOKIE_SIGNING_KEY",
+        "ADMIN_PASSWORD", "COOKIE_SIGNING_KEY", "JOIN_CODE",
     ];
+
+    // Telegram's deep-link payload charset. A code outside it produces a
+    // https://t.me/<bot>?start=<code> link whose payload Telegram silently drops,
+    // so every scan lands in the chat with no code attached and the person is
+    // declined with no clue why. Failing the deploy is the cheap end of that.
+    private static readonly Regex JoinCodePattern =
+        new("^[A-Za-z0-9_-]{1,64}$", RegexOptions.Compiled);
 
     public static AppConfig Load(IConfiguration config)
     {
@@ -34,6 +44,14 @@ public sealed class AppConfig
             throw new InvalidOperationException(
                 $"Missing required configuration: {string.Join(", ", missing)}. " +
                 "Secrets come from Secret Manager via Cloud Run; check the service's env vars.");
+        }
+
+        var joinCode = config["JOIN_CODE"]!.Trim();
+        if (!JoinCodePattern.IsMatch(joinCode))
+        {
+            throw new InvalidOperationException(
+                "JOIN_CODE must be 1-64 characters from A-Z, a-z, 0-9, underscore or hyphen " +
+                "(Telegram's deep-link payload charset). Fix the secret version and redeploy.");
         }
 
         // Trimmed: `gcloud secrets versions add --data-file=-` run interactively (as the
@@ -52,6 +70,7 @@ public sealed class AppConfig
             WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!.Trim(),
             AdminPassword = config["ADMIN_PASSWORD"]!.Trim(),
             CookieSigningKey = config["COOKIE_SIGNING_KEY"]!.Trim(),
+            JoinCode = joinCode,
         };
     }
 
