@@ -3,6 +3,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using EventPhotoBot.State;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace EventPhotoBot.Tests;
 
@@ -142,6 +145,68 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    /// <summary>
+    /// The one rejection a phone will actually produce. An iPhone hands Safari a JPEG
+    /// when the photo comes from the library picker, but a photo picked through the
+    /// Files app can arrive as HEIC, which ImageSharp cannot decode. The generic
+    /// "not an image" message leaves the uploader with no idea what to change, so
+    /// this case is sniffed and answered by name.
+    /// </summary>
+    [Fact]
+    public async Task A_heic_upload_is_rejected_by_name_rather_than_as_an_unreadable_file()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(HeicHeader());
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/heic");
+        content.Add(file, "file", "IMG_0001.heic");
+
+        var response = await client.PostAsync("/api/images", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("HEIC", await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task An_upload_over_the_decode_pixel_cap_keeps_the_pipeline_s_own_explanation()
+    {
+        // ImagePipeline throws ImageTooLargeException with a message written to be
+        // shown to the sender; the endpoint used to swallow it into the generic
+        // "not an image" reply, which is wrong — the file is a perfectly good image.
+        var client = _factory.CreateAuthenticatedClient();
+
+        using var oversized = new Image<L8>(8000, 6252); // 50,016,000 px > the cap
+        using var buffer = new MemoryStream();
+        oversized.Save(buffer, new PngEncoder());
+
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(buffer.ToArray());
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        content.Add(file, "file", "huge.png");
+
+        var response = await client.PostAsync("/api/images", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("for stort", await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A bare ISO-BMFF ftyp box with the heic brand — the first twelve bytes of any
+    /// photo an iPhone stores in HEIF, and all the sniffing looks at.
+    /// </summary>
+    private static byte[] HeicHeader() =>
+    [
+        0x00, 0x00, 0x00, 0x18,
+        .. "ftyp"u8.ToArray(),
+        .. "heic"u8.ToArray(),
+        0x00, 0x00, 0x00, 0x00,
+        .. "mif1"u8.ToArray(),
+        .. "heic"u8.ToArray(),
+    ];
 
     [Fact]
     public async Task Settings_can_be_patched_one_field_at_a_time()

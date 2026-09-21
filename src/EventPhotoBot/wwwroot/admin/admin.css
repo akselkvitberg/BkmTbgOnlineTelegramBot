@@ -124,6 +124,11 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 
+/* display:flex above beats the browser's own [hidden] rule, so a .row toggled
+   with el.hidden would otherwise stay on screen — the same override
+   #takeover-banner[hidden] exists for. */
+.row[hidden] { display: none; }
+
 button {
   font: inherit;
   padding: 10px 16px;
@@ -176,3 +181,87 @@ td, th { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
 
 .muted { color: var(--muted); font-size: 0.9rem; }
 .empty { color: var(--muted); padding: 32px 0; text-align: center; }
+
+.link-button {
+  display: inline-block;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* The upload page. Sized for one thumb on a phone: the picker is the page, and
+   everything below it is feedback on what that one tap set going. */
+
+.pick {
+  display: block;
+  margin: 8px 0 0;
+  padding: 28px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 1.15rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pick:active { background: var(--bg); }
+
+.pick-hint { margin: 8px 0 0; text-align: center; }
+
+.upload-list { list-style: none; margin: 16px 0 0; padding: 0; }
+
+.upload-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.upload-item img, .upload-item .upload-placeholder {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--panel);
+}
+
+/* The thumbnail's object URL is revoked once the file is up, so the square would
+   otherwise sit there empty and read as a broken image. */
+.upload-item .upload-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ok);
+  font-size: 1.5rem;
+}
+
+.upload-item[data-state="done"] .upload-placeholder::after { content: "✓"; }
+
+.upload-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+
+/* Phone filenames are long and all alike (IMG_0001…IMG_0042); the tail is the
+   half that tells them apart, so clip the front. */
+.upload-name { direction: rtl; text-align: left; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+
+.upload-item[data-state="done"] .upload-state { color: var(--ok); }
+.upload-item[data-state="failed"] .upload-state { color: var(--danger); }
+.upload-item[data-state="failed"] { background: rgba(217, 83, 79, 0.08); }
+
+/* Wraps rather than clipping: the HEIC reply is a sentence telling the uploader
+   what to change, and truncating it wastes the one thing that reply is for. */
+.upload-item[data-state="failed"] .upload-state { white-space: normal; }
+
+.upload-remove {
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  flex-shrink: 0;
+}

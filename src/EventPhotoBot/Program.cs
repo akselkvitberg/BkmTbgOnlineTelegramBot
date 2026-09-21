@@ -106,6 +106,8 @@ app.MapJoinQr();
 
 app.MapGet("/show", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "show.html"), "text/html"));
+app.MapGet("/upload", () => Results.File(
+    Path.Combine(app.Environment.WebRootPath, "upload.html"), "text/html"));
 app.MapGet("/admin/queue", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "queue.html"), "text/html"));
 app.MapGet("/admin/images", () => Results.File(

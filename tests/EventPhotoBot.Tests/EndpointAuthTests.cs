@@ -24,6 +24,7 @@ public class EndpointAuthTests : IClassFixture<AppFactory>
     [InlineData("/admin/queue")]
     [InlineData("/admin/images")]
     [InlineData("/admin/settings")]
+    [InlineData("/upload")]
     public async Task Pages_redirect_to_login_without_a_session(string path)
     {
         var response = await _factory.CreateAnonymousClient().GetAsync(path);

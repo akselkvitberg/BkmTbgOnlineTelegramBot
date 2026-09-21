@@ -27,8 +27,8 @@ resource name appears.
       (see "Who can send" below)
 - [ ] QR on the slideshow checked from the back of the room, on the actual
       display machine — a QR nobody can scan makes the whole join flow useless
-- [ ] Programme and menu images uploaded via the images page and pinned as
-      recurring
+- [ ] Programme and menu images uploaded via `/upload` and pinned as
+      recurring from the images page
 - [ ] Takeover set and cleared once, so whoever runs the screen has done it
       before they need to under pressure
 - [ ] Full path tested from a real phone: send a photo, it appears in the
@@ -211,13 +211,23 @@ several depend on state left by the one before.
       once per that many slides.
 - [ ] **Every page and image requires a session.** Open a private/incognito
       window with no cookies and request each of `/show`, `/admin/queue`,
-      `/admin/images`, `/admin/settings`, and an image URL under `/img/...`
-      directly. Pass: each one returns `401` or redirects to the login page
+      `/admin/images`, `/admin/settings`, `/upload`, and an image URL under
+      `/img/...` directly. Pass: each one returns `401` or redirects to login
       — never the actual content.
 - [ ] **Portrait orientation is correct from both platforms.** Send one
       portrait photo from an iPhone and one from an Android phone. Pass:
       both display upright on the slideshow, not rotated or letterboxed
       sideways.
+- [ ] **Multi-select upload works from a real iPhone.** Open `/upload` on an
+      iPhone over the `.web.app` URL (not `run.app` — Firebase Hosting fronts
+      the service and has its own request limits), pick five or six photos in
+      one go from Fotobibliotek, and upload. Pass: all of them arrive and show
+      on the slideshow. The one to watch for is HEIC — Safari normally hands
+      over a JPEG from the library picker, but a photo reached through the
+      Files app can arrive as HEIC, which is declined with a message saying so.
+      If HEIC turns out to come through the library picker too, server-side
+      HEIC decoding becomes a real requirement rather than the edge case it is
+      treated as now.
 - [ ] **Killing the instance mid-event loses nothing.** While the slideshow
       is running and polling, force the old instance to be replaced with
       `gcloud run services update eventphoto --project PROJECT_ID --region

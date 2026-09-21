@@ -181,7 +181,15 @@ Pending images newest first, large enough to judge, each with approve and reject
 
 **Image management — `/admin/images`**
 
-Grid of thumbnails filtered by status. Per image: show/hide, delete, set or clear the recurring pin, and take over the screen. Drag-free ordering — sorting is by received time or shuffle, with no manual reorder, to keep the surface small. An upload control accepts files from the admin's own device and marks them approved on arrival.
+Grid of thumbnails filtered by status. Per image: show/hide, delete, set or clear the recurring pin, and take over the screen. Drag-free ordering — sorting is by received time or shuffle, with no manual reorder, to keep the surface small. Uploading lives on its own page, linked from here.
+
+**Upload — `/upload`**
+
+For getting photos off the organiser's own phone without going through the bot. One `<input type="file" accept="image/*" multiple>` and nothing else: there is no web API that can browse a photo library, so the native picker — the same one Telegram opens, because it is the same system component — is the whole interface. The `capture` attribute is deliberately absent; it forces the camera and collapses the picker to a single shot.
+
+Uploads are sequential, one request per file. The service is a single 1 GiB Cloud Run instance with a 120 s request timeout, and each upload decodes a full-size photo and rewrites `state.json`, so a phone firing twenty at once is an out-of-memory kill that takes the slideshow down rather than just a failed upload. Each file shows its own state, and failures are retried without re-sending the ones that worked.
+
+The one rejection a phone actually produces is HEIC, which ImageSharp cannot decode. An iPhone hands Safari a JPEG when the photo comes from the library picker, but a photo reached through the Files app can arrive as HEIC, so that case is sniffed from the ISO-BMFF `ftyp` header and answered by name — the generic "not an image" reply leaves the uploader with nothing to act on.
 
 While a takeover is active, show a persistent banner at the top of every admin page naming the image and offering a one-tap clear. A takeover set with "until I clear it" and then forgotten is the most likely way to end up with one photo on the wall for an hour.
 
@@ -208,12 +216,13 @@ Slide duration, transition, ordering, boost on/off, auto-approve for trusted sen
 | `GET /img/{id}/display` | session | Display derivative, immutable cache headers |
 | `GET /img/{id}/thumb` | session | Thumbnail |
 | `GET /admin/*` | session | Queue, images, settings pages |
+| `GET /upload` | session | Upload page |
 | `POST /api/images/{id}/status` | session | `approved`, `hidden`, `rejected`. Clears takeover if this image held it |
 | `POST /api/images/{id}/pin` | session | `none` or `recurring` |
 | `PUT /api/takeover` | session | `{ imageId, minutes }`; `minutes` null means until cleared. Replaces any existing takeover |
 | `DELETE /api/takeover` | session | Clears `takeoverImageId` and `takeoverUntil` |
 | `DELETE /api/images/{id}` | session | Removes the entry and all objects. Clears takeover if this image held it |
-| `POST /api/images` | session | Admin upload, multipart |
+| `POST /api/images` | session | Admin upload, multipart, one file per request |
 | `PATCH /api/settings` | session | Settings changes |
 
 The manifest is the only contract the slideshow depends on. Keep it small — id, dimensions, caption, sender, pin — and let the browser fetch bytes separately with long cache lifetimes, since a given id's bytes never change.
