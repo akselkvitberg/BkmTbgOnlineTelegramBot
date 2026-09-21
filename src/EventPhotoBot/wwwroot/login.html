@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="nb">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Sign in</title>
+  <title>Logg inn</title>
   <style>
     :root { color-scheme: light dark; }
     body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
@@ -18,18 +18,18 @@
 </head>
 <body>
   <form method="post" action="/login">
-    <h1>Event photos</h1>
-    <label for="password">Password</label>
+    <h1>Bilder fra arrangementet</h1>
+    <label for="password">Passord</label>
     <input id="password" name="password" type="password" autocomplete="current-password"
            autofocus required>
-    <button type="submit">Sign in</button>
+    <button type="submit">Logg inn</button>
     <p class="error" id="error"></p>
   </form>
   <script>
     const reason = new URLSearchParams(location.search).get('error');
-    if (reason === 'bad') document.getElementById('error').textContent = 'Wrong password.';
+    if (reason === 'bad') document.getElementById('error').textContent = 'Feil passord.';
     if (reason === 'rate') document.getElementById('error').textContent =
-      'Too many attempts. Wait a minute and try again.';
+      'For mange forsøk. Vent ett minutt og prøv igjen.';
   </script>
 </body>
 </html>

@@ -37,7 +37,7 @@
     if (response.status === 401) { location.href = '/login'; return null; }
     if (!response.ok) {
       const detail = await response.text();
-      alert(`That did not work (${response.status}). ${detail}`);
+      alert(`Det gikk ikke (${response.status}). ${detail}`);
       return null;
     }
     // Refresh straight away rather than waiting for the next poll. The write above
@@ -89,23 +89,23 @@
     // that), so it is always present in manifest.images; the fallback here
     // is defensive only.
     const image = manifest.images.find(i => i.id === takeover.id);
-    const sender = escapeHtml(image?.senderName ?? 'Unknown');
+    const sender = escapeHtml(image?.senderName ?? 'Ukjent');
     const caption = image?.caption ? escapeHtml(image.caption) : '';
     const until = takeover.until
-      ? `until ${new Date(takeover.until).toLocaleTimeString()}`
-      : 'until you clear it';
+      ? `til ${new Date(takeover.until).toLocaleTimeString()}`
+      : 'til du fjerner det';
 
     banner.innerHTML = `
       <img class="takeover-thumb" src="${Admin.imageUrl(takeover.id, 'thumb')}" alt="">
       <span class="takeover-info">
-        <strong>Holding the screen: ${sender}</strong>
+        <strong>Holder skjermen: ${sender}</strong>
         ${caption ? `<span class="muted">${caption}</span>` : ''}
         <span class="muted">${until}</span>
       </span>`;
 
     const clear = document.createElement('button');
     clear.className = 'danger';
-    clear.textContent = 'Clear takeover';
+    clear.textContent = 'Avslutt overtakelse';
     clear.onclick = () => api('DELETE', '/api/takeover');
     banner.appendChild(clear);
   }
