@@ -62,8 +62,12 @@ Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webho
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webhook-path   --data-file=- --project $ProjectId"
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-join-code     --data-file=- --project $ProjectId"
 Write-Host ''
 Write-Host 'Generate the three random ones (webhook-secret, webhook-path, cookie-key) with:  openssl rand -hex 32'
+Write-Host 'join-code is yours to choose and goes in the QR on the screen: letters, digits,'
+Write-Host '_ and - only, at most 64 characters. Anything else fails startup, because Telegram'
+Write-Host 'silently drops a deep-link payload outside that set.'
 Write-Host ''
 
 if (-not $SkipBuild) {

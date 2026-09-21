@@ -105,6 +105,7 @@ locals {
     webhook_path   = "${var.name}-webhook-path"
     admin_password = "${var.name}-admin-password"
     cookie_key     = "${var.name}-cookie-key"
+    join_code      = "${var.name}-join-code"
   }
 }
 
@@ -196,6 +197,7 @@ resource "google_cloud_run_v2_service" "app" {
           TELEGRAM_WEBHOOK_PATH   = local.secret_ids.webhook_path
           ADMIN_PASSWORD          = local.secret_ids.admin_password
           COOKIE_SIGNING_KEY      = local.secret_ids.cookie_key
+          JOIN_CODE               = local.secret_ids.join_code
         }
 
         content {
