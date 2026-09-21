@@ -135,6 +135,24 @@ locals {
     "roles/iam.serviceAccountAdmin",        # create the Cloud Run runtime service account (google_service_account.runtime in infra/main.tf)
     "roles/iam.serviceAccountUser",         # let Terraform attach that runtime service account to the Cloud Run service (actAs)
     "roles/run.admin",                      # create/update the Cloud Run service and set its IAM policy (the allUsers invoker binding)
+
+    # Only matters when infra/main.tf's var.hosting_site is set — the optional
+    # Firebase Hosting front door that gives the event a <site>.web.app URL
+    # instead of the run.app one. Granted unconditionally because this config
+    # is applied once per project and deliberately does not track per-event
+    # choices; on a project with no Firebase resources it grants access to
+    # nothing.
+    #
+    # One role rather than two, and deliberately not the obvious
+    # roles/firebase.admin. Adding Firebase to the project needs
+    # firebase.projects.update, which roles/firebasehosting.admin does not
+    # carry; creating the site and publishing its versions and releases needs
+    # firebasehosting.sites.create/update, which Hosting's coarse IAM folds
+    # into the site permissions rather than exposing per version or release.
+    # roles/firebase.editor is the narrowest predefined role holding both —
+    # it differs from roles/firebase.admin only by not also granting
+    # firebase.projects.delete, which nothing here needs.
+    "roles/firebase.editor",
   ]
 }
 

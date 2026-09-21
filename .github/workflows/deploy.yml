@@ -33,6 +33,11 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       APP_NAME: ${{ vars.APP_NAME }}
+      # Optional. Unset means no Firebase Hosting site and the run.app URL as
+      # the only way in — an empty string is exactly infra/variables.tf's
+      # default here, so unlike GCP_REGION/APP_NAME this one needs no
+      # bash-side fallback.
+      HOSTING_SITE: ${{ vars.HOSTING_SITE }}
       # Set once as a repository variable; the dispatch input overrides it for a
       # one-off run. Retyping the event name on every deploy invited a typo that
       # would silently rename what the screen shows.
@@ -114,6 +119,7 @@ jobs:
             -var "region=$REGION" \
             -var "name=$NAME" \
             -var "event_name=$EVENT_NAME" \
+            -var "hosting_site=$HOSTING_SITE" \
             -var "image_digest=placeholder"
 
       - name: Build and push image
@@ -153,6 +159,7 @@ jobs:
             -var "region=$REGION" \
             -var "name=$NAME" \
             -var "event_name=$EVENT_NAME" \
+            -var "hosting_site=$HOSTING_SITE" \
             -var "image_digest=$IMAGE_DIGEST"
 
       - name: Get service URL
@@ -166,6 +173,14 @@ jobs:
             exit 1
           fi
           echo "service_url=$url" >> "$GITHUB_OUTPUT"
+
+          # Empty unless HOSTING_SITE is set, and deliberately not fatal when
+          # it is: Hosting is the readable front door, not the intake path.
+          # The webhook below is registered against service_url either way, so
+          # a Hosting problem never costs a photo.
+          hosting=$(terraform output -raw hosting_url)
+          echo "hosting_url=$hosting" >> "$GITHUB_OUTPUT"
+          echo "public_url=${hosting:-$url}" >> "$GITHUB_OUTPUT"
 
       - name: Register the Telegram webhook
         env:
@@ -242,13 +257,17 @@ jobs:
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
           SERVICE_URL: ${{ steps.url.outputs.service_url }}
+          PUBLIC_URL: ${{ steps.url.outputs.public_url }}
         run: |
           {
             echo "## Deployed"
             echo
             echo "- Event: \`$EVENT_NAME\`"
             echo "- Image digest: \`$IMAGE_DIGEST\`"
-            echo "- Slideshow: $SERVICE_URL/show"
-            echo "- Admin: $SERVICE_URL/admin/queue"
+            echo "- Slideshow: $PUBLIC_URL/show"
+            echo "- Admin: $PUBLIC_URL/admin/queue"
+            if [ "$PUBLIC_URL" != "$SERVICE_URL" ]; then
+              echo "- Direct: $SERVICE_URL (bypasses Hosting; also the webhook base)"
+            fi
             echo "- Webhook registered."
           } >> "$GITHUB_STEP_SUMMARY"

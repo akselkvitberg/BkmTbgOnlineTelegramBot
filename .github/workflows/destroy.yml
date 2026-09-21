@@ -36,6 +36,10 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       APP_NAME: ${{ vars.APP_NAME }}
+      # Passed only so the three workflows' -var lists stay identical and
+      # comparable. It changes nothing here: `terraform destroy` removes
+      # whatever is in state, so the Firebase Hosting resources go either way.
+      HOSTING_SITE: ${{ vars.HOSTING_SITE }}
       CONFIRM_PROJECT_ID: ${{ inputs.confirm_project_id }}
     steps:
       - name: Check required repository variables
@@ -96,6 +100,7 @@ jobs:
             -var "region=$region" \
             -var "name=$name" \
             -var "event_name=teardown" \
+            -var "hosting_site=$HOSTING_SITE" \
             -var "image_digest=placeholder"
 
       - name: Summary

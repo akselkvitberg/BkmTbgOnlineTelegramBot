@@ -11,6 +11,9 @@ param(
     [string] $StateBucket,
     [string] $Region = 'europe-north1',
     [string] $Name = 'eventphoto',
+    # Firebase Hosting site id -> https://<site>.web.app in front of the service.
+    # Omit to skip Hosting entirely and use the run.app URL. See docs/RUNBOOK.md.
+    [string] $HostingSite,
     [switch] $SkipBuild
 )
 
@@ -50,6 +53,7 @@ terraform -chdir="$PSScriptRoot" apply `
     -target=google_artifact_registry_repository.images `
     -target=google_secret_manager_secret.secrets `
     -var "project_id=$ProjectId" -var "event_name=$EventName" -var "region=$Region" -var "name=$Name" `
+    -var "hosting_site=$HostingSite" `
     -var 'image_digest=placeholder'
 Assert-Success 'terraform apply (bootstrap)'
 
@@ -91,12 +95,21 @@ Write-Host "==> Image: $digest" -ForegroundColor Cyan
 Write-Host '==> Apply' -ForegroundColor Cyan
 terraform -chdir="$PSScriptRoot" apply `
     -var "project_id=$ProjectId" -var "event_name=$EventName" -var "region=$Region" -var "name=$Name" `
+    -var "hosting_site=$HostingSite" `
     -var "image_digest=$digest"
 Assert-Success 'terraform apply'
 
 $serviceUrl = terraform -chdir="$PSScriptRoot" output -raw service_url
 Assert-Success 'terraform output service_url'
 if ([string]::IsNullOrWhiteSpace($serviceUrl)) { throw 'service_url output is empty.' }
+
+# Empty unless -HostingSite was given, and deliberately not fatal when it is:
+# Hosting is the nice-to-read front door, not the intake path. The webhook
+# below is registered against $serviceUrl either way, so a Hosting problem
+# never costs a photo.
+$hostingUrl = terraform -chdir="$PSScriptRoot" output -raw hosting_url
+Assert-Success 'terraform output hosting_url'
+$publicUrl = if ([string]::IsNullOrWhiteSpace($hostingUrl)) { $serviceUrl } else { $hostingUrl }
 
 Write-Host '==> Registering the Telegram webhook' -ForegroundColor Cyan
 # PowerShell's native-command capture splits multi-line output into a string[] (one
@@ -134,6 +147,9 @@ $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$bo
 if (-not $response.ok) { throw "setWebhook failed: $($response.description)" }
 
 Write-Host ''
-Write-Host "Slideshow: $serviceUrl/show"    -ForegroundColor Green
-Write-Host "Admin:     $serviceUrl/admin/queue" -ForegroundColor Green
+Write-Host "Slideshow: $publicUrl/show"    -ForegroundColor Green
+Write-Host "Admin:     $publicUrl/admin/queue" -ForegroundColor Green
+if ($publicUrl -ne $serviceUrl) {
+    Write-Host "Direct:    $serviceUrl (bypasses Hosting; also the webhook base)" -ForegroundColor DarkGray
+}
 Write-Host 'Webhook registered.' -ForegroundColor Green

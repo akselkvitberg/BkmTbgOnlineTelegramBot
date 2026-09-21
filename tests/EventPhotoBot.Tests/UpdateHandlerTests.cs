@@ -239,7 +239,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(TextFrom(Guest, "/start"));
 
         var (_, text) = Assert.Single(harness.Telegram.Sent);
-        Assert.Contains("deleted after the event", text);
+        Assert.Contains("slettes etter arrangementet", text);
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "same"));
 
         Assert.Single(harness.Store.Snapshot.Images);
-        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("already", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("allerede", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -340,7 +340,7 @@ public class UpdateHandlerTests
         });
 
         Assert.Empty(harness.Store.Snapshot.Images);
-        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("photo", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("bare bilder", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -377,7 +377,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(update);
 
         Assert.Empty(harness.Store.Snapshot.Images);
-        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("large", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("for stort", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -389,7 +389,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(PhotoFrom(Guest));
 
         Assert.Empty(harness.Store.Snapshot.Images);
-        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("sorry", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("beklager", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

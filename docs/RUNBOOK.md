@@ -37,6 +37,9 @@ resource name appears.
       orientation
 - [ ] Slideshow run for an hour on the actual display machine, to catch sleep
       and memory issues before the event does
+- [ ] Friendly URL claimed, if one is wanted — set `HOSTING_SITE` and deploy
+      once. The `.web.app` name is globally unique and first-come, so a name
+      chosen on the day may already be gone (see "The friendly URL" below)
 - [ ] Login link and password shared with whoever will run the screen
 - [ ] Display machine's browser open on `/show`, fullscreen, OS-level sleep
       disabled (not just the browser tab)
@@ -344,6 +347,7 @@ Under **Settings → Secrets and variables → Actions → Variables**, set:
 | `EVENT_NAME` | The event name shown on the slideshow, e.g. `Summer Party 2026` |
 | `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
 | `APP_NAME` | Optional — defaults to `eventphoto` if unset |
+| `HOSTING_SITE` | Optional — the Firebase Hosting site id, e.g. `tbg-event-photos` for `https://tbg-event-photos.web.app`. Unset means no Hosting and the `run.app` URL as the only way in. See **The friendly URL** below |
 
 None of these are secret — they're project ids, resource names and a bucket
 name. No bot token, admin password or signing key is ever configured as a
@@ -466,6 +470,12 @@ above to already exist — `-StateBucket` is where its name goes.
 pwsh infra/deploy.ps1 -ProjectId my-event-project -EventName "Summer Party" -StateBucket eventphoto-tfstate-my-event-project
 ```
 
+Add `-HostingSite tbg-event-photos` to also put the friendly `.web.app` URL in
+front of the service — the workstation equivalent of the `HOSTING_SITE`
+repository variable. Omit it and nothing Firebase-related is created. Whichever
+path is used, use the same value: they share one state, so deploying from one
+with the site set and the other without it makes each apply undo the other's.
+
 The script bootstraps the registry, bucket and secret resources, prints the
 `gcloud secrets versions add` commands for you to run by hand (secret values
 never pass through Terraform — a value passed as a Terraform variable ends up
@@ -492,6 +502,52 @@ which command failed. Fix whatever it reports (usually a missing secret
 version or a `gcloud` auth issue) and rerun the whole command — every step
 is safe to repeat.
 
+### The friendly URL (Firebase Hosting)
+
+Cloud Run's own URL —
+`https://eventphoto-<project number>.europe-north1.run.app` — is not something
+a guest can read off a screen or type on a phone. Setting `HOSTING_SITE` (or
+`-HostingSite`) puts a Firebase Hosting site in front of the service, so the
+same app also answers on `https://<site>.web.app` with a certificate already
+in place. It costs nothing, needs no domain, and `infra/main.tf` creates all
+of it — there is no separate `firebase deploy` step and no `firebase.json`.
+
+Leave it unset and nothing changes: no Firebase APIs are enabled, no Firebase
+resources are created, and the `run.app` URL stays the only way in.
+
+Three things to know before setting it.
+
+**Claim the name early.** The site id is globally unique across all of
+Firebase and immutable once created. `tbg-event-photos` being free today does
+not mean it is free on the evening of the event. Set the variable and run a
+deploy (or a targeted apply) as soon as the name is decided.
+
+**Adding Firebase to the project cannot be undone.** Every other resource here
+disappears on `terraform destroy`; this one does not. Once Firebase is added
+to a GCP project it stays added, and destroy only drops it from state. That is
+harmless for a project deleted wholesale after the event — which is the
+intended lifecycle — but it does mean the "destroy returns the project to
+clean" property no longer strictly holds. If a project must stay pristine,
+leave `HOSTING_SITE` unset.
+
+**The webhook still goes to the `run.app` URL.** Telegram intake is
+deliberately not routed through Hosting: a certificate or rewrite problem on
+the friendly URL then cannot cost a photo. Both deploy paths print the Hosting
+URL for humans and the direct URL underneath it, and register the webhook
+against the direct one.
+
+The rewrite sends every path to the Cloud Run service, which must be in one of
+the regions Firebase Hosting supports for Cloud Run rewrites. `europe-north1`
+(this project's default) is one of them; if you move the service to an unusual
+region, check [the supported
+list](https://firebase.google.com/docs/hosting/cloud-run) first.
+
+The deploy service account needs `roles/firebase.editor` to create any of
+this. `infra/wif/` grants it — if WIF was applied before this section existed,
+reapply it (`terraform apply` in `infra/wif/`) before the first deploy with
+`HOSTING_SITE` set, or the apply fails with a permission error on
+`google_firebase_project`.
+
 ### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
 
 `terraform destroy` in `infra/` removes the Cloud Run service, the images
@@ -505,6 +561,12 @@ It does **not** touch:
 - **The Workload Identity Federation pool, provider and deploy service
   account** (`infra/wif/`) — these authenticate GitHub Actions to GCP and
   are meant to outlive any one event, not be recreated per event.
+- **Firebase itself, if `HOSTING_SITE` was set.** The Hosting site, its
+  versions and its releases are destroyed normally; the project's *membership*
+  of Firebase is not, because Google provides no way to remove it. Destroy
+  drops `google_firebase_project` from state and leaves the project marked as
+  a Firebase project. Nothing runs and nothing bills as a result — see **The
+  friendly URL** above.
 
 If the project itself is also being retired (not just this one event), both
 have to be torn down explicitly and separately, from the repository root

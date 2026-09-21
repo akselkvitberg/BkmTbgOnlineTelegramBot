@@ -1,27 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="nb">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Queue</title>
+  <title>Kø</title>
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
 <body>
   <nav>
-    <a href="/admin/queue">Queue<span class="badge"></span></a>
-    <a href="/admin/images">Images</a>
-    <a href="/admin/settings">Settings</a>
-    <a href="/show">Screen</a>
-    <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
+    <a href="/admin/queue">Kø<span class="badge"></span></a>
+    <a href="/admin/images">Bilder</a>
+    <a href="/admin/settings">Innstillinger</a>
+    <a href="/show">Skjerm</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
   </nav>
 
   <main>
     <div id="pairing-banner" hidden>
-      <strong>Pairing mode is on</strong>
-      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
+      <strong>Paringsmodus er på</strong>
+      <span class="muted">Alle som sender melding til boten nå, blir registrert som avsender.</span>
     </div>
     <div id="takeover-banner" hidden></div>
-    <p class="muted">Press <kbd>A</kbd> to approve or <kbd>R</kbd> to reject the top photo.</p>
+    <p class="muted">Trykk <kbd>Enter</kbd> for å godkjenne eller <kbd>Esc</kbd> for å avvise det øverste bildet.</p>
     <div id="queue"></div>
   </main>
 
@@ -41,21 +41,21 @@
     function render() {
       const container = document.getElementById('queue');
       if (pending.length === 0) {
-        container.innerHTML = '<p class="empty">Nothing waiting. Enjoy the party.</p>';
+        container.innerHTML = '<p class="empty">Ingenting på vent. Kos deg i festen.</p>';
         return;
       }
       container.innerHTML = pending.map(image => `
         <div class="queue-item" data-id="${image.id}">
           <img src="${Admin.imageUrl(image.id, 'display')}" alt="" loading="lazy">
           <div class="row">
-            <strong>${Admin.escapeHtml(image.senderName ?? 'Unknown')}</strong>
+            <strong>${Admin.escapeHtml(image.senderName ?? 'Ukjent')}</strong>
             <span class="muted">${Admin.escapeHtml(image.caption ?? '')}</span>
           </div>
           <div class="row">
-            <button class="primary" onclick="decide('${image.id}','approved')">Approve</button>
-            <button class="danger" onclick="decide('${image.id}','rejected')">Reject</button>
+            <button class="primary" onclick="decide('${image.id}','approved')">Godkjenn</button>
+            <button class="danger" onclick="decide('${image.id}','rejected')">Avvis</button>
             ${image.senderId
-              ? `<button class="danger" onclick="banSender(${image.senderId})">Ban sender</button>`
+              ? `<button class="danger" onclick="banSender(${image.senderId})">Utesteng avsender</button>`
               : ''}
           </div>
         </div>`).join('');
@@ -65,8 +65,8 @@
     // the settings page. Only the numeric id goes into the attribute; the name is
     // attacker-controlled and stays in an escaped cell.
     async function banSender(senderId) {
-      if (!confirm('Ban this sender? Every photo they have already sent is rejected, '
-                   + 'including any already on the screen. This cannot be undone.')) return;
+      if (!confirm('Utesteng denne avsenderen? Alle bilder vedkommende allerede har sendt, blir '
+                   + 'avvist, også de som ligger på skjermen nå. Dette kan ikke angres.')) return;
       await Admin.api('POST', `/api/senders/${senderId}/status`, { status: 'banned' });
       await loadPending();
     }
@@ -103,9 +103,19 @@
       // event.repeat is true for the synthetic keydown events an OS sends while a
       // key is held, at the auto-repeat rate - each one otherwise a full decide().
       if (event.repeat || pending.length === 0) return;
-      const key = event.key.toLowerCase();
-      if (key === 'a') decide(pending[0].id, 'approved');
-      if (key === 'r') decide(pending[0].id, 'rejected');
+
+      // Enter is also how a focused button or link is activated, so without this a
+      // keyboard press on "Logg ut" would decide the top photo instead of logging
+      // out - and a mouse click on "Godkjenn" leaves that button focused, which
+      // would make the next Enter fire both the shortcut and a second click. Queue
+      // buttons vanish from the DOM as soon as their photo is decided, so focus
+      // lands back on the body and the shortcuts come straight back; the nav and
+      // the filter controls are exactly where suppressing them is wanted.
+      const focused = document.activeElement;
+      if (focused && focused.closest('button, a, input, select, textarea')) return;
+
+      if (event.key === 'Enter') decide(pending[0].id, 'approved');
+      if (event.key === 'Escape') decide(pending[0].id, 'rejected');
     });
 
     Admin.onManifest(() => loadPending());

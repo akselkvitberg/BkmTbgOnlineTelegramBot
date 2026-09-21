@@ -110,7 +110,7 @@ public class ImagePipelineTests
         oversized.Save(buffer, new PngEncoder());
 
         var error = Assert.Throws<ImageTooLargeException>(() => ImagePipeline.Process(buffer.ToArray()));
-        Assert.Contains("too large", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("for stort", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
