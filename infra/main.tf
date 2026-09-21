@@ -155,6 +155,21 @@ resource "google_cloud_run_v2_service" "app" {
   deletion_protection = false
   ingress             = "INGRESS_TRAFFIC_ALL"
 
+  # Service-level scaling, distinct from the per-revision template.scaling
+  # below. It is declared only to keep `terraform plan` honest: the Cloud Run
+  # API always returns a service-level scaling object (it carries a
+  # maxInstanceCount default the provider doesn't model at v6), so refresh
+  # writes a scaling block into state. With no block here, every plan wanted to
+  # remove one — a permanent "1 to change" that no apply could settle, and the
+  # deploy story leans on someone actually reading the plan.
+  #
+  # Zero is what the service already runs at and what template.scaling asks
+  # for, so this changes nothing. Provider v8 marks these fields computed,
+  # which fixes the diff upstream; this block stays correct either way.
+  scaling {
+    min_instance_count = 0
+  }
+
   template {
     service_account = google_service_account.runtime.email
 
