@@ -9,7 +9,15 @@ namespace EventPhotoBot.Web;
 /// </summary>
 public static class SessionCookie
 {
-    public const string Name = "eventphoto_session";
+    // Not a cosmetic name. Firebase Hosting fronts this service (see
+    // infra/main.tf's hosting_site) and strips every incoming cookie except
+    // the specially-named __session before the request reaches Cloud Run, so
+    // any other name means the session cookie is set by the browser, sent by
+    // the browser, and then silently discarded in front of the app — login
+    // appears to do nothing at all on the .web.app URL while working fine on
+    // the run.app one. Hosting also folds __session into its cache key, so a
+    // signed-in response cannot be served to a different visitor.
+    public const string Name = "__session";
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(14);
 
     public static string Issue(string signingKey, DateTimeOffset expiresAt)

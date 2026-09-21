@@ -53,7 +53,7 @@ public class EndpointAuthTests : IClassFixture<AppFactory>
         var cookies = response.Headers.TryGetValues("Set-Cookie", out var values)
             ? values
             : [];
-        Assert.DoesNotContain(cookies, v => v.Contains("eventphoto_session="));
+        Assert.DoesNotContain(cookies, v => v.Contains($"{SessionCookie.Name}="));
     }
 
     [Fact]
@@ -66,14 +66,14 @@ public class EndpointAuthTests : IClassFixture<AppFactory>
                 new KeyValuePair<string, string>("password", AppFactory.Password)]));
 
         var cookies = response.Headers.GetValues("Set-Cookie").ToArray();
-        Assert.Contains(cookies, c => c.Contains("eventphoto_session="));
+        Assert.Contains(cookies, c => c.Contains($"{SessionCookie.Name}="));
         Assert.Contains(cookies, c => c.Contains("httponly", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(cookies, c => c.Contains("secure", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(cookies, c => c.Contains("samesite=lax", StringComparison.OrdinalIgnoreCase));
 
         // Expiry must be consistent with SessionCookie.Lifetime (14 days), not some
         // other value baked into the login handler by mistake.
-        var sessionCookie = cookies.Single(c => c.Contains("eventphoto_session="));
+        var sessionCookie = cookies.Single(c => c.Contains($"{SessionCookie.Name}="));
         var expiresMatch = System.Text.RegularExpressions.Regex.Match(
             sessionCookie, @"expires=([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         Assert.True(expiresMatch.Success, $"No expires attribute on cookie: {sessionCookie}");
