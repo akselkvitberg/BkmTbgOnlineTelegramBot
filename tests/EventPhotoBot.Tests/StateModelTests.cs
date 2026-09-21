@@ -36,7 +36,7 @@ public class StateModelTests
     public void State_round_trips_through_json_with_camel_case_enums()
     {
         var state = new EventState();
-        state.Settings.Whitelist.Add(new WhitelistEntry { Id = 42, Name = "Ada", Trusted = true });
+        state.Settings.Senders.Add(new Sender { Id = 42, Name = "Ada", Status = SenderStatus.AutoApprove });
         state.Settings.TakeoverImageId = "01ABC";
         state.Images["01ABC"] = new ImageRecord
         {
@@ -55,16 +55,8 @@ public class StateModelTests
         Assert.Contains("\"telegram\"", json);
         Assert.Contains("\"recurring\"", json);
         Assert.Equal(ImageStatus.Approved, back.Images["01ABC"].Status);
-        Assert.Equal("Ada", back.Settings.Whitelist[0].Name);
-        Assert.True(back.Settings.Whitelist[0].Trusted);
+        Assert.Equal("Ada", back.Settings.Senders[0].Name);
+        Assert.Equal(SenderStatus.AutoApprove, back.Settings.Senders[0].Status);
         Assert.Equal("01ABC", back.Settings.TakeoverImageId);
-    }
-
-    [Fact]
-    public void Fresh_state_has_an_empty_whitelist_and_pairing_off()
-    {
-        var state = new EventState();
-        Assert.Empty(state.Settings.Whitelist);
-        Assert.False(state.Settings.PairingMode);
     }
 }

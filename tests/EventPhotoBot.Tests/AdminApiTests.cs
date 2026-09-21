@@ -158,35 +158,6 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
-    public async Task The_whitelist_is_editable_and_takes_effect_without_a_restart()
-    {
-        var client = _factory.CreateAuthenticatedClient();
-
-        await client.PatchAsJsonAsync("/api/settings", new
-        {
-            whitelist = new[] { new { id = 555L, name = "Late Guest", trusted = true } },
-        });
-
-        var entry = Assert.Single(_factory.Store.Snapshot.Settings.Whitelist);
-        Assert.Equal(555L, entry.Id);
-        Assert.True(entry.Trusted);
-    }
-
-    [Fact]
-    public async Task Pairing_mode_can_be_toggled_and_seen_senders_cleared()
-    {
-        var client = _factory.CreateAuthenticatedClient();
-        await _factory.Store.MutateAsync(s =>
-            s.Settings.SeenSenders.Add(new SeenSender { Id = 1, Name = "Someone" }));
-
-        await client.PatchAsJsonAsync("/api/settings", new { pairingMode = true });
-        Assert.True(_factory.Store.Snapshot.Settings.PairingMode);
-
-        await client.PatchAsJsonAsync("/api/settings", new { clearSeenSenders = true });
-        Assert.Empty(_factory.Store.Snapshot.Settings.SeenSenders);
-    }
-
-    [Fact]
     public async Task A_settings_change_advances_the_manifest_etag()
     {
         var client = _factory.CreateAuthenticatedClient();
@@ -270,17 +241,15 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
-    public async Task Reading_settings_returns_the_full_shape_including_the_whitelist_and_seen_senders()
+    public async Task Reading_settings_returns_the_full_shape_including_the_roster()
     {
         var client = _factory.CreateAuthenticatedClient();
         await _factory.Store.MutateAsync(s =>
         {
             s.Settings.SlideSeconds = 42;
             s.Settings.Order = SlideOrder.NewestFirst;
-            s.Settings.PairingMode = true;
-            s.Settings.Whitelist = [new WhitelistEntry { Id = 42, Name = "Guest", Trusted = true }];
-            s.Settings.SeenSenders =
-                [new SeenSender { Id = 99, Name = "Curious", FirstSeen = DateTimeOffset.UtcNow }];
+            s.Settings.Senders =
+                [new Sender { Id = 42, Name = "Guest", Status = SenderStatus.AutoApprove }];
         });
 
         var response = await client.GetAsync("/api/settings");
@@ -290,22 +259,23 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var root = document.RootElement;
         Assert.Equal(42, root.GetProperty("slideSeconds").GetInt32());
         Assert.Equal("newest-first", root.GetProperty("order").GetString());
-        Assert.True(root.GetProperty("pairingMode").GetBoolean());
         Assert.True(root.TryGetProperty("transitionMs", out _));
         Assert.True(root.TryGetProperty("newestFirstBoost", out _));
         Assert.True(root.TryGetProperty("recurringEvery", out _));
-        Assert.True(root.TryGetProperty("autoApproveTrusted", out _));
         Assert.True(root.TryGetProperty("takeoverImageId", out _));
         Assert.True(root.TryGetProperty("takeoverUntil", out _));
 
-        var whitelistEntry = Assert.Single(root.GetProperty("whitelist").EnumerateArray());
-        Assert.Equal(42, whitelistEntry.GetProperty("id").GetInt64());
-        Assert.Equal("Guest", whitelistEntry.GetProperty("name").GetString());
-        Assert.True(whitelistEntry.GetProperty("trusted").GetBoolean());
+        // The removed shape must not linger: an admin page still reading these would
+        // silently render an empty table rather than fail.
+        Assert.False(root.TryGetProperty("whitelist", out _));
+        Assert.False(root.TryGetProperty("seenSenders", out _));
+        Assert.False(root.TryGetProperty("pairingMode", out _));
+        Assert.False(root.TryGetProperty("autoApproveTrusted", out _));
 
-        var seenEntry = Assert.Single(root.GetProperty("seenSenders").EnumerateArray());
-        Assert.Equal(99, seenEntry.GetProperty("id").GetInt64());
-        Assert.Equal("Curious", seenEntry.GetProperty("name").GetString());
+        var sender = Assert.Single(root.GetProperty("senders").EnumerateArray());
+        Assert.Equal(42, sender.GetProperty("id").GetInt64());
+        Assert.Equal("Guest", sender.GetProperty("name").GetString());
+        Assert.Equal("autoApprove", sender.GetProperty("status").GetString());
     }
 
     [Fact]

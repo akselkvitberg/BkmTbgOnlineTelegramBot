@@ -1,3 +1,4 @@
+using System.Text.Json;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 
@@ -6,17 +7,19 @@ namespace EventPhotoBot.Web;
 public sealed record StatusRequest(string Status);
 public sealed record PinRequest(string Pin);
 public sealed record TakeoverRequest(string ImageId, int? Minutes);
+public sealed record SenderStatusRequest(string Status);
 
+/// <summary>
+/// The roster is deliberately absent here. An array replacement cannot carry the
+/// ban cascade, so allowing it would be a second write path that silently skips
+/// revoking a banned sender's photos — see POST /api/senders/{id}/status.
+/// </summary>
 public sealed record SettingsPatch(
     int? SlideSeconds,
     int? TransitionMs,
     string? Order,
     bool? NewestFirstBoost,
-    int? RecurringEvery,
-    bool? AutoApproveTrusted,
-    bool? PairingMode,
-    List<WhitelistEntry>? Whitelist,
-    bool? ClearSeenSenders);
+    int? RecurringEvery);
 
 public static class ApiEndpoints
 {
@@ -45,7 +48,7 @@ public static class ApiEndpoints
                 .OrderByDescending(i => i.SortKey, StringComparer.Ordinal)
                 .Select(i => new
                 {
-                    i.Id, i.SenderName, i.Caption, i.Width, i.Height,
+                    i.Id, i.SenderId, i.SenderName, i.Caption, i.Width, i.Height,
                     Status = i.Status.ToString().ToLowerInvariant(),
                     Pin = i.Pin.ToString().ToLowerInvariant(),
                     i.ReceivedAt,
@@ -62,12 +65,19 @@ public static class ApiEndpoints
                 Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
                 s.NewestFirstBoost,
                 s.RecurringEvery,
-                s.AutoApproveTrusted,
-                s.PairingMode,
-                s.Whitelist,
-                s.SeenSenders,
                 s.TakeoverImageId,
                 s.TakeoverUntil,
+                // Projected by hand, like the image status above: responses go through
+                // ASP.NET's own serializer options, not StateJson.Options, so a raw enum
+                // would leave here as a number. CamelCase keeps one spelling of these
+                // values across the state file, this payload and the admin pages.
+                Senders = s.Senders.Select(sender => new
+                {
+                    sender.Id,
+                    sender.Name,
+                    sender.FirstSeen,
+                    Status = JsonNamingPolicy.CamelCase.ConvertName(sender.Status.ToString()),
+                }),
             });
         });
 
@@ -273,14 +283,49 @@ public static class ApiEndpoints
                 if (patch.Order is { } o) s.Order = o == "newest-first" ? SlideOrder.NewestFirst : SlideOrder.Shuffle;
                 if (patch.NewestFirstBoost is { } boost) s.NewestFirstBoost = boost;
                 if (patch.RecurringEvery is { } every) s.RecurringEvery = Math.Clamp(every, 1, 100);
-                if (patch.AutoApproveTrusted is { } auto) s.AutoApproveTrusted = auto;
-                if (patch.PairingMode is { } pairing) s.PairingMode = pairing;
-                if (patch.Whitelist is { } whitelist) s.Whitelist = whitelist;
-                if (patch.ClearSeenSenders is true) s.SeenSenders.Clear();
             });
 
             return Results.Ok();
         });
+
+        app.MapPost("/api/senders/{id:long}/status",
+            async (long id, SenderStatusRequest request, StateStore store) =>
+            {
+                if (!Enum.TryParse<SenderStatus>(request.Status, ignoreCase: true, out var status))
+                    return Results.BadRequest(
+                        new { error = "status must be known, autoApprove or banned." });
+
+                return await store.MutateAsync(state =>
+                {
+                    var sender = state.Settings.Senders.FirstOrDefault(s => s.Id == id);
+                    if (sender is null)
+                    {
+                        // Creating on write is how an organiser pre-approves a
+                        // photographer, or pre-bans a nuisance, before that person has
+                        // ever messaged the bot.
+                        sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
+                        state.Settings.Senders.Add(sender);
+                    }
+
+                    sender.Status = status;
+
+                    // A ban revokes what they already sent, in this same write, so the
+                    // screen can never be showing a banned sender's photo between two
+                    // state generations.
+                    if (status == SenderStatus.Banned)
+                    {
+                        var now = DateTimeOffset.UtcNow;
+                        foreach (var image in state.Images.Values.Where(i => i.SenderId == id))
+                        {
+                            image.Status = ImageStatus.Rejected;
+                            image.DecidedAt = now;
+                            ClearTakeoverIfHeldBy(state, image.Id);
+                        }
+                    }
+
+                    return Results.Ok();
+                });
+            });
     }
 
     private static void ClearTakeoverIfHeldBy(EventState state, string id)

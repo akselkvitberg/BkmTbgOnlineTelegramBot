@@ -52,20 +52,6 @@ public sealed class Sender
     public DateTimeOffset FirstSeen { get; set; }
 }
 
-public sealed class WhitelistEntry
-{
-    public long Id { get; set; }
-    public string Name { get; set; } = "";
-    public bool Trusted { get; set; }
-}
-
-public sealed class SeenSender
-{
-    public long Id { get; set; }
-    public string Name { get; set; } = "";
-    public DateTimeOffset FirstSeen { get; set; }
-}
-
 public sealed class Settings
 {
     public int SlideSeconds { get; set; } = 8;
@@ -75,10 +61,6 @@ public sealed class Settings
     public int RecurringEvery { get; set; } = 10;
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
-    public bool AutoApproveTrusted { get; set; }
-    public List<WhitelistEntry> Whitelist { get; set; } = [];
-    public bool PairingMode { get; set; }
-    public List<SeenSender> SeenSenders { get; set; } = [];
     public List<Sender> Senders { get; set; } = [];
 }
 
