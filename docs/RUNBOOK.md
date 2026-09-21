@@ -223,6 +223,24 @@ sharing state with CI is deliberate, not a quirk of the GitHub Actions setup.
 
 Do the following once per GCP project, not per event.
 
+**0. Enable the Cloud Resource Manager API.** Do this first, before any
+Terraform runs:
+
+```bash
+gcloud services enable cloudresourcemanager.googleapis.com --project PROJECT_ID
+```
+
+Every Terraform config here manages `google_project_service` resources, and
+the provider calls Resource Manager to do it. A workstation apply can get
+away without this — user credentials bill their API quota somewhere else, so
+the call succeeds — which makes the gap invisible until the first GitHub
+Actions run: the deploy service account's calls bill the target project, and
+Terraform fails at the bootstrap apply with `Error 403 ... SERVICE_DISABLED`
+naming `cloudresourcemanager.googleapis.com`, not naming the resource you
+were actually trying to create. The app's own APIs (run, artifactregistry,
+secretmanager, storage, iamcredentials) do *not* need enabling by hand —
+`infra/main.tf` turns those on itself.
+
 **1. State bucket (`infra/backend/`)** — required before the *first* deploy
 from either path, including the very first `deploy.ps1` run. Creates the GCS
 bucket `infra/main.tf`'s backend block points at. Uses its own local state
@@ -324,8 +342,37 @@ prompt: both of those store a trailing newline in the secret. AppConfig trims
 whitespace on load so it is no longer fatal, but a webhook path that silently
 differs by one character is not a good debugging session.
 
+Those are bash (Git Bash on Windows is fine). **PowerShell has no `printf`**,
+and `'value' | gcloud ... --data-file=-` there appends a CRLF. Use a temp
+file instead, one secret at a time:
+
+```powershell
+$f = (New-TemporaryFile).FullName
+[System.IO.File]::WriteAllText($f, 'YOUR_VALUE', [System.Text.UTF8Encoding]::new($false))
+gcloud secrets versions add eventphoto-bot-token --data-file="$f" --project PROJECT_ID
+Remove-Item $f
+```
+
+The three random values (`webhook-secret`, `webhook-path`, `cookie-key`) can
+be generated straight into the command so they are never typed, pasted or
+shown:
+
+```bash
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-webhook-path --data-file=- --project PROJECT_ID
+```
+
 Then run `deploy` again. That run applies cleanly and registers the webhook.
 Every subsequent deploy is a single run.
+
+This whole sequence — steps 0 to 5 and both `deploy` runs — was walked
+end to end against a fresh personal GCP project on 2026-09-21, and the
+steps above are what actually worked, including the two corrections this
+paragraph sits between (step 0, and the PowerShell form of the secret
+commands). The failure points are the documented ones: the first `deploy`
+run stops at "Terraform apply" with `Secret .../versions/latest was not
+found` listing all five secrets. Cloud Run's startup probe hits `/healthz`
+from inside the service; do not be alarmed if that same path answers 404
+through an outbound proxy while the revision reports healthy.
 
 Note that `workflow_dispatch` workflows only appear in the Actions tab once
 the workflow file is on the repository's **default branch** — a first deploy
