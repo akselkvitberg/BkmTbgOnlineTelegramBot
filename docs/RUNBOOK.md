@@ -580,6 +580,29 @@ reapply it (`terraform apply` in `infra/wif/`) before the first deploy with
 `HOSTING_SITE` set, or the apply fails with a permission error on
 `google_firebase_project`.
 
+**Every deploy publishes a new Hosting version, on purpose.** The version's
+config carries the deployed image digest as an `X-Event-Photo-Build` response
+header, so each apply creates a version and releases it — Firebase's own model,
+and what `curl -I https://<site>.web.app/` reads back to tell you which build
+is actually being served.
+
+It is also what keeps the pipeline recoverable. If the version were identical
+between deploys — which it was until the header was added, because the rewrite
+names the Cloud Run *service* and not the image — then Terraform creates one
+version ever, and losing `google_firebase_hosting_release.app` from state is a
+dead end: the apply plans a release, and Firebase refuses it with
+
+```
+Error creating Release: googleapi: Error 400: Can't release to
+`sites/<site>/channels/live`: supplied version `sites/<site>/versions/<id>`
+is the current active version.
+```
+
+on every subsequent run, because the only version that exists is the one
+already live. With a fresh version per deploy there is always something new to
+release, so a state that has lost the release heals on the next run instead of
+needing an operator to find the live release id and `terraform import` it.
+
 ### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
 
 `terraform destroy` in `infra/` removes the Cloud Run service, the images
