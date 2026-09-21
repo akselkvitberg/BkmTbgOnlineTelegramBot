@@ -1,38 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="nb">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Images</title>
+  <title>Bilder</title>
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
 <body>
   <nav>
-    <a href="/admin/queue">Queue<span class="badge"></span></a>
-    <a href="/admin/images">Images</a>
-    <a href="/admin/settings">Settings</a>
-    <a href="/show">Screen</a>
-    <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
+    <a href="/admin/queue">Kø<span class="badge"></span></a>
+    <a href="/admin/images">Bilder</a>
+    <a href="/admin/settings">Innstillinger</a>
+    <a href="/show">Skjerm</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
   </nav>
 
   <main>
     <div id="pairing-banner" hidden>
-      <strong>Pairing mode is on</strong>
-      <span class="muted">Anyone who messages the bot right now is being logged as a sender.</span>
+      <strong>Paringsmodus er på</strong>
+      <span class="muted">Alle som sender melding til boten nå, blir registrert som avsender.</span>
     </div>
     <div id="takeover-banner" hidden></div>
 
     <div class="row">
-      <label for="filter" style="margin:0">Show</label>
+      <label for="filter" style="margin:0">Vis</label>
       <select id="filter" style="width:auto" onchange="load()">
-        <option value="approved">Approved</option>
-        <option value="hidden">Hidden</option>
-        <option value="pending">Pending</option>
-        <option value="rejected">Rejected</option>
-        <option value="">Everything</option>
+        <option value="approved">Godkjente</option>
+        <option value="hidden">Skjulte</option>
+        <option value="pending">Venter</option>
+        <option value="rejected">Avviste</option>
+        <option value="">Alt</option>
       </select>
       <input type="file" id="upload" accept="image/*" style="width:auto">
-      <button onclick="uploadFile()">Upload</button>
+      <button onclick="uploadFile()">Last opp</button>
     </div>
 
     <div class="grid" id="grid"></div>
@@ -51,24 +51,24 @@
     function render(images) {
       const grid = document.getElementById('grid');
       if (images.length === 0) {
-        grid.innerHTML = '<p class="empty">Nothing here.</p>';
+        grid.innerHTML = '<p class="empty">Ingenting her.</p>';
         return;
       }
       grid.innerHTML = images.map(image => `
         <figure data-id="${image.id}" class="${image.pin === 'recurring' ? 'pinned' : ''}">
           <img src="${Admin.imageUrl(image.id, 'thumb')}" alt="" loading="lazy">
           ${image.pin === 'recurring'
-            ? '<span class="pin-flag" title="Pinned: shown again every few slides">📌</span>'
+            ? '<span class="pin-flag" title="Festet: vises på nytt med noen bilders mellomrom">📌</span>'
             : ''}
           <div class="row">
             <button onclick="setStatus('${image.id}','${image.status === 'hidden' ? 'approved' : 'hidden'}')">
-              ${image.status === 'hidden' ? 'Show' : 'Hide'}
+              ${image.status === 'hidden' ? 'Vis' : 'Skjul'}
             </button>
             <button onclick="setPin('${image.id}','${image.pin === 'recurring' ? 'none' : 'recurring'}')">
-              ${image.pin === 'recurring' ? 'Unpin' : 'Pin'}
+              ${image.pin === 'recurring' ? 'Løsne' : 'Fest'}
             </button>
-            <button onclick="takeover('${image.id}')">Take over</button>
-            <button class="danger" onclick="remove('${image.id}')">Delete</button>
+            <button onclick="takeover('${image.id}')">Ta over</button>
+            <button class="danger" onclick="remove('${image.id}')">Slett</button>
           </div>
         </figure>`).join('');
     }
@@ -77,18 +77,18 @@
     const setPin = (id, pin) => Admin.api('POST', `/api/images/${id}/pin`, { pin }).then(load);
 
     async function remove(id) {
-      if (!confirm('Delete this photo? It is removed from storage too, and cannot be undone.')) return;
+      if (!confirm('Slette dette bildet? Det fjernes også fra lagringen, og kan ikke angres.')) return;
       await Admin.api('DELETE', `/api/images/${id}`);
       load();
     }
 
     async function takeover(id) {
       const choice = prompt(
-        'Take over the screen for how long?\n5, 15 or 60 minutes, or leave blank for "until I clear it".', '15');
+        'Hvor lenge skal bildet holde skjermen?\n5, 15 eller 60 minutter, eller la feltet stå tomt for «til jeg fjerner det».', '15');
       if (choice === null) return;
       const minutes = choice.trim() === '' ? null : Number(choice);
       if (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0)) {
-        alert('Enter a number of minutes, or leave it blank.');
+        alert('Skriv inn et antall minutter, eller la feltet stå tomt.');
         return;
       }
       await Admin.api('PUT', '/api/takeover', { imageId: id, minutes });

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="nb">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Event photos</title>
+  <title>Bilder fra arrangementet</title>
   <link rel="stylesheet" href="/show.css">
 </head>
 <body>
@@ -19,26 +19,26 @@
 
   <div id="empty">
     <p id="empty-event-name" hidden></p>
-    <h1>Send us your photos</h1>
-    <p id="empty-detail">They will appear here once an organiser approves them.</p>
+    <h1>Send oss bildene dine</h1>
+    <p id="empty-detail">De dukker opp her så snart en arrangør har godkjent dem.</p>
     <div id="join" hidden>
-      <img id="join-qr" alt="Scan to send photos">
+      <img id="join-qr" alt="Skann for å sende bilder">
       <p id="join-handle"></p>
     </div>
   </div>
 
-  <div id="offline" hidden>Reconnecting&hellip;</div>
+  <div id="offline" hidden>Kobler til igjen&hellip;</div>
 
   <!-- Local (not server) controls for whoever is minding the projector: hide/show
        the caption overlay, and go fullscreen without hunting for F11. Shown
        briefly on load so the shortcuts are discoverable, then hidden by show.js. -->
   <div id="caption-hint">
-    Press <strong>F</strong> for fullscreen &middot; <strong>C</strong> to toggle captions
+    Trykk <strong>F</strong> for fullskjerm &middot; <strong>C</strong> for å vise/skjule bildetekst
   </div>
 
   <!-- Small corner QR while photos are showing, so somebody arriving late can still
        join without waiting for the screen to run out of pictures. -->
-  <img id="join-badge" hidden alt="Scan to send photos">
+  <img id="join-badge" hidden alt="Skann for å sende bilder">
 
   <!-- Keeps the display machine awake where the Wake Lock API is unavailable. -->
   <video id="keepawake" muted loop playsinline src="/keepawake.mp4"></video>

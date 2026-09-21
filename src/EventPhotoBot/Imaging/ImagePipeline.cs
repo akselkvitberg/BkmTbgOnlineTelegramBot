@@ -48,7 +48,7 @@ public static class ImagePipeline
         var pixels = (long)info.Width * info.Height;
         if (pixels > MaxDecodedPixels)
             throw new ImageTooLargeException(
-                "That photo is too large for me to process — try sending a smaller one.");
+                "Det bildet er for stort til at jeg får behandlet det — prøv å sende et mindre.");
 
         using var image = Image.Load(original);
 

@@ -42,8 +42,8 @@ public sealed class UpdateHandler(
     private static readonly TimeSpan UnlistedReplyCooldown = TimeSpan.FromSeconds(60);
 
     private const string JoinPrompt =
-        "You are not on the list for this event yet. Scan the QR code on the screen — " +
-        "it will send me the code and you can start sending photos straight away.";
+        "Du står ikke på listen for dette arrangementet ennå. Skann QR-koden på skjermen — " +
+        "den sender koden til meg, og du kan begynne å sende bilder med en gang.";
 
     public async Task HandleAsync(TgUpdate update, CancellationToken ct = default)
     {
@@ -66,8 +66,8 @@ public sealed class UpdateHandler(
         if (message.Text is { } text && text.StartsWith("/start", StringComparison.Ordinal))
         {
             await telegram.SendMessageAsync(chat.Id,
-                "Send me photos and they will go up on the screen at the event. " +
-                "An organiser approves them first. Everything is deleted after the event.", ct);
+                "Send meg bilder, så kommer de opp på skjermen på arrangementet. " +
+                "En arrangør godkjenner dem først. Alt slettes etter arrangementet.", ct);
             return;
         }
 
@@ -75,7 +75,7 @@ public sealed class UpdateHandler(
         if (candidate is null)
         {
             await telegram.SendMessageAsync(chat.Id,
-                "Photos only, please — I cannot show videos, stickers or animations.", ct);
+                "Bare bilder, takk — jeg kan ikke vise video, klistremerker eller animasjoner.", ct);
             return;
         }
 
@@ -118,8 +118,8 @@ public sealed class UpdateHandler(
             // Deliberately outside the throttle: being rate-limited out of joining is
             // the worst possible moment to go quiet on somebody.
             await telegram.SendMessageAsync(chat.Id,
-                "You are in. Send me photos and they will go up on the screen once an " +
-                "organiser approves them. Everything is deleted after the event.", ct);
+                "Du er inne. Send meg bilder, så kommer de opp på skjermen så snart en " +
+                "arrangør har godkjent dem. Alt slettes etter arrangementet.", ct);
             return;
         }
 
@@ -188,7 +188,7 @@ public sealed class UpdateHandler(
             var largest = photos.MaxBy(p => (long)p.Width * p.Height)!;
             return new Candidate(largest.FileId, largest.FileUniqueId, "jpg",
                 largest.FileSize > MaxDownloadBytes
-                    ? "That photo is too large for me to fetch — Telegram caps bot downloads at 20 MB."
+                    ? "Det bildet er for stort til at jeg får hentet det — Telegram setter en grense på 20 MB for bot-nedlastinger."
                     : null);
         }
 
@@ -196,8 +196,8 @@ public sealed class UpdateHandler(
         {
             if (string.Equals(document.MimeType, "image/heic", StringComparison.OrdinalIgnoreCase))
                 return new Candidate(document.FileId, document.FileUniqueId, "heic",
-                    "I cannot read HEIC files. Send it as a photo rather than a file, " +
-                    "or convert it to JPEG first.");
+                    "Jeg kan ikke lese HEIC-filer. Send bildet som bilde i stedet for som fil, " +
+                    "eller konverter det til JPEG først.");
 
             if (!ImagePipeline.IsSupportedMimeType(document.MimeType))
                 return null;
@@ -205,7 +205,7 @@ public sealed class UpdateHandler(
             var extension = document.MimeType!.Split('/')[^1].ToLowerInvariant();
             return new Candidate(document.FileId, document.FileUniqueId, extension,
                 document.FileSize > MaxDownloadBytes
-                    ? "That file is too large for me to fetch — Telegram caps bot downloads at 20 MB."
+                    ? "Den filen er for stor til at jeg får hentet den — Telegram setter en grense på 20 MB for bot-nedlastinger."
                     : null);
         }
 
@@ -223,7 +223,7 @@ public sealed class UpdateHandler(
         // MutateAsync further down, under the store's lock, is what actually does.
         if (store.Snapshot.Images.Values.Any(i => i.FileUniqueId == candidate.FileUniqueId))
         {
-            await AcknowledgeAsync(message, chat, "I already have that one.", ct);
+            await AcknowledgeAsync(message, chat, "Det bildet har jeg allerede.", ct);
             return;
         }
 
@@ -239,7 +239,7 @@ public sealed class UpdateHandler(
         {
             logger.LogWarning(e, "Download failed for file {FileId}.", candidate.FileId);
             await telegram.SendMessageAsync(chat.Id,
-                "Sorry — I could not fetch that photo. Please send it again.", ct);
+                "Beklager — jeg fikk ikke hentet det bildet. Prøv å sende det på nytt.", ct);
             return;
         }
 
@@ -258,7 +258,7 @@ public sealed class UpdateHandler(
         {
             logger.LogWarning(e, "Could not decode an image from {Sender}.", sender.Id);
             await telegram.SendMessageAsync(chat.Id,
-                "Sorry — I could not read that image. Please try another.", ct);
+                "Beklager — jeg klarte ikke å lese det bildet. Prøv et annet.", ct);
             return;
         }
 
@@ -266,7 +266,7 @@ public sealed class UpdateHandler(
         // common case, but is still followed by the authoritative re-check.
         if (store.Snapshot.Images.Values.Any(i => i.Sha256 == processed.Sha256))
         {
-            await AcknowledgeAsync(message, chat, "I already have that one.", ct);
+            await AcknowledgeAsync(message, chat, "Det bildet har jeg allerede.", ct);
             return;
         }
 
@@ -322,12 +322,12 @@ public sealed class UpdateHandler(
 
         if (!stored)
         {
-            await AcknowledgeAsync(message, chat, "I already have that one.", ct);
+            await AcknowledgeAsync(message, chat, "Det bildet har jeg allerede.", ct);
             return;
         }
 
         await AcknowledgeAsync(message, chat,
-            approved ? "Got it — it is on the screen now." : "Got it — an organiser will approve it shortly.",
+            approved ? "Mottatt — det er på skjermen nå." : "Mottatt — en arrangør godkjenner det snart.",
             ct);
     }
 

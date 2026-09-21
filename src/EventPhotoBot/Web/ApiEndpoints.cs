@@ -41,7 +41,7 @@ public static class ApiEndpoints
             if (status is not null)
             {
                 if (!Enum.TryParse<ImageStatus>(status, ignoreCase: true, out var wanted))
-                    return Results.BadRequest(new { error = "Unknown status." });
+                    return Results.BadRequest(new { error = "Ukjent status." });
                 images = images.Where(i => i.Status == wanted);
             }
 
@@ -110,7 +110,7 @@ public static class ApiEndpoints
                 if (!Enum.TryParse<ImageStatus>(request.Status, ignoreCase: true, out var status)
                     || status == ImageStatus.Pending)
                     return Results.BadRequest(
-                        new { error = "status must be approved, hidden or rejected." });
+                        new { error = "status må være approved, hidden eller rejected." });
 
                 return await store.MutateAsync(state =>
                 {
@@ -131,7 +131,7 @@ public static class ApiEndpoints
             {
                 // "takeover" is deliberately not a pin value — see PUT /api/takeover.
                 if (!Enum.TryParse<PinKind>(request.Pin, ignoreCase: true, out var pin))
-                    return Results.BadRequest(new { error = "pin must be none or recurring." });
+                    return Results.BadRequest(new { error = "pin må være none eller recurring." });
 
                 return await store.MutateAsync(state =>
                 {
@@ -150,7 +150,7 @@ public static class ApiEndpoints
             // rather than returning false. Without this check that becomes an unhandled
             // 500 — there is no exception-handler middleware in this app.
             if (string.IsNullOrEmpty(request.ImageId))
-                return Results.BadRequest(new { error = "imageId is required." });
+                return Results.BadRequest(new { error = "imageId er påkrevd." });
 
             return await store.MutateAsync(state =>
             {
@@ -220,11 +220,11 @@ public static class ApiEndpoints
         app.MapPost("/api/images",
             async (HttpRequest http, StateStore store, IObjectStore objects, CancellationToken ct) =>
             {
-                if (!http.HasFormContentType) return Results.BadRequest(new { error = "Expected a file upload." });
+                if (!http.HasFormContentType) return Results.BadRequest(new { error = "Forventet en filopplasting." });
 
                 var form = await http.ReadFormAsync(ct);
                 var file = form.Files.GetFile("file");
-                if (file is null) return Results.BadRequest(new { error = "No file supplied." });
+                if (file is null) return Results.BadRequest(new { error = "Ingen fil ble sendt med." });
 
                 using var buffer = new MemoryStream();
                 await file.CopyToAsync(buffer, ct);
@@ -237,7 +237,7 @@ public static class ApiEndpoints
                 }
                 catch
                 {
-                    return Results.BadRequest(new { error = "That file is not an image I can read." });
+                    return Results.BadRequest(new { error = "Den filen er ikke et bilde jeg kan lese." });
                 }
 
                 var id = Ulid.NewUlid().ToString();
@@ -280,7 +280,7 @@ public static class ApiEndpoints
         {
             if (patch.Order is { } order
                 && order is not ("shuffle" or "newest-first"))
-                return Results.BadRequest(new { error = "order must be shuffle or newest-first." });
+                return Results.BadRequest(new { error = "order må være shuffle eller newest-first." });
 
             await store.MutateAsync(state =>
             {
@@ -300,7 +300,7 @@ public static class ApiEndpoints
             {
                 if (!Enum.TryParse<SenderStatus>(request.Status, ignoreCase: true, out var status))
                     return Results.BadRequest(
-                        new { error = "status must be known, autoApprove or banned." });
+                        new { error = "status må være known, autoApprove eller banned." });
 
                 return await store.MutateAsync(state =>
                 {
