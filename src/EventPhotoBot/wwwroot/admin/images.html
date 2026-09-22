@@ -23,16 +23,19 @@
     </div>
     <div id="takeover-banner" hidden></div>
 
-    <div class="row">
-      <label for="filter" style="margin:0">Vis</label>
-      <select id="filter" style="width:auto" onchange="load()">
-        <option value="approved">Godkjente</option>
-        <option value="hidden">Skjulte</option>
-        <option value="pending">Venter</option>
-        <option value="rejected">Avviste</option>
-        <option value="">Alt</option>
-      </select>
+    <header class="page-head">
+      <h1>Bilder</h1>
       <a class="link-button" href="/upload">Last opp bilder</a>
+    </header>
+
+    <div class="toolbar">
+      <div class="segmented" id="filter" role="group" aria-label="Vis">
+        <button data-status="approved" aria-pressed="true">På skjermen <span class="count"></span></button>
+        <button data-status="hidden" aria-pressed="false">Skjult <span class="count"></span></button>
+        <button data-status="pending" aria-pressed="false">Venter <span class="count"></span></button>
+        <button data-status="rejected" aria-pressed="false">Avvist <span class="count"></span></button>
+        <button data-status="" aria-pressed="false">Alle <span class="count"></span></button>
+      </div>
     </div>
 
     <div class="grid" id="grid"></div>
@@ -40,58 +43,132 @@
 
   <script src="/admin/admin.js"></script>
   <script>
-    async function load() {
-      const status = document.getElementById('filter').value;
-      const query = status ? `?status=${status}` : '';
-      const response = await fetch(`/api/images${query}`, { cache: 'no-store' });
-      if (!response.ok) return;
-      render(await response.json());
+    'use strict';
+
+    let status = 'approved';
+    let all = [];
+
+    const STATUS_LABELS = { approved: 'På skjermen', hidden: 'Skjult', pending: 'Venter', rejected: 'Avvist' };
+
+    for (const button of document.querySelectorAll('#filter button')) {
+      button.onclick = () => {
+        status = button.dataset.status;
+        for (const other of document.querySelectorAll('#filter button'))
+          other.setAttribute('aria-pressed', String(other === button));
+        render();
+      };
     }
 
-    function render(images) {
+    // One fetch for every status, so each tab can show its count; the filter is
+    // applied here rather than as a query per tab.
+    async function load() {
+      const response = await fetch('/api/images', { cache: 'no-store' });
+      if (!response.ok) return;
+      all = await response.json();
+      render();
+    }
+
+    function render() {
+      for (const button of document.querySelectorAll('#filter button')) {
+        const wanted = button.dataset.status;
+        button.querySelector('.count').textContent =
+          wanted ? all.filter(image => image.status === wanted).length : all.length;
+      }
+
+      const images = status ? all.filter(image => image.status === status) : all;
       const grid = document.getElementById('grid');
       if (images.length === 0) {
-        grid.innerHTML = '<p class="empty">Ingenting her.</p>';
+        grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+          <strong>Ingen bilder her</strong>
+          ${status === 'approved' ? 'Godkjente bilder og bilder du laster opp selv, havner her.' : ''}
+        </div>`;
         return;
       }
-      grid.innerHTML = images.map(image => `
-        <figure data-id="${image.id}" class="${image.pin === 'recurring' ? 'pinned' : ''}">
+
+      // Only ids go into attributes; sender names and captions are
+      // attacker-controlled and are escaped into text.
+      grid.innerHTML = images.map(image => {
+        const pinned = image.pin === 'recurring';
+        const onScreen = image.status === 'approved';
+        const canToggle = image.status === 'approved' || image.status === 'hidden';
+        return `
+        <figure data-id="${image.id}" class="${pinned ? 'pinned' : ''} ${image.status === 'hidden' ? 'hidden-photo' : ''}">
           <img src="${Admin.imageUrl(image.id, 'thumb')}" alt="" loading="lazy">
-          ${image.pin === 'recurring'
-            ? '<span class="pin-flag" title="Festet: vises på nytt med noen bilders mellomrom">📌</span>'
-            : ''}
-          <div class="row">
-            <button onclick="setStatus('${image.id}','${image.status === 'hidden' ? 'approved' : 'hidden'}')">
-              ${image.status === 'hidden' ? 'Vis' : 'Skjul'}
-            </button>
-            <button onclick="setPin('${image.id}','${image.pin === 'recurring' ? 'none' : 'recurring'}')">
-              ${image.pin === 'recurring' ? 'Løsne' : 'Fest'}
-            </button>
-            <button onclick="takeover('${image.id}')">Ta over</button>
-            <button class="danger" onclick="remove('${image.id}')">Slett</button>
+          <div class="flags">
+            ${pinned ? '<span class="flag pin" title="Vises på nytt med noen bilders mellomrom">Festet</span>' : ''}
+            ${!status ? `<span class="flag">${STATUS_LABELS[image.status] ?? image.status}</span>` : ''}
           </div>
-        </figure>`).join('');
+          <figcaption>
+            <span>${Admin.escapeHtml(image.senderName ?? 'Lastet opp av arrangør')}</span>
+            <span class="muted">${image.caption ? Admin.escapeHtml(image.caption) : Admin.timeAgo(image.receivedAt)}</span>
+          </figcaption>
+          <div class="actions">
+            ${canToggle ? `<button class="small" data-act="toggle">${onScreen ? 'Skjul' : 'Vis'}</button>` : ''}
+            ${image.status === 'pending'
+              ? '<button class="small" data-act="approve">Godkjenn</button>' : ''}
+            ${onScreen ? `<button class="small" data-act="pin">${pinned ? 'Løsne' : 'Fest'}</button>` : ''}
+            ${onScreen ? '<button class="small" data-act="takeover">Ta over</button>' : ''}
+            <button class="small quiet-danger" data-act="delete">Slett</button>
+          </div>
+        </figure>`;
+      }).join('');
+
+      for (const figure of grid.querySelectorAll('figure')) {
+        const image = images.find(i => i.id === figure.dataset.id);
+        for (const button of figure.querySelectorAll('[data-act]'))
+          button.onclick = () => ACTIONS[button.dataset.act](image);
+      }
     }
 
-    const setStatus = (id, status) => Admin.api('POST', `/api/images/${id}/status`, { status }).then(load);
-    const setPin = (id, pin) => Admin.api('POST', `/api/images/${id}/pin`, { pin }).then(load);
+    const ACTIONS = {
+      toggle: image => image.status === 'hidden'
+        ? setStatus(image.id, 'approved', 'Vises på skjermen igjen.')
+        : setStatus(image.id, 'hidden', 'Skjult fra skjermen.'),
+      approve: image => setStatus(image.id, 'approved', 'Godkjent – vises på skjermen.'),
+      pin: async image => {
+        const pin = image.pin === 'recurring' ? 'none' : 'recurring';
+        if (await Admin.api('POST', `/api/images/${image.id}/pin`, { pin }))
+          Admin.toast(pin === 'recurring' ? 'Festet – vises på nytt med jevne mellomrom.' : 'Løsnet.');
+        load();
+      },
+      takeover,
+      delete: remove,
+    };
 
-    async function remove(id) {
-      if (!confirm('Slette dette bildet? Det fjernes også fra lagringen, og kan ikke angres.')) return;
-      await Admin.api('DELETE', `/api/images/${id}`);
+    async function setStatus(id, next, message) {
+      if (await Admin.api('POST', `/api/images/${id}/status`, { status: next })) Admin.toast(message);
       load();
     }
 
-    async function takeover(id) {
-      const choice = prompt(
-        'Hvor lenge skal bildet holde skjermen?\n5, 15 eller 60 minutter, eller la feltet stå tomt for «til jeg fjerner det».', '15');
-      if (choice === null) return;
-      const minutes = choice.trim() === '' ? null : Number(choice);
-      if (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0)) {
-        alert('Skriv inn et antall minutter, eller la feltet stå tomt.');
-        return;
-      }
-      await Admin.api('PUT', '/api/takeover', { imageId: id, minutes });
+    async function remove(image) {
+      const sure = await Admin.confirm({
+        title: 'Slette bildet?',
+        body: 'Det fjernes fra skjermen og fra lagringen. Dette kan ikke angres.',
+        confirmLabel: 'Slett',
+        danger: true,
+      });
+      if (!sure) return;
+      if (await Admin.api('DELETE', `/api/images/${image.id}`)) Admin.toast('Slettet.');
+      load();
+    }
+
+    async function takeover(image) {
+      // Fixed choices rather than a free-text prompt: a typo (600 for 60) is the
+      // mistake the takeover banner otherwise has to catch after the fact.
+      const minutes = await Admin.dialog({
+        title: 'Vis bare dette bildet',
+        body: 'Skjermen holder bildet til tiden er ute, eller til du avslutter fra banneret øverst.',
+        actions: [
+          { label: 'Avbryt', value: null },
+          { label: '5 min', value: 5 },
+          { label: '15 min', value: 15 },
+          { label: '60 min', value: 60 },
+          { label: 'Til jeg avslutter', value: 0, kind: 'accent' },
+        ],
+      });
+      if (minutes === null) return;
+      if (await Admin.api('PUT', '/api/takeover', { imageId: image.id, minutes: minutes || null }))
+        Admin.toast('Bildet holder skjermen nå.');
       load();
     }
 

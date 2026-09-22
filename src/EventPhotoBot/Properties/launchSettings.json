@@ -1,22 +1,23 @@
 {
   "$schema": "https://json.schemastore.org/launchsettings.json",
   "profiles": {
-    "http": {
+    "local": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
+      "launchUrl": "login",
       "applicationUrl": "http://localhost:5055",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    },
-    "https": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "applicationUrl": "https://localhost:7113;http://localhost:5055",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PORT": "5055",
+        "LOCAL_DEV": "true",
+        "STORAGE_DIR": ".local-data",
+        "ADMIN_PASSWORD": "dev",
+        "COOKIE_SIGNING_KEY": "local-dev-only-signing-key-not-a-secret",
+        "JOIN_CODE": "localdev",
+        "TELEGRAM_BOT_TOKEN": "offline",
+        "TELEGRAM_WEBHOOK_SECRET": "offline",
+        "TELEGRAM_WEBHOOK_PATH": "offline"
       }
     }
   }

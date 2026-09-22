@@ -12,7 +12,86 @@
     api,
     imageUrl: (id, size) => `/img/${encodeURIComponent(id)}/${size}`,
     escapeHtml,
+    toast,
+    dialog,
+    confirm: ({ title, body, confirmLabel, danger = false }) => dialog({
+      title, body,
+      actions: [
+        { label: 'Avbryt', value: false },
+        { label: confirmLabel, value: true, kind: danger ? 'danger' : 'primary' },
+      ],
+    }).then(Boolean),
+    timeAgo,
   };
+
+  /** A short message at the bottom of the screen, instead of a blocking alert(). */
+  function toast(text, kind = 'info') {
+    let host = document.querySelector('.toasts');
+    if (!host) {
+      host = document.createElement('div');
+      host.className = 'toasts';
+      host.setAttribute('role', 'status');
+      host.setAttribute('aria-live', 'polite');
+      document.body.appendChild(host);
+    }
+    const item = document.createElement('div');
+    item.className = `toast ${kind}`;
+    item.textContent = text;
+    host.appendChild(item);
+    setTimeout(() => item.remove(), kind === 'error' ? 6000 : 2500);
+  }
+
+  /**
+   * An in-page modal with a title, a line of text and a row of buttons. Resolves to
+   * the chosen action's value, or null when dismissed with Esc or the backdrop.
+   * Built on <dialog> so focus, Esc and the backdrop behave natively.
+   */
+  function dialog({ title, body, actions }) {
+    return new Promise(resolve => {
+      const element = document.createElement('dialog');
+      element.className = 'admin-dialog';
+
+      const heading = document.createElement('h2');
+      heading.textContent = title;
+      element.appendChild(heading);
+      if (body) {
+        const text = document.createElement('p');
+        text.textContent = body;
+        element.appendChild(text);
+      }
+
+      const row = document.createElement('div');
+      row.className = 'dialog-actions';
+      for (const action of actions) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = action.label;
+        if (action.kind) button.className = action.kind;
+        button.onclick = () => { element.close(); resolve(action.value); };
+        row.appendChild(button);
+      }
+      element.appendChild(row);
+
+      element.addEventListener('cancel', () => resolve(null));
+      element.addEventListener('click', event => {
+        if (event.target === element) { element.close(); resolve(null); }
+      });
+      element.addEventListener('close', () => element.remove());
+
+      document.body.appendChild(element);
+      element.showModal();
+      // Land on the last (the affirmative) button, so Enter confirms and Esc cancels.
+      row.lastElementChild?.focus();
+    });
+  }
+
+  function timeAgo(value) {
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(value)) / 1000));
+    if (seconds < 60) return 'akkurat nå';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} min siden`;
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
 
   // Every one of these characters can be attacker-controlled: a Telegram
   // display name or a photo caption ends up here. Any admin page that
@@ -33,11 +112,20 @@
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(path, options);
+    let response;
+    try {
+      response = await fetch(path, options);
+    } catch {
+      toast('Fikk ikke kontakt med serveren. Sjekk nettet og prøv igjen.', 'error');
+      return null;
+    }
     if (response.status === 401) { location.href = '/login'; return null; }
     if (!response.ok) {
+      // The API answers errors as {"error": "..."}; show that sentence, not the JSON.
       const detail = await response.text();
-      alert(`Det gikk ikke (${response.status}). ${detail}`);
+      let message = detail.trim();
+      try { message = JSON.parse(detail).error || message; } catch { /* plain text */ }
+      toast(message || `Det gikk ikke (${response.status}).`, 'error');
       return null;
     }
     // Refresh straight away rather than waiting for the next poll. The write above
@@ -89,22 +177,23 @@
     // that), so it is always present in manifest.images; the fallback here
     // is defensive only.
     const image = manifest.images.find(i => i.id === takeover.id);
-    const sender = escapeHtml(image?.senderName ?? 'Ukjent');
+    const sender = escapeHtml(image?.senderName ?? (image ? 'Lastet opp av arrangør' : 'Ukjent'));
     const caption = image?.caption ? escapeHtml(image.caption) : '';
     const until = takeover.until
       ? `til ${new Date(takeover.until).toLocaleTimeString()}`
-      : 'til du fjerner det';
+      : 'til du avslutter';
 
     banner.innerHTML = `
       <img class="takeover-thumb" src="${Admin.imageUrl(takeover.id, 'thumb')}" alt="">
       <span class="takeover-info">
-        <strong>Holder skjermen: ${sender}</strong>
+        <strong>Holder skjermen</strong>
+        <span>${sender}</span>
         ${caption ? `<span class="muted">${caption}</span>` : ''}
         <span class="muted">${until}</span>
       </span>`;
 
     const clear = document.createElement('button');
-    clear.className = 'danger';
+    clear.className = 'accent';
     clear.textContent = 'Avslutt overtakelse';
     clear.onclick = () => api('DELETE', '/api/takeover');
     banner.appendChild(clear);

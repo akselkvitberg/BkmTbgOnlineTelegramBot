@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Gjestesimulator</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Kø<span class="badge"></span></a>
+    <a href="/admin/images">Bilder</a>
+    <a href="/upload">Last opp</a>
+    <a href="/admin/settings">Innstillinger</a>
+    <a href="/show">Skjerm</a>
+    <a href="/dev" class="active">Gjest (lokal)</a>
+  </nav>
+
+  <main>
+    <header class="page-head">
+      <h1>Gjestesimulator</h1>
+      <p class="muted">
+        Kun lokalt. Spiller rollen til en gjest som skriver til boten på Telegram, gjennom
+        den samme koden som webhooken bruker. Ingenting sendes til Telegram.
+      </p>
+    </header>
+
+    <section class="card">
+      <h2>Gjest</h2>
+      <div class="field-row">
+        <div class="field">
+          <label for="guestName">Navn</label>
+          <input id="guestName" type="text" value="Kari">
+        </div>
+        <div class="field">
+          <label for="guestId">Telegram-id</label>
+          <input id="guestId" type="number" value="1001">
+        </div>
+      </div>
+      <div class="row">
+        <button class="primary" id="join">Skann QR-koden (bli med)</button>
+        <button id="newGuest">Ny gjest</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Send bilder</h2>
+      <label for="caption">Bildetekst</label>
+      <input id="caption" type="text" placeholder="Valgfritt">
+      <input type="file" id="files" accept="image/*" multiple hidden>
+      <div class="row">
+        <label class="button primary" for="files">Velg og send bilder</label>
+        <button id="sendText">Send en tekstmelding</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Svar fra boten</h2>
+      <ul class="chat" id="replies"></ul>
+    </section>
+  </main>
+
+  <script src="/admin/admin.js"></script>
+  <script>
+    'use strict';
+
+    const guest = () => ({
+      id: Number(document.getElementById('guestId').value),
+      name: document.getElementById('guestName').value,
+    });
+
+    const NAMES = ['Ola', 'Kari', 'Per', 'Ingrid', 'Lars', 'Sofie', 'Emil', 'Nora'];
+    document.getElementById('newGuest').onclick = () => {
+      document.getElementById('guestId').value = 1000 + Math.floor(Math.random() * 9000);
+      document.getElementById('guestName').value = NAMES[Math.floor(Math.random() * NAMES.length)];
+    };
+
+    document.getElementById('join').onclick = async () => {
+      await Admin.api('POST', '/dev/join', guest());
+      loadReplies();
+    };
+
+    document.getElementById('sendText').onclick = async () => {
+      await Admin.api('POST', '/dev/message', { ...guest(), text: 'Hei!' });
+      loadReplies();
+    };
+
+    document.getElementById('files').onchange = async event => {
+      const form = new FormData();
+      const { id, name } = guest();
+      form.append('id', id);
+      form.append('name', name);
+      form.append('caption', document.getElementById('caption').value);
+      for (const file of event.target.files) form.append('files', file);
+      event.target.value = '';
+      await Admin.api('POST', '/dev/photo', form);
+      loadReplies();
+    };
+
+    async function loadReplies() {
+      const response = await fetch('/dev/replies', { cache: 'no-store' });
+      if (!response.ok) return;
+      const replies = await response.json();
+      const list = document.getElementById('replies');
+      list.replaceChildren(...replies.map(reply => {
+        const item = document.createElement('li');
+        const meta = document.createElement('span');
+        meta.className = 'muted';
+        meta.textContent = `Til ${reply.chatId} · ${new Date(reply.at).toLocaleTimeString()}`;
+        const text = document.createElement('p');
+        text.textContent = reply.text;
+        item.append(meta, text);
+        return item;
+      }));
+      if (replies.length === 0) list.innerHTML = '<li class="muted">Ingen svar ennå.</li>';
+    }
+
+    loadReplies();
+  </script>
+</body>
+</html>

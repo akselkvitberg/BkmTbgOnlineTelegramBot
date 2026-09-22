@@ -16,69 +16,124 @@
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
   </nav>
 
-  <main>
+  <main class="narrow">
     <div id="takeover-banner" hidden></div>
 
-    <h2>Arrangement</h2>
-    <label for="eventName">Navn på arrangementet</label>
-    <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
-    <p class="muted">Vises på skjermen så lenge ingen bilder har kommet inn ennå.</p>
-    <div class="row"><button class="primary" onclick="saveEvent()">Lagre</button></div>
+    <header class="page-head">
+      <h1>Innstillinger</h1>
+    </header>
 
-    <h2>Bildevisning</h2>
-    <label for="layout">Oppsett på skjermen</label>
-    <select id="layout">
-      <option value="single">Ett bilde om gangen</option>
-      <option value="mosaic">Mosaikk – seks bilder i rutenett</option>
-      <option value="polaroid">Polaroid – tre bilder som papirkopier</option>
-      <option value="filmstrip">Filmstripe – fem bilder som sklir sidelengs</option>
-      <option value="collage">Collage – opptil tolv bilder som fyller skjermen</option>
-      <option value="split">Delt skjerm – to bilder side om side</option>
-    </select>
-    <p class="muted">
-      «Ett bilde om gangen» viser hele bildet slik det ble tatt, og er det eneste
-      oppsettet med sakte zoom og bildetekst nederst. De andre passer når bildene
-      kommer inn fortere enn ett hvert åttende sekund. Alle bortsett fra «Delt skjerm»
-      beskjærer bildene for å fylle rutene sine.
-    </p>
-    <label for="slideSeconds">Sekunder per bilde</label>
-    <input id="slideSeconds" type="number" min="2" max="120">
-    <label for="transitionMs">Overtoning (ms)</label>
-    <input id="transitionMs" type="number" min="0" max="5000">
-    <label for="order">Rekkefølge</label>
-    <select id="order">
-      <option value="shuffle">Tilfeldig</option>
-      <option value="newest-first">Nyeste først</option>
-    </select>
-    <label><input id="newestFirstBoost" type="checkbox"> La nye bilder gå foran i køen</label>
-    <label><input id="kenBurns" type="checkbox"> Sakte zoom på hvert bilde</label>
-    <label><input id="showJoinInvite" type="checkbox"> Vis QR-kode og invitasjon på skjermen</label>
-    <p class="muted">
-      Slå av når skjermen står et sted der publikum ikke skal inviteres til å sende
-      bilder. Da vises verken QR-kode, botnavn eller oppfordring på skjermen. Lenken
-      slutter ikke å virke for dem som allerede har den.
-    </p>
-    <label for="recurringEvery">Vis et festet bilde for hvert N-te bilde</label>
-    <input id="recurringEvery" type="number" min="1" max="100">
-    <div class="row"><button class="primary" onclick="saveSlideshow()">Lagre</button></div>
+    <section class="card">
+      <h2>Arrangement</h2>
+      <label for="eventName">Navn på arrangementet</label>
+      <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
+      <p class="muted">Vises på skjermen så lenge ingen bilder har kommet inn ennå.</p>
+      <div class="save-row">
+        <button class="primary" id="saveEvent">Lagre navnet</button>
+        <span class="saved" id="savedEvent">Lagret</span>
+      </div>
+    </section>
 
-    <h2>Personer</h2>
-    <p class="muted">
-      Folk dukker opp her når de skanner QR-koden på skjermen. «Til godkjenning» betyr
-      at bildene deres venter i køen, «Godkjenn automatisk» sender dem rett på skjermen,
-      og «Utestengt» dropper dem og avviser alt de allerede har sendt.
-    </p>
-    <table id="senders"></table>
-    <div class="row">
-      <input id="newId" type="number" placeholder="Telegram-id" style="width:auto">
-      <button onclick="addSender()">Forhåndsgodkjenn en fotograf</button>
-    </div>
+    <section class="card">
+      <h2>Bildevisning</h2>
+
+      <label id="layoutLabel">Oppsett på skjermen</label>
+      <div class="layouts" role="radiogroup" aria-labelledby="layoutLabel">
+        <label class="layout-option"><input type="radio" name="layout" value="single">
+          <i data-l="single"></i><strong>Ett om gangen</strong><span>Hele bildet, med bildetekst og sakte zoom</span></label>
+        <label class="layout-option"><input type="radio" name="layout" value="mosaic">
+          <i data-l="mosaic"></i><strong>Mosaikk</strong><span>Seks bilder i rutenett</span></label>
+        <label class="layout-option"><input type="radio" name="layout" value="polaroid">
+          <i data-l="polaroid"></i><strong>Polaroid</strong><span>Tre bilder som papirkopier</span></label>
+        <label class="layout-option"><input type="radio" name="layout" value="filmstrip">
+          <i data-l="filmstrip"></i><strong>Filmstripe</strong><span>Fem bilder som sklir sidelengs</span></label>
+        <label class="layout-option"><input type="radio" name="layout" value="collage">
+          <i data-l="collage"></i><strong>Collage</strong><span>Opptil tolv bilder</span></label>
+        <label class="layout-option"><input type="radio" name="layout" value="split">
+          <i data-l="split"></i><strong>Delt skjerm</strong><span>To bilder side om side, uten beskjæring</span></label>
+      </div>
+      <p class="muted">
+        Flerbildeoppsettene passer når bildene kommer inn fortere enn ett hvert åttende
+        sekund. Alle unntatt «Ett om gangen» og «Delt skjerm» beskjærer bildene.
+      </p>
+
+      <div class="number-fields">
+        <div>
+          <label for="slideSeconds">Sekunder per bilde</label>
+          <input id="slideSeconds" type="number" min="2" max="120" inputmode="numeric">
+        </div>
+        <div>
+          <label for="transitionMs">Overtoning (millisekunder)</label>
+          <input id="transitionMs" type="number" min="0" max="5000" step="100" inputmode="numeric">
+        </div>
+        <div>
+          <label for="order">Rekkefølge</label>
+          <select id="order">
+            <option value="shuffle">Tilfeldig</option>
+            <option value="newest-first">Nyeste først</option>
+          </select>
+        </div>
+        <div>
+          <label for="recurringEvery">Festet bilde hvert N-te bilde</label>
+          <input id="recurringEvery" type="number" min="1" max="100" inputmode="numeric">
+        </div>
+      </div>
+
+      <div style="margin-top: 20px">
+        <label class="toggle"><input id="newestFirstBoost" type="checkbox">
+          <span>La nye bilder gå foran</span>
+          <span class="muted">Et nettopp godkjent bilde vises før resten av rekken.</span></label>
+        <label class="toggle"><input id="kenBurns" type="checkbox">
+          <span>Sakte zoom</span>
+          <span class="muted">Gjelder bare «Ett om gangen».</span></label>
+        <label class="toggle"><input id="showJoinInvite" type="checkbox">
+          <span>Vis QR-kode og invitasjon</span>
+          <span class="muted">
+            Slå av der publikum ikke skal inviteres til å sende bilder. Lenken virker
+            fortsatt for dem som allerede har den.
+          </span></label>
+      </div>
+
+      <div class="save-row">
+        <button class="primary" id="saveSlideshow">Lagre visningen</button>
+        <span class="saved" id="savedSlideshow">Lagret</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Personer</h2>
+      <p class="muted">
+        Folk dukker opp her når de skanner QR-koden. «Til godkjenning» sender bildene
+        deres til køen, «Godkjenn automatisk» rett på skjermen, og «Utestengt» ignorerer
+        dem og avviser alt de allerede har sendt.
+      </p>
+      <div class="table-wrap"><table id="senders"></table></div>
+      <label for="newId">Forhåndsgodkjenn en fotograf</label>
+      <div class="row" style="margin-top: 0; flex-wrap: nowrap">
+        <input id="newId" type="number" inputmode="numeric" placeholder="Telegram-id">
+        <button id="addSender" style="flex-shrink: 0">Legg til</button>
+      </div>
+    </section>
+
+    <form method="post" action="/logout" class="row">
+      <button type="submit">Logg ut</button>
+    </form>
   </main>
 
   <script src="/admin/admin.js"></script>
   <script>
+    'use strict';
+
     let settings = null;
     let senders = [];
+
+    // Fields changed since they were last saved, by id (or name, for the radios).
+    const edited = new Set();
+    for (const input of document.querySelectorAll('.card input, .card select')) {
+      if (input.closest('#senders') || input.id === 'newId') continue;
+      input.addEventListener('input', () => edited.add(input.name || input.id));
+      input.addEventListener('change', () => edited.add(input.name || input.id));
+    }
 
     const STATUSES = ['known', 'autoApprove', 'banned'];
     const LABELS = {
@@ -94,39 +149,40 @@
       senders = settings.senders ?? [];
 
       // The manifest subscription below can call load() at any moment - e.g. another
-      // admin approves a photo while this one is mid-keystroke in "Seconds per
-      // image". A field currently focused is being edited right now; overwriting it
-      // out from under the admin's cursor loses the keystroke and the value they were
-      // typing, so every field that accepts typed input (not the checkboxes, which
-      // have no in-progress-typing state to lose) is skipped while focused.
-      for (const key of ['eventName', 'slideSeconds', 'transitionMs', 'recurringEvery']) {
+      // admin approves a photo while this one is halfway through changing the
+      // slideshow. A field the admin has touched since the last save (or is typing
+      // in right now) keeps what they put there; overwriting it would silently undo
+      // their change before they press Save.
+      const keep = element => edited.has(element.name || element.id) || document.activeElement === element;
+      for (const key of ['eventName', 'slideSeconds', 'transitionMs', 'recurringEvery', 'order']) {
         const input = document.getElementById(key);
-        if (document.activeElement !== input) input.value = settings[key];
+        if (!keep(input)) input.value = settings[key];
       }
-      for (const key of ['order', 'layout']) {
-        const select = document.getElementById(key);
-        if (document.activeElement !== select) select.value = settings[key];
+      for (const key of ['newestFirstBoost', 'kenBurns', 'showJoinInvite']) {
+        const input = document.getElementById(key);
+        if (!keep(input)) input.checked = settings[key];
       }
-      document.getElementById('newestFirstBoost').checked = settings.newestFirstBoost;
-      document.getElementById('kenBurns').checked = settings.kenBurns;
-      document.getElementById('showJoinInvite').checked = settings.showJoinInvite;
+      const layout = document.querySelector(`input[name="layout"][value="${settings.layout}"]`);
+      if (layout && !keep(layout)) layout.checked = true;
       renderSenders();
     }
 
     function renderSenders() {
-      // Only the id - a number - goes into the onchange attribute. A sender's name
-      // is attacker-controlled (a Telegram display name), so it is escaped into the
-      // cell and never embedded in a JS argument, where HTML-escaping alone would
-      // still leave a way to break out of the quoted string.
-      document.getElementById('senders').innerHTML =
+      // Only the id - a number - goes into an attribute. A sender's name is
+      // attacker-controlled (a Telegram display name), so it is escaped into the
+      // cell and never embedded in a JS argument.
+      const table = document.getElementById('senders');
+      table.innerHTML =
         senders.length === 0
-          ? '<tr><td class="muted">Ingen ennå. Folk dukker opp her når de skanner QR-koden.</td></tr>'
-          : senders.map(sender => `
+          ? '<tr><td class="muted">Ingen ennå.</td></tr>'
+          : `<tr><th>Navn</th><th>Telegram-id</th><th>Bildene deres</th></tr>` +
+            senders.map(sender => `
             <tr>
-              <td>${Admin.escapeHtml(sender.name) || '<span class="muted">(uten navn)</span>'}</td>
-              <td class="muted">${sender.id}</td>
+              <td><span class="status-dot" data-status="${STATUSES.includes(sender.status) ? sender.status : ''}"></span>${
+                Admin.escapeHtml(sender.name) || '<span class="muted">(uten navn)</span>'}</td>
+              <td class="muted">${Number(sender.id)}</td>
               <td>
-                <select onchange="setStatus(${sender.id}, this.value)">
+                <select data-id="${Number(sender.id)}" aria-label="Status">
                   ${STATUSES.map(value => `
                     <option value="${value}" ${sender.status === value ? 'selected' : ''}>
                       ${LABELS[value]}
@@ -134,47 +190,77 @@
                 </select>
               </td>
             </tr>`).join('');
+
+      for (const select of table.querySelectorAll('select'))
+        select.onchange = () => setStatus(Number(select.dataset.id), select.value);
     }
 
     async function setStatus(id, status) {
-      if (status === 'banned'
-          && !confirm('Utesteng denne personen? Alle bilder vedkommende allerede har sendt, blir '
-                      + 'avvist, også de som ligger på skjermen nå. Dette kan ikke angres.')) {
-        renderSenders();   // put the dropdown back where it was
-        return;
+      const sender = senders.find(s => s.id === id);
+      if (status === 'banned') {
+        const sure = await Admin.confirm({
+          title: `Utestenge ${sender?.name || 'denne personen'}?`,
+          body: 'Alt vedkommende allerede har sendt blir avvist, også bilder som vises på '
+              + 'skjermen nå. Dette kan ikke angres.',
+          confirmLabel: 'Utesteng',
+          danger: true,
+        });
+        if (!sure) { renderSenders(); return; }   // put the dropdown back where it was
       }
-      await Admin.api('POST', `/api/senders/${id}/status`, { status });
+      if (await Admin.api('POST', `/api/senders/${id}/status`, { status }))
+        Admin.toast(`${sender?.name || id}: ${LABELS[status].toLowerCase()}.`);
       await load();
     }
 
-    async function addSender() {
+    document.getElementById('addSender').onclick = async () => {
       const input = document.getElementById('newId');
       const id = Number(input.value);
-      if (!Number.isSafeInteger(id) || id <= 0) { alert('Skriv inn en numerisk Telegram-id.'); return; }
-      input.value = '';
-      await Admin.api('POST', `/api/senders/${id}/status`, { status: 'autoApprove' });
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        Admin.toast('Skriv inn en numerisk Telegram-id.', 'error');
+        input.focus();
+        return;
+      }
+      if (await Admin.api('POST', `/api/senders/${id}/status`, { status: 'autoApprove' })) {
+        input.value = '';
+        Admin.toast('Lagt til. Bildene deres går rett på skjermen.');
+      }
       await load();
+    };
+
+    function flashSaved(id) {
+      const note = document.getElementById(id);
+      note.classList.add('show');
+      setTimeout(() => note.classList.remove('show'), 2000);
     }
 
-    const saveEvent = () => Admin.api('PATCH', '/api/settings', {
-      eventName: document.getElementById('eventName').value,
-    }).then(load);
+    document.getElementById('saveEvent').onclick = async () => {
+      if (await Admin.api('PATCH', '/api/settings', {
+        eventName: document.getElementById('eventName').value,
+      })) { edited.delete('eventName'); flashSaved('savedEvent'); }
+      load();
+    };
 
-    const saveSlideshow = () => Admin.api('PATCH', '/api/settings', {
-      slideSeconds: Number(document.getElementById('slideSeconds').value),
-      transitionMs: Number(document.getElementById('transitionMs').value),
-      order: document.getElementById('order').value,
-      layout: document.getElementById('layout').value,
-      newestFirstBoost: document.getElementById('newestFirstBoost').checked,
-      recurringEvery: Number(document.getElementById('recurringEvery').value),
-      kenBurns: document.getElementById('kenBurns').checked,
-      showJoinInvite: document.getElementById('showJoinInvite').checked,
-    }).then(load);
+    document.getElementById('saveSlideshow').onclick = async () => {
+      if (await Admin.api('PATCH', '/api/settings', {
+        slideSeconds: Number(document.getElementById('slideSeconds').value),
+        transitionMs: Number(document.getElementById('transitionMs').value),
+        order: document.getElementById('order').value,
+        layout: document.querySelector('input[name="layout"]:checked')?.value ?? settings.layout,
+        newestFirstBoost: document.getElementById('newestFirstBoost').checked,
+        recurringEvery: Number(document.getElementById('recurringEvery').value),
+        kenBurns: document.getElementById('kenBurns').checked,
+        showJoinInvite: document.getElementById('showJoinInvite').checked,
+      })) {
+        for (const key of ['layout', 'slideSeconds', 'transitionMs', 'order', 'recurringEvery',
+                           'newestFirstBoost', 'kenBurns', 'showJoinInvite']) edited.delete(key);
+        flashSaved('savedSlideshow');
+      }
+      load();
+    };
 
     // Without this, an admin watching this page during the event sees nothing happen
-    // as people scan the QR and join - load() would only ever run once, at page open.
-    // Admin.onManifest fires on every change that bumps the manifest generation, and
-    // redeeming the join code does exactly that, so the signal is already there.
+    // as people scan the QR and join - redeeming the join code bumps the manifest
+    // generation, which is what Admin.onManifest fires on.
     Admin.onManifest(() => load());
     load();
   </script>

@@ -16,26 +16,35 @@
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
   </nav>
 
-  <main>
+  <main class="narrow">
     <!--
       No `capture` attribute, deliberately: it forces the camera and collapses the
       picker to a single shot on both iOS and Android, which is the one thing this
       page exists not to do. UploadPageTests guards that.
     -->
+    <header class="page-head">
+      <div>
+        <h1>Last opp bilder</h1>
+        <p class="muted">Bilder du laster opp her går rett på skjermen, uten å gå via køen.</p>
+      </div>
+    </header>
+
     <input type="file" id="picker" accept="image/*" multiple hidden>
     <label class="pick" for="picker">Velg bilder</label>
-    <p class="muted pick-hint">Du kan velge flere om gangen. Bildene lastes opp i full størrelse.</p>
+    <p class="muted pick-hint">Velg gjerne mange om gangen. De lastes opp i full størrelse.</p>
 
     <div class="row" id="actions" hidden>
       <button class="primary" id="start">Last opp</button>
       <button id="clear">Tøm listen</button>
     </div>
 
+    <div class="progress-bar" id="progress-bar" hidden><span></span></div>
     <p class="muted" id="progress" hidden></p>
 
     <ul class="upload-list" id="list"></ul>
   </main>
 
+  <script src="/admin/admin.js"></script>
   <script>
     'use strict';
 
@@ -172,6 +181,9 @@
       clearButton.disabled = running;
 
       progress.hidden = items.length === 0;
+      const bar = document.getElementById('progress-bar');
+      bar.hidden = items.length === 0;
+      bar.firstElementChild.style.width = items.length ? `${(done / items.length) * 100}%` : '0';
       progress.textContent = failed > 0
         ? `${done} av ${items.length} lastet opp — ${failed} feilet`
         : `${done} av ${items.length} lastet opp`;

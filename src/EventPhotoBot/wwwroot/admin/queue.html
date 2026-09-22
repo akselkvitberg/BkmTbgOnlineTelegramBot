@@ -22,7 +22,12 @@
       <span class="muted">Alle som sender melding til boten nå, blir registrert som avsender.</span>
     </div>
     <div id="takeover-banner" hidden></div>
-    <p class="muted">Trykk <kbd>Enter</kbd> for å godkjenne eller <kbd>Esc</kbd> for å avvise det øverste bildet.</p>
+
+    <header class="page-head">
+      <h1>Til godkjenning</h1>
+      <span class="muted" id="queue-count"></span>
+    </header>
+
     <div id="queue"></div>
   </main>
 
@@ -32,52 +37,103 @@
     // ones separately. /api/manifest reports the count; this page lists them.
     let pending = [];
 
+    // The photo being reviewed. Oldest first by default, so nobody's photo waits
+    // behind a stream of newer ones; picking a thumbnail from "Neste" jumps to it.
+    let currentId = null;
+
+    const current = () => pending.find(image => image.id === currentId) ?? pending[0];
+
     async function loadPending() {
       const response = await fetch('/api/images?status=pending', { cache: 'no-store' });
       if (!response.ok) return;
-      pending = await response.json();
+      // The API lists newest first.
+      pending = (await response.json()).reverse();
       render();
     }
 
     function render() {
       const container = document.getElementById('queue');
+      const count = document.getElementById('queue-count');
+      count.textContent = pending.length === 0 ? ''
+        : `${pending.length} ${pending.length === 1 ? 'bilde venter' : 'bilder venter'}`;
+
       if (pending.length === 0) {
-        container.innerHTML = '<p class="empty">Ingenting på vent. Kos deg i festen.</p>';
+        container.innerHTML = `
+          <div class="empty">
+            <strong>Ingenting venter</strong>
+            Nye bilder dukker opp her av seg selv.
+          </div>`;
         return;
       }
-      container.innerHTML = pending.map(image => `
-        <div class="queue-item" data-id="${image.id}">
-          <img src="${Admin.imageUrl(image.id, 'display')}" alt="" loading="lazy">
-          <div class="row">
-            <strong>${Admin.escapeHtml(image.senderName ?? 'Ukjent')}</strong>
-            <span class="muted">${Admin.escapeHtml(image.caption ?? '')}</span>
+
+      const image = current();
+      currentId = image.id;
+      const rest = pending.filter(other => other.id !== image.id);
+      const sender = Admin.escapeHtml(image.senderName ?? 'Ukjent');
+
+      // Only ids - server-generated ULIDs and numeric sender ids - go into
+      // attributes; names and captions are attacker-controlled and are escaped
+      // into text.
+      container.innerHTML = `
+        <section class="review" aria-label="Bildet som vurderes">
+          <div class="review-photo">
+            <img src="${Admin.imageUrl(image.id, 'display')}" alt="Bilde fra ${sender}">
           </div>
-          <div class="row">
-            <button class="primary" onclick="decide('${image.id}','approved')">Godkjenn</button>
-            <button class="danger" onclick="decide('${image.id}','rejected')">Avvis</button>
-            ${image.senderId
-              ? `<button class="danger" onclick="banSender(${image.senderId})">Utesteng avsender</button>`
-              : ''}
+          <div class="review-side">
+            <span class="review-sender">${sender}</span>
+            <span class="muted">Sendt ${Admin.timeAgo(image.receivedAt)}</span>
+            ${image.caption ? `<p class="review-caption">${Admin.escapeHtml(image.caption)}</p>` : ''}
+            <p class="muted shortcut-hint"><kbd>Enter</kbd> godkjenn · <kbd>Esc</kbd> avvis</p>
+            <div class="review-actions">
+              <button class="danger" data-decide="rejected">Avvis</button>
+              <button class="primary" data-decide="approved">Godkjenn</button>
+              ${image.senderId
+                ? `<button class="quiet-danger" data-ban="${image.senderId}">Utesteng ${sender}…</button>`
+                : ''}
+            </div>
           </div>
-        </div>`).join('');
+        </section>
+        ${rest.length ? `
+          <section class="up-next">
+            <h2>Neste (${rest.length})</h2>
+            <ol>
+              ${rest.map(other => `
+                <li><button data-pick="${other.id}"
+                            aria-label="Vis bildet fra ${Admin.escapeHtml(other.senderName ?? 'Ukjent')}">
+                  <img src="${Admin.imageUrl(other.id, 'thumb')}" alt="" loading="lazy">
+                </button></li>`).join('')}
+            </ol>
+          </section>` : ''}`;
+
+      for (const button of container.querySelectorAll('[data-decide]'))
+        button.onclick = () => decide(image.id, button.dataset.decide);
+      for (const button of container.querySelectorAll('[data-pick]'))
+        button.onclick = () => { currentId = button.dataset.pick; render(); };
+      const ban = container.querySelector('[data-ban]');
+      if (ban) ban.onclick = () => banSender(Number(ban.dataset.ban), image.senderName ?? 'denne avsenderen');
     }
 
     // Noticing a bad sender happens while looking at their photo, not while reading
-    // the settings page. Only the numeric id goes into the attribute; the name is
-    // attacker-controlled and stays in an escaped cell.
-    async function banSender(senderId) {
-      if (!confirm('Utesteng denne avsenderen? Alle bilder vedkommende allerede har sendt, blir '
-                   + 'avvist, også de som ligger på skjermen nå. Dette kan ikke angres.')) return;
-      await Admin.api('POST', `/api/senders/${senderId}/status`, { status: 'banned' });
+    // the settings page.
+    async function banSender(senderId, name) {
+      const sure = await Admin.confirm({
+        title: `Utestenge ${name}?`,
+        body: 'Alt vedkommende allerede har sendt blir avvist, også bilder som vises på '
+            + 'skjermen nå. Nye bilder fra dem blir ignorert. Dette kan ikke angres.',
+        confirmLabel: 'Utesteng',
+        danger: true,
+      });
+      if (!sure) return;
+      if (await Admin.api('POST', `/api/senders/${senderId}/status`, { status: 'banned' }))
+        Admin.toast(`${name} er utestengt.`);
       await loadPending();
     }
 
-    // Guards the A/R shortcut against a second decision landing on the same photo:
-    // pending only refreshes after the round trip below plus a full loadPending(),
-    // which is easily over a second on an admin phone at one bar. Without this, five
-    // quick taps of "A" - or one held key at the OS auto-repeat rate - sent five
-    // `approved` writes against pending[0] and left photos 2-5 untouched, each write
-    // still bumping the generation and forcing every connected client to refetch.
+    // Guards the shortcut against a second decision landing on the same photo:
+    // pending only refreshes after the round trip below, which is easily over a
+    // second on an admin phone at one bar. Without this, five quick presses of
+    // Enter - or one held key at the OS auto-repeat rate - sent five `approved`
+    // writes against the same photo and left the next four untouched.
     let deciding = false;
 
     async function decide(id, status) {
@@ -85,15 +141,16 @@
       deciding = true;
       try {
         const response = await Admin.api('POST', `/api/images/${id}/status`, { status });
-        // Admin.api already alerted the admin on failure. Leave `pending` untouched
-        // on failure so the photo stays visible and the next shortcut press retries
-        // it, rather than silently moving on to the next photo in the backlog.
+        // Admin.api already told the admin on failure. Leave `pending` untouched
+        // so the photo stays visible and the next press retries it.
         if (!response) return;
+        Admin.toast(status === 'approved' ? 'Godkjent – vises på skjermen.' : 'Avvist.');
         // Remove the decided item locally instead of re-fetching: the manifest
-        // subscription (Admin.onManifest below) already brings the authoritative
-        // list once the write's generation bump reaches it, and the immediate
-        // loadPending() this replaces was a second round trip for the same result.
+        // subscription (Admin.onManifest below) brings the authoritative list once
+        // the write's generation bump reaches it.
+        const index = pending.findIndex(image => image.id === id);
         pending = pending.filter(image => image.id !== id);
+        currentId = pending[Math.min(index, pending.length - 1)]?.id ?? null;
         render();
       } finally {
         deciding = false;
@@ -105,18 +162,15 @@
       // key is held, at the auto-repeat rate - each one otherwise a full decide().
       if (event.repeat || pending.length === 0) return;
 
-      // Enter is also how a focused button or link is activated, so without this a
-      // keyboard press on "Logg ut" would decide the top photo instead of logging
-      // out - and a mouse click on "Godkjenn" leaves that button focused, which
-      // would make the next Enter fire both the shortcut and a second click. Queue
-      // buttons vanish from the DOM as soon as their photo is decided, so focus
-      // lands back on the body and the shortcuts come straight back; the nav and
-      // the filter controls are exactly where suppressing them is wanted.
+      // Enter is also how a focused button or link is activated, so a keyboard
+      // press on "Logg ut" must not decide the photo instead; a dialog open for
+      // the ban confirmation owns its own keys.
       const focused = document.activeElement;
-      if (focused && focused.closest('button, a, input, select, textarea')) return;
+      if (focused && focused.closest('button, a, input, select, textarea, dialog')) return;
+      if (document.querySelector('dialog[open]')) return;
 
-      if (event.key === 'Enter') decide(pending[0].id, 'approved');
-      if (event.key === 'Escape') decide(pending[0].id, 'rejected');
+      if (event.key === 'Enter') decide(current().id, 'approved');
+      if (event.key === 'Escape') decide(current().id, 'rejected');
     });
 
     Admin.onManifest(() => loadPending());

@@ -272,3 +272,6 @@ infra/**/terraform.tfvars
 
 # Superpowers SDD scratch workspace
 .superpowers/
+
+# Local dev storage (LOCAL_DEV=true)
+src/EventPhotoBot/.local-data/

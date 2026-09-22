@@ -5,20 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Logg inn</title>
   <style>
-    :root { color-scheme: light dark; }
-    body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
-           font: 16px/1.5 system-ui, sans-serif; background: #111; color: #eee; padding: 16px; }
-    form { display: grid; gap: 12px; width: min(320px, 100%); }
-    h1 { font-size: 1.25rem; margin: 0 0 4px; font-weight: 600; }
-    input, button { font: inherit; padding: 12px; border-radius: 8px; border: 1px solid #444; }
-    input { background: #1c1c1c; color: inherit; }
-    button { background: #2f6fed; color: #fff; border-color: transparent; cursor: pointer; }
-    .error { color: #ff8a8a; font-size: 0.9rem; min-height: 1.5em; }
+    * { box-sizing: border-box; }
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 16px;
+           font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+           background: radial-gradient(ellipse at 50% 0%, #3a2610 0%, #17130f 60%) fixed #17130f;
+           color: #f4ede4; }
+    form { display: grid; gap: 8px; width: min(340px, 100%); padding: 28px 24px;
+           border: 1px solid #3d342c; border-radius: 16px; background: #221c17; }
+    h1 { font-size: 1.35rem; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+    .lede { margin: 0 0 12px; color: #a99e92; font-size: 0.95rem; }
+    label { color: #a99e92; font-size: 0.9rem; }
+    input, button { font: inherit; min-height: 48px; padding: 12px; border-radius: 10px; border: 1px solid #3d342c; }
+    input { background: #17130f; color: inherit; }
+    input:focus { outline: none; border-color: #f0a640; }
+    button { margin-top: 8px; background: #f0a640; color: #1e1408; border-color: transparent;
+             font-weight: 650; cursor: pointer; }
+    button:focus-visible { outline: 2px solid #f0a640; outline-offset: 2px; }
+    .error { color: #ff8a80; font-size: 0.9rem; min-height: 1.5em; margin: 0; }
   </style>
 </head>
 <body>
   <form method="post" action="/login">
     <h1>Bilder fra arrangementet</h1>
+    <p class="lede">Kun for arrangører.</p>
     <label for="password">Passord</label>
     <input id="password" name="password" type="password" autocomplete="current-password"
            autofocus required>

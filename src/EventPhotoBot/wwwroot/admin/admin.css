@@ -1,15 +1,23 @@
 * { box-sizing: border-box; }
 
+/* Darkroom palette. The admin pages are used on a phone in a dim venue, next to a
+   projector, so the ground stays dark; the warm tint and the amber safelight accent
+   keep it from reading as a generic dark dashboard. Green and red are reserved for
+   approve and reject/ban, so the accent never competes with a decision. */
 :root {
   color-scheme: dark;
-  --bg: #121212;
-  --panel: #1c1c1e;
-  --line: #333;
-  --text: #f2f2f2;
-  --muted: #a0a0a5;
-  --accent: #2f6fed;
-  --danger: #d9534f;
-  --ok: #3da35d;
+  --bg: #17130f;
+  --panel: #221c17;
+  --panel-2: #2c251f;
+  --line: #3d342c;
+  --text: #f4ede4;
+  --muted: #a99e92;
+  --accent: #f0a640;
+  --accent-ink: #1e1408;
+  --ok: #3fb27f;
+  --danger: #e5534b;
+  --radius: 12px;
+  --radius-sm: 8px;
 }
 
 body {
@@ -17,45 +25,69 @@ body {
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
+
+h1, h2, h3 { line-height: 1.2; letter-spacing: -0.01em; }
+h1 { font-size: 1.6rem; font-weight: 700; margin: 0; }
+h2 { font-size: 1.1rem; font-weight: 650; margin: 0 0 4px; }
+
+a { color: var(--accent); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Navigation ---- */
 
 nav {
   position: sticky;
   top: 0;
   z-index: 10;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px;
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 nav a {
-  padding: 10px 14px;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   text-decoration: none;
   white-space: nowrap;
 }
 
-nav a.active { background: var(--bg); color: var(--text); }
+nav a:hover { color: var(--text); }
+nav a.active { background: var(--panel-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 
 .nav-logout { margin-left: auto; }
 
 .nav-logout button {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border: none;
-  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font: inherit;
   white-space: nowrap;
-  cursor: pointer;
 }
 
-.nav-logout button:hover { color: var(--text); }
+.nav-logout button:hover { color: var(--text); background: transparent; }
+
+/* Six links do not fit a phone; logging out is rare there, and the settings page
+   carries its own button for it. */
+@media (max-width: 560px) {
+  .nav-logout { display: none; }
+  nav { gap: 0; padding-left: 4px; padding-right: 4px; }
+  nav a { padding: 8px 7px; font-size: 0.875rem; }
+  .badge { margin-left: 4px; }
+  #takeover-banner button { flex: 1 1 100%; }
+}
 
 .badge {
   display: inline-block;
@@ -64,33 +96,91 @@ nav a.active { background: var(--bg); color: var(--text); }
   padding: 0 6px;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 20px;
   text-align: center;
 }
 
 .badge:empty, .badge[data-count="0"] { display: none; }
 
-main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+/* ---- Page frame ---- */
 
-#takeover-banner {
+main { padding: 20px 16px; max-width: 1100px; margin: 0 auto; }
+main.narrow { max-width: 760px; }
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 20px;
+}
+
+.page-head p { margin: 4px 0 0; max-width: 60ch; }
+
+.card {
+  margin-bottom: 16px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.card > .muted:first-of-type { margin-top: 0; }
+
+.muted { color: var(--muted); font-size: 0.9rem; }
+.empty {
+  padding: 48px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
+}
+.empty strong { display: block; color: var(--text); font-size: 1.1rem; margin-bottom: 4px; }
+
+kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  font: 0.8rem/1.4 ui-monospace, monospace;
+}
+
+/* ---- Banners ---- */
+
+#takeover-banner, #pairing-banner {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   margin: 0 0 16px;
   padding: 12px 16px;
-  border-radius: 10px;
-  background: #4a3410;
-  border: 1px solid #7a5716;
+  border-radius: var(--radius);
 }
 
-#takeover-banner[hidden] { display: none; }
+#takeover-banner {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+#pairing-banner {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: #1b2a3a;
+  border: 1px solid #36597d;
+}
+
+#takeover-banner[hidden], #pairing-banner[hidden] { display: none; }
 
 #takeover-banner .takeover-thumb {
   width: 56px;
   height: 56px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -103,114 +193,323 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
   min-width: 0;
 }
 
-#pairing-banner {
-  margin: 0 0 16px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: #1c3a5e;
-  border: 1px solid #2f6fed;
-}
+/* ---- Controls ---- */
 
-#pairing-banner[hidden] { display: none; }
-
-.queue-item {
-  margin-bottom: 24px;
-  padding: 12px;
-  border-radius: 12px;
-  background: var(--panel);
-}
-
-.queue-item img { width: 100%; border-radius: 8px; display: block; }
-
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
 
 /* display:flex above beats the browser's own [hidden] rule, so a .row toggled
-   with el.hidden would otherwise stay on screen — the same override
-   #takeover-banner[hidden] exists for. */
+   with el.hidden would otherwise stay on screen. */
 .row[hidden] { display: none; }
 
-button {
-  font: inherit;
+button, .button, .link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
   padding: 10px 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
   color: var(--text);
+  font: inherit;
+  font-weight: 550;
+  text-decoration: none;
   cursor: pointer;
+  transition: background-color 120ms, border-color 120ms;
 }
 
-button.primary { background: var(--ok); border-color: transparent; color: #fff; }
+button:hover, .button:hover, .link-button:hover { border-color: var(--muted); }
+
+button.primary, .button.primary { background: var(--ok); border-color: transparent; color: #04140c; }
+button.primary:hover, .button.primary:hover { background: color-mix(in srgb, var(--ok) 85%, white); }
+button.accent { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
 button.danger { background: var(--danger); border-color: transparent; color: #fff; }
+button.danger:hover { background: color-mix(in srgb, var(--danger) 85%, white); }
+
+/* Irreversible, and next to everyday buttons: looks like a link until it matters. */
+button.quiet-danger {
+  min-height: 36px;
+  padding: 6px 10px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--danger);
+  font-weight: 500;
+}
+button.quiet-danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); border-color: transparent; }
+
+button.small { min-height: 34px; padding: 5px 10px; font-size: 0.85rem; }
 button:disabled { opacity: 0.5; cursor: default; }
+
+label { display: block; margin: 16px 0 6px; color: var(--muted); font-size: 0.9rem; }
+
+input, select {
+  font: inherit;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+}
+
+input:focus, select:focus { border-color: var(--accent); outline: none; }
+input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent-color: var(--accent); }
+
+.field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 16px; }
+.field-row label { margin-top: 16px; }
+
+/* A checkbox with its explanation directly beneath it, rather than a paragraph of
+   help text floating between unrelated fields. */
+.toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  align-items: start;
+  margin: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+.toggle input { width: 20px; height: 20px; margin: 2px 0 0; }
+.toggle .muted { grid-column: 2; }
+
+.save-row { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.saved { color: var(--ok); font-size: 0.9rem; opacity: 0; transition: opacity 200ms; }
+.saved.show { opacity: 1; }
+
+/* ---- Segmented filter ---- */
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.segmented button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.segmented button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); }
+.segmented .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+
+/* ---- Queue ---- */
+
+.review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.review-photo {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* Capped so a portrait photo never pushes the decision off the screen. */
+.review-photo img { display: block; max-width: 100%; max-height: 68vh; object-fit: contain; }
+
+.review-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.review-sender { font-size: 1.25rem; font-weight: 650; overflow-wrap: anywhere; }
+.review-caption { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-sm);
+                  background: var(--panel-2); overflow-wrap: anywhere; }
+.review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-top: 16px; }
+.review-actions button { min-height: 52px; font-size: 1.05rem; }
+.review-actions .quiet-danger { grid-column: 1 / -1; justify-self: start; }
+
+.up-next { margin-top: 24px; }
+.up-next h2 { font-size: 0.95rem; color: var(--muted); font-weight: 550; }
+.up-next ol { display: flex; gap: 8px; margin: 8px 0 0; padding: 0 0 6px; list-style: none; overflow-x: auto; }
+.up-next button {
+  flex-shrink: 0;
+  width: 88px;
+  height: 88px;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: var(--panel);
+}
+.up-next button:hover { border-color: var(--muted); }
+.up-next img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.shortcut-hint { margin: 12px 0 0; }
+
+@media (max-width: 760px) {
+  .review { grid-template-columns: 1fr; padding: 10px; gap: 12px; }
+  .review-photo img { max-height: 58vh; }
+  .shortcut-hint { display: none; }
+
+  /* The decision buttons stay under the thumb however far the photo scrolls. */
+  .review-actions {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -10px -10px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--radius) var(--radius);
+  }
+}
+
+/* ---- Image grid ---- */
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
 
-.grid figure { position: relative; margin: 0; background: var(--panel); border-radius: 10px; overflow: hidden; }
+.grid figure {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
 
 /* A pinned photo looks identical to any other in a grid of thumbnails, and the
    Pin/Unpin button only says what the click would do - not what the photo is.
    The marker sits on the thumbnail so pinned ones are findable at a glance. */
-.grid figure.pinned { outline: 2px solid var(--accent); outline-offset: -2px; }
+.grid figure.pinned { border-color: var(--accent); }
+.grid figure.hidden-photo img { opacity: 0.45; }
 
-.grid .pin-flag {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 2px 7px;
+.grid .flags { position: absolute; top: 8px; left: 8px; display: flex; gap: 4px; pointer-events: none; }
+.grid .flag {
+  padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.7);
-  font-size: 0.85rem;
-  line-height: 1.5;
-  pointer-events: none;
-}
-.grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
-.grid .row { padding: 8px; margin: 0; gap: 4px; }
-.grid button { padding: 6px 10px; font-size: 0.85rem; }
-
-label { display: block; margin: 16px 0 4px; color: var(--muted); font-size: 0.9rem; }
-input, select { font: inherit; width: 100%; padding: 10px; border-radius: 8px;
-                border: 1px solid var(--line); background: var(--bg); color: var(--text); }
-input[type="checkbox"] { width: auto; }
-
-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-td, th { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
-
-.muted { color: var(--muted); font-size: 0.9rem; }
-.empty { color: var(--muted); padding: 32px 0; text-align: center; }
-
-.link-button {
-  display: inline-block;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  background: rgba(0, 0, 0, 0.72);
   color: var(--text);
-  text-decoration: none;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+.grid .flag.pin { background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+
+.grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.grid figcaption { padding: 8px 10px 0; font-size: 0.9rem; min-width: 0; }
+.grid figcaption span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.grid .actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px 10px; margin-top: auto; }
+.grid .actions .quiet-danger { margin-left: auto; }
+
+/* ---- Settings ---- */
+
+.layouts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 4px; }
+
+.layout-option {
+  position: relative;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
 }
 
-/* The upload page. Sized for one thumb on a phone: the picker is the page, and
-   everything below it is feedback on what that one tap set going. */
+.layout-option input { position: absolute; opacity: 0; pointer-events: none; }
+.layout-option strong { display: block; font-weight: 600; }
+.layout-option span { display: block; color: var(--muted); font-size: 0.82rem; line-height: 1.35; margin-top: 2px; }
+.layout-option:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.layout-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Tiny wireframes of each layout, drawn with gradients so there is no image to load. */
+.layout-option i {
+  display: block;
+  height: 44px;
+  margin-bottom: 10px;
+  border-radius: 4px;
+  background-color: var(--panel-2);
+  --t: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.layout-option i[data-l="single"]    { background-image: linear-gradient(var(--t), var(--t)); background-size: 60% 80%; background-position: center; background-repeat: no-repeat; }
+.layout-option i[data-l="mosaic"]    { background-image: linear-gradient(90deg, var(--panel-2) 3px, transparent 3px), linear-gradient(var(--panel-2) 3px, transparent 3px), linear-gradient(var(--t), var(--t));
+                                       background-size: 33.34% 50%, 33.34% 50%, 100% 100%; }
+.layout-option i[data-l="polaroid"]  { background-image: linear-gradient(#ddd, #ddd), linear-gradient(#ddd, #ddd), linear-gradient(#ddd, #ddd);
+                                       background-size: 22% 70%; background-position: 15% 50%, 50% 40%, 85% 55%; background-repeat: no-repeat; }
+.layout-option i[data-l="filmstrip"] { background-image: repeating-linear-gradient(90deg, var(--t) 0 17%, transparent 17% 20%);
+                                       background-size: 100% 56%; background-position: center; background-repeat: no-repeat; }
+.layout-option i[data-l="collage"]   { background-image: linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t));
+                                       background-size: 38% 58%, 26% 38%, 30% 36%, 24% 50%, 34% 34%;
+                                       background-position: 4% 10%, 50% 6%, 94% 12%, 38% 94%, 92% 92%; background-repeat: no-repeat; }
+.layout-option i[data-l="split"]     { background-image: linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t));
+                                       background-size: 45% 80%; background-position: 8% center, 92% center; background-repeat: no-repeat; }
+
+.number-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 16px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+td, th { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
+td select { min-height: 38px; padding: 6px 10px; width: auto; }
+.status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--muted); }
+.status-dot[data-status="autoApprove"] { background: var(--ok); }
+.status-dot[data-status="banned"] { background: var(--danger); }
+.table-wrap { overflow-x: auto; }
+
+/* ---- Upload page ---- */
 
 .pick {
-  display: block;
-  margin: 8px 0 0;
-  padding: 28px 16px;
-  border: 1px dashed var(--line);
-  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 40px 16px;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
-  font-size: 1.15rem;
+  font-size: 1.2rem;
+  font-weight: 600;
   text-align: center;
   cursor: pointer;
 }
 
-.pick:active { background: var(--bg); }
+.pick::before {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 1.8rem;
+  font-weight: 500;
+  line-height: 1;
+}
 
-.pick-hint { margin: 8px 0 0; text-align: center; }
+.pick:hover { border-color: var(--accent); }
+.pick:active { background: var(--panel-2); }
+
+.pick-hint { margin: 10px 0 0; text-align: center; }
+
+.progress-bar { height: 6px; margin-top: 16px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.progress-bar > span { display: block; height: 100%; width: 0; background: var(--ok); transition: width 300ms; }
 
 .upload-list { list-style: none; margin: 16px 0 0; padding: 0; }
 
@@ -225,7 +524,7 @@ td, th { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
 .upload-item img, .upload-item .upload-placeholder {
   width: 56px;
   height: 56px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
   background: var(--panel);
@@ -252,16 +551,72 @@ td, th { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
 
 .upload-item[data-state="done"] .upload-state { color: var(--ok); }
 .upload-item[data-state="failed"] .upload-state { color: var(--danger); }
-.upload-item[data-state="failed"] { background: rgba(217, 83, 79, 0.08); }
+.upload-item[data-state="failed"] { background: rgba(229, 83, 75, 0.08); }
 
 /* Wraps rather than clipping: the HEIC reply is a sentence telling the uploader
    what to change, and truncating it wastes the one thing that reply is for. */
 .upload-item[data-state="failed"] .upload-state { white-space: normal; }
 
 .upload-remove {
+  min-height: 40px;
   padding: 8px 12px;
   border: none;
   background: transparent;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+/* ---- Dialog and toast (admin.js) ---- */
+
+dialog.admin-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+dialog.admin-dialog::backdrop { background: rgba(10, 7, 4, 0.7); }
+dialog.admin-dialog h2 { font-size: 1.15rem; margin-bottom: 8px; }
+dialog.admin-dialog p { margin: 0; color: var(--muted); }
+dialog.admin-dialog .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(480px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 550;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: toast-in 180ms ease-out;
+}
+
+.toast.error { background: var(--danger); color: #fff; }
+
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* ---- Dev page chat log ---- */
+
+.chat { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat li { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--panel-2); }
+.chat li p { margin: 2px 0 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
 }

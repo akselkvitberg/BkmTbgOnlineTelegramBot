@@ -9,6 +9,7 @@ namespace EventPhotoBot;
 /// </summary>
 public sealed class AppConfig
 {
+    /// <summary>Empty when running locally; see LocalDev.</summary>
     public required string BucketName { get; init; }
     public required string BotToken { get; init; }
     public required string WebhookSecret { get; init; }
@@ -16,6 +17,15 @@ public sealed class AppConfig
     public required string AdminPassword { get; init; }
     public required string CookieSigningKey { get; init; }
     public required string JoinCode { get; init; }
+
+    /// <summary>
+    /// LOCAL_DEV=true runs the app on a workstation: photos and state go to
+    /// StorageDir on disk instead of the bucket, and Telegram is replaced by an
+    /// offline stand-in driven from the /dev page. Program refuses it outside the
+    /// Development environment.
+    /// </summary>
+    public bool LocalDev { get; init; }
+    public string? StorageDir { get; init; }
 
     private static readonly string[] SecretKeys =
     [
@@ -32,10 +42,10 @@ public sealed class AppConfig
 
     public static AppConfig Load(IConfiguration config)
     {
-        string[] required =
-        [
-            "BUCKET_NAME", .. SecretKeys,
-        ];
+        var localDev = bool.TryParse(config["LOCAL_DEV"], out var flag) && flag;
+        string[] required = localDev
+            ? ["STORAGE_DIR", .. SecretKeys]
+            : ["BUCKET_NAME", .. SecretKeys];
 
         var missing = required.Where(k => string.IsNullOrWhiteSpace(config[k])).ToArray();
         if (missing.Length > 0)
@@ -62,13 +72,15 @@ public sealed class AppConfig
         // logs to explain why. Trimming a shared event password costs nothing.
         return new AppConfig
         {
-            BucketName = config["BUCKET_NAME"]!.Trim(),
+            BucketName = config["BUCKET_NAME"]?.Trim() ?? "",
             BotToken = config["TELEGRAM_BOT_TOKEN"]!.Trim(),
             WebhookSecret = config["TELEGRAM_WEBHOOK_SECRET"]!.Trim(),
             WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!.Trim(),
             AdminPassword = config["ADMIN_PASSWORD"]!.Trim(),
             CookieSigningKey = config["COOKIE_SIGNING_KEY"]!.Trim(),
             JoinCode = joinCode,
+            LocalDev = localDev,
+            StorageDir = config["STORAGE_DIR"]?.Trim(),
         };
     }
 
@@ -76,6 +88,9 @@ public sealed class AppConfig
     public void LogLoaded(ILogger logger)
     {
         foreach (var key in SecretKeys) logger.LogInformation("Secret {Key} loaded.", key);
-        logger.LogInformation("Bucket {Bucket}.", BucketName);
+        if (LocalDev)
+            logger.LogWarning("LOCAL_DEV: storing files in {Dir}; Telegram is offline.", StorageDir);
+        else
+            logger.LogInformation("Bucket {Bucket}.", BucketName);
     }
 }

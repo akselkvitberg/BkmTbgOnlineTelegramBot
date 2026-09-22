@@ -41,5 +41,24 @@ values added by hand with `gcloud`. All of it is in
 dotnet test
 ```
 
+## Running it locally
+
+```bash
+dotnet run --project src/EventPhotoBot --launch-profile local
+```
+
+Open http://localhost:5055 and log in with the password `dev`. The `local`
+profile sets `LOCAL_DEV=true`, which:
+
+- stores state and photos under `src/EventPhotoBot/.local-data/` instead of the
+  bucket (delete the folder to start over);
+- replaces Telegram with an offline stand-in, so nothing is sent anywhere and the
+  join QR points at a bot that does not exist;
+- adds a guest simulator at http://localhost:5055/dev, which joins as a guest and
+  sends photos through the same code path the webhook uses, and shows the bot's
+  replies.
+
+`LOCAL_DEV` refuses to start outside the Development environment.
+
 The container build always builds Release; see **Build notes** in the runbook
 for the one pinned package that matters.

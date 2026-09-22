@@ -20,10 +20,23 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 var config = AppConfig.Load(builder.Configuration);
 builder.Services.AddSingleton(config);
 
-builder.Services.AddSingleton<IObjectStore>(sp => new GcsObjectStore(
-    config.BucketName,
-    StorageClient.Create(),
-    sp.GetRequiredService<ILogger<GcsObjectStore>>()));
+// A flag that swaps storage for the local disk and silences Telegram must never
+// reach Cloud Run by accident; there the environment is Production.
+if (config.LocalDev && !builder.Environment.IsDevelopment())
+    throw new InvalidOperationException("LOCAL_DEV is only allowed in the Development environment.");
+
+if (config.LocalDev)
+{
+    builder.Services.AddSingleton<IObjectStore>(
+        new FileSystemObjectStore(Path.Combine(builder.Environment.ContentRootPath, config.StorageDir!)));
+}
+else
+{
+    builder.Services.AddSingleton<IObjectStore>(sp => new GcsObjectStore(
+        config.BucketName,
+        StorageClient.Create(),
+        sp.GetRequiredService<ILogger<GcsObjectStore>>()));
+}
 
 builder.Services.AddSingleton<StateStore>();
 // HttpClientFactory's logging handlers log the request URI at Information, and
@@ -36,8 +49,16 @@ builder.Services.AddSingleton<StateStore>();
 // it's the outbound half of the same care "Microsoft.AspNetCore": "Warning" already gives
 // the inbound side. An explicit 60s timeout also keeps a slow Telegram call from eating
 // most of Cloud Run's 120s request timeout, leaving room for decode plus object writes.
-builder.Services.AddHttpClient<ITelegramClient, TelegramClient>(
-    client => client.Timeout = TimeSpan.FromSeconds(60));
+if (config.LocalDev)
+{
+    builder.Services.AddSingleton<OfflineTelegramClient>();
+    builder.Services.AddSingleton<ITelegramClient>(sp => sp.GetRequiredService<OfflineTelegramClient>());
+}
+else
+{
+    builder.Services.AddHttpClient<ITelegramClient, TelegramClient>(
+        client => client.Timeout = TimeSpan.FromSeconds(60));
+}
 builder.Services.AddSingleton<UpdateHandler>();
 builder.Services.AddSingleton<BotIdentity>();
 builder.Services.AddLoginRateLimiter();
@@ -103,6 +124,7 @@ app.UseStaticFiles();
 app.MapApi();
 app.MapImages();
 app.MapJoinQr();
+if (config.LocalDev) app.MapDev();
 
 app.MapGet("/show", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "show.html"), "text/html"));
