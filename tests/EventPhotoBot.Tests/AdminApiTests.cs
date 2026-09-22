@@ -550,6 +550,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
             await client.PutAsJsonAsync("/api/takeover", new { imageId = "anything", minutes = (int?)null }),
             await client.DeleteAsync("/api/takeover"),
             await client.DeleteAsync("/api/images/anything"),
+            await client.DeleteAsync("/api/images"),
             await client.PostAsync("/api/images", new MultipartFormDataContent()),
             await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 10 }),
             await client.PostAsJsonAsync("/api/groups/-100/listening", new { listening = true }),

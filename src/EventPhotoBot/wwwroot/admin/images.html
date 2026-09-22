@@ -26,7 +26,10 @@
 
     <header class="page-head">
       <h1>Bilder</h1>
-      <a class="link-button" href="/upload">Last opp bilder</a>
+      <div class="head-actions">
+        <button class="quiet-danger" id="delete-all" hidden>Slett alle bilder</button>
+        <a class="link-button" href="/upload">Last opp bilder</a>
+      </div>
     </header>
 
     <div class="toolbar">
@@ -69,7 +72,11 @@
       render();
     }
 
+    document.getElementById('delete-all').onclick = removeAll;
+
     function render() {
+      document.getElementById('delete-all').hidden = all.length === 0;
+
       for (const button of document.querySelectorAll('#filter button')) {
         const wanted = button.dataset.status;
         button.querySelector('.count').textContent =
@@ -150,6 +157,23 @@
       });
       if (!sure) return;
       if (await Admin.api('DELETE', `/api/images/${image.id}`)) Admin.toast('Slettet.');
+      load();
+    }
+
+    async function removeAll() {
+      const count = all.length;
+      const sure = await Admin.confirm({
+        title: count === 1 ? 'Slette det ene bildet?' : `Slette alle ${count} bildene?`,
+        body: 'Alle bilder fjernes fra skjermen og fra lagringen, også de som venter, er skjult eller avvist. Dette kan ikke angres.',
+        confirmLabel: 'Slett alle',
+        danger: true,
+      });
+      if (!sure) return;
+      const response = await Admin.api('DELETE', '/api/images');
+      if (response) {
+        const { deleted } = await response.json().catch(() => ({ deleted: count }));
+        Admin.toast(deleted === 1 ? 'Slettet 1 bilde.' : `Slettet ${deleted} bilder.`);
+      }
       load();
     }
 

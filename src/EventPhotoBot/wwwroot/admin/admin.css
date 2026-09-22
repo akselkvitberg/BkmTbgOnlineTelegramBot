@@ -121,6 +121,16 @@ main.narrow { max-width: 760px; }
 
 .page-head p { margin: 4px 0 0; max-width: 60ch; }
 
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The button rule's display:inline-flex beats [hidden] too, like .row above. */
+#delete-all[hidden] { display: none; }
+
 .card {
   margin-bottom: 16px;
   padding: 20px;
