@@ -38,13 +38,37 @@ public sealed class OfflineTelegramClient(ILogger<OfflineTelegramClient> logger)
     public Task SendMessageAsync(long chatId, string text, CancellationToken ct = default)
     {
         logger.LogInformation("Bot → {ChatId}: {Text}", chatId, text);
-        _replies.Enqueue(new BotReply(chatId, text, DateTimeOffset.UtcNow));
-        while (_replies.Count > MaxReplies) _replies.TryDequeue(out _);
+        Record(new BotReply(chatId, text, DateTimeOffset.UtcNow));
         return Task.CompletedTask;
     }
 
-    public Task<string?> GetMeAsync(CancellationToken ct = default) =>
-        Task.FromResult<string?>(Username);
+    public Task SetMessageReactionAsync(
+        long chatId, long messageId, string emoji, CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot → {ChatId}: {Emoji} on message {MessageId}", chatId, emoji, messageId);
+        Record(new BotReply(chatId, emoji, DateTimeOffset.UtcNow, Reaction: true));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Nothing to leave offline. The /dev page tells the handler the bot was removed,
+    /// the way Telegram would, when it simulates a group.
+    /// </summary>
+    public Task<bool> LeaveChatAsync(long chatId, CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot left {ChatId}", chatId);
+        return Task.FromResult(true);
+    }
+
+    private void Record(BotReply reply)
+    {
+        _replies.Enqueue(reply);
+        while (_replies.Count > MaxReplies) _replies.TryDequeue(out _);
+    }
+
+    public Task<BotProfile?> GetMeAsync(CancellationToken ct = default) =>
+        Task.FromResult<BotProfile?>(new BotProfile(Username, CanReadAllGroupMessages: true));
 }
 
-public sealed record BotReply(long ChatId, string Text, DateTimeOffset At);
+/// <summary>A message the bot sent, or, with <see cref="Reaction"/>, an emoji it reacted with.</summary>
+public sealed record BotReply(long ChatId, string Text, DateTimeOffset At, bool Reaction = false);

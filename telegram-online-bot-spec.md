@@ -105,6 +105,7 @@ Both duplicate guards are dictionary lookups against the in-memory map rather th
 | `whitelist` | `[]` | Array of `{ id, name, trusted }`. Editable from the admin page |
 | `pairingMode` | false | While on, the bot answers any sender with their numeric id and records them under `seenSenders` |
 | `seenSenders` | `[]` | Senders observed during pairing mode, as `{ id, name }`, offered to the admin for one-tap adding |
+| `groups` | `[]` | Telegram groups the bot is in, as `{ id, title, listening, firstSeen }`. Absent from a state file written before groups existed, which loads as empty. See **Groups** under Telegram bot |
 
 Takeover lives in settings, not on the image, because there can only ever be one. Holding it as a per-image enum would allow two images to claim the screen with nothing to say which wins. Setting it writes `takeoverImageId` and `takeoverUntil` together; clearing it nulls both. Deleting or hiding the image that currently holds takeover must clear it in the same write — with no database there is no referential integrity but the app's own, so that is a rule the delete and hide handlers have to enforce, not an invariant to assume. Takeover requires the image to be `approved`; setting it on a `pending` image approves it in the same write.
 
@@ -151,6 +152,27 @@ flowchart TD
 One short confirmation per send: accepted and queued, accepted and live, duplicate, or declined with the reason. No commands beyond `/start`, which answers with a line about what the bot is for and whether the sender is on the list.
 
 Rate-limit replies to unlisted senders, in both pairing mode and normal operation. The bot handle is effectively public once it has been shared around, and a decline that answers every message is a free way to make it talk.
+
+**Groups**
+
+The bot can also collect photos posted in a Telegram group, alongside private chats. The private flow is unchanged; everything below applies only to messages whose `chat.type` is `group` or `supergroup`. A chat of any other type is dropped.
+
+The Bot API has no call that lists the groups a bot is in, or the people who have started it, so the bot keeps its own list in `settings.groups`. It is filled from `my_chat_member` updates, which Telegram sends by default when the bot is added to or removed from a chat: added makes a row with `listening` off, removed deletes the row. A basic group upgraded to a supergroup gets a new chat id; the `migrate_to_chat_id`/`migrate_from_chat_id` service messages move the row, `listening` included.
+
+Being in a group is not listening to it. Anyone can add a bot to a group of their own, and a bot that collected from every group it landed in would be a way to feed the queue from outside the event. A group is listened to once someone posts the join code there (`/start CODE`, `/start@bot CODE`, or the bare code) or an admin turns it on from `/admin/telegram`. Messages from a group that is not listened to are dropped with no reply and no write. Rows for groups not listened to are capped at 20, oldest first, since each is a write a stranger can cause.
+
+In a listened-to group:
+
+- A banned member is ignored before anything else, and cannot open a group by posting the code.
+- A photo goes through the same ingest as a private send: duplicate guards, pipeline, pending or approved by the member's status. A member not yet in the roster is added as `known` in the same state write as their first photo, with their display name. The group and ban checks are repeated under the store's lock, so an admin removing the group or banning the member during the download wins.
+- Text, unsupported files and failed downloads are dropped silently. The bot writes no per-photo text in a group; a photo it took gets a reaction (`setMessageReaction`): 👀 queued, 🔥 live.
+- Messages posted as a chat (`sender_chat` set: anonymous admins, linked channels) or by bots are ignored. Their `from` is a placeholder shared by everyone posting that way, so it cannot stand for a person to approve or ban.
+
+When a group starts being listened to, by either route, the bot posts one notice there: photos posted from now on may be shown on the event screen with the poster's name, after an organiser approves them, and everything is deleted after the event. Members of a group shared photos with each other, not with a screen in a hall, and this is where they learn otherwise.
+
+With BotFather's privacy mode on (the default) a bot in a group sees only commands and replies, so it would get the join code but never the photos. Privacy mode has to be disabled before the bot is added, or the bot made an admin of the group. `getMe`'s `can_read_all_group_messages` reports the setting, and `/admin/telegram` asks for it live and shows a warning while it is off.
+
+`/admin/telegram` lists the groups (turn listening on or off, or make the bot leave with `leaveChat`) and the sender roster, which moved there from the settings page. Turning listening off is not sticky — the join code turns it back on — so a group that must stay closed is left instead.
 
 **Failure handling**
 
@@ -225,6 +247,10 @@ Slide duration, transition, ordering, boost on/off, auto-approve for trusted sen
 | `DELETE /api/images/{id}` | session | Removes the entry and all objects. Clears takeover if this image held it |
 | `POST /api/images` | session | Admin upload, multipart, one file per request |
 | `PATCH /api/settings` | session | Settings changes |
+| `GET /admin/telegram` | session | Groups and people |
+| `GET /api/telegram/bot` | session | Asks Telegram's `getMe` live; reports `canReadAllGroupMessages` (false while privacy mode is on) |
+| `POST /api/groups/{id}/listening` | session | `{ listening }`. Only for a group the bot is in. Turning it on posts the notice in the group |
+| `POST /api/groups/{id}/leave` | session | `leaveChat`, then removes the row; the row stays if Telegram refuses |
 
 The manifest is the only contract the slideshow depends on. Keep it small — id, dimensions, caption, sender, pin — and let the browser fetch bytes separately with long cache lifetimes, since a given id's bytes never change.
 

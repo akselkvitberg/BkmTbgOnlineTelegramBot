@@ -29,6 +29,9 @@ resource name appears.
       nothing and needs no deploy
 - [ ] Pre-approved photographers added by Telegram id and set to Auto-approve
       (see "Who can send" below)
+- [ ] If photos should be collected from a Telegram group: privacy mode turned
+      off in BotFather **before** the bot is added to the group, then the group
+      turned on under Telegram in admin (see "Collecting from a group" below)
 - [ ] QR on the slideshow checked from the back of the room, on the actual
       display machine — a QR nobody can scan makes the whole join flow useless.
       A screen the wrong public can see — a foyer, a street-facing window —
@@ -66,8 +69,8 @@ resource name appears.
 
 ### Who can send
 
-Every person the bot knows about has one of three statuses, set from admin
-settings or from the approval queue:
+Every person the bot knows about has one of three statuses, set from the
+Telegram page in admin or from the approval queue:
 
 - **Review first** — the default for anyone who joins by scanning the QR. Their
   photos land in the approval queue.
@@ -94,6 +97,54 @@ Changing it means a redeploy, so treat it as fixed once the event starts. It is
 not a password: everyone in the room can see the QR, and so can anyone shown a
 photo of the screen. It stops someone who merely guesses the bot handle, nothing
 more. The banlist is what handles a person you actually want out.
+
+### Collecting from a group
+
+The bot can also pick up photos members post in a Telegram group — the event's
+own group chat, say — alongside the private chats above.
+
+1. **Turn privacy mode off, first.** With privacy mode on (Telegram's default) a
+   bot in a group sees only commands and replies, never the photos. In Telegram,
+   message @BotFather, send `/setprivacy`, pick the bot and choose **Disable**.
+   Telegram applies this only to groups the bot joins *afterwards*, so if the bot
+   is already in the group, remove it and add it again. Making the bot an admin of
+   the group also lets it see everything, if you would rather not change the
+   setting. The Telegram page in admin shows a red warning while privacy mode is
+   still on; "Sjekk igjen" re-asks Telegram after you change it.
+2. **Add the bot to the group** from the group's member list. It then appears
+   under Grupper on the Telegram page, with "Hent bilder" off. While it is off,
+   the bot ignores the group completely: no replies, nothing stored.
+3. **Turn "Hent bilder" on**, either on that page or by posting `/start <join code>`
+   (or just the code) in the group. The bot then posts one message in the group
+   saying that photos posted there from now on may be shown on the screen with
+   the poster's name, after an organiser approves them. That message is the only
+   text the bot ever writes in a group.
+
+From then on, each photo a member posts goes through the same path as a private
+send — duplicates dropped, banned members ignored, Review first or Auto-approve
+by the member's status. A member who is not on the list yet is added as Review
+first on their first photo. There are no text replies in the group; instead the
+bot reacts to each photo it took: 👀 queued, 🔥 straight on screen. Anything it
+could not use (a video, a HEIC file, a download that failed) gets no reaction
+and no reply, so a member who needs a photo shown should send it to the bot
+privately instead.
+
+Photos posted as the group (anonymous admins) or by other bots are ignored —
+they carry no person to approve or ban.
+
+To stop collecting, turn "Hent bilder" off, which keeps the bot in the group, or
+use "Forlat gruppen", which makes the bot leave. Photos already taken stay where
+they are either way; ban a member or reject photos in the queue to remove them.
+Turning a group off is not sticky: anyone in it who posts the join code turns it
+back on. If a group must stay closed, make the bot leave it.
+
+The bot keeps its own list of groups because Telegram offers no way to ask which
+groups a bot is in, or which people have started it. The list is filled from the
+notifications Telegram sends when the bot is added or removed, so a group the bot
+joined before this version was deployed only appears once someone posts the code
+there. At most 20 groups that are not turned on are remembered; the oldest drop
+off first, so a stranger adding the bot to many groups cannot grow the state file
+without bound.
 
 ## During the event
 
@@ -167,8 +218,8 @@ several depend on state left by the one before.
 
 - [ ] **Scanning the QR admits a new sender.** From a phone that has never
       messaged the bot, scan the QR on the screen and tap Start. Pass: the bot
-      replies "You are in", and the phone appears under People in admin
-      settings with status "Review first".
+      replies "You are in", and the phone appears under Personer on the
+      Telegram page in admin with status "Review first".
 - [ ] **A newly admitted photo reaches the queue within five seconds.** Send
       one photo from that phone and time it with a stopwatch from send to
       appearance in `/admin/queue`. Pass: under five seconds. If you send an
@@ -181,6 +232,18 @@ several depend on state left by the one before.
       second phone, message the bot directly without scanning. Pass: the reply
       points at the QR, and `gcloud storage ls -r gs://BUCKET_NAME/originals`
       (before and after, compared) shows no new object.
+- [ ] **A group is ignored until it is turned on.** With privacy mode off,
+      add the bot to a test group and post a photo there. Pass: the group
+      appears under Grupper on the Telegram page with "Hent bilder" off, the
+      bot says nothing in the group, and no new object appears in `originals/`.
+- [ ] **Turning a group on posts one notice and collects photos.** Post
+      `/start <join code>` in the test group. Pass: the bot posts the notice
+      once; a photo posted afterwards by a member who has never messaged the
+      bot gets a 👀 reaction, lands in the queue, and that member appears under
+      Personer as "Review first". The bot writes no other text in the group.
+- [ ] **Leaving a group works from admin.** Press "Forlat gruppen" for the
+      test group. Pass: the bot is gone from the group's member list and the
+      row disappears from the Telegram page.
 - [ ] **Banning revokes what a sender already sent.** With one approved photo
       from a test phone in the rotation, ban that sender from its queue card.
       Pass: the photo leaves the rotation within two seconds, and a further

@@ -134,6 +134,8 @@ app.MapGet("/admin/queue", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "queue.html"), "text/html"));
 app.MapGet("/admin/images", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "images.html"), "text/html"));
+app.MapGet("/admin/telegram", () => Results.File(
+    Path.Combine(app.Environment.WebRootPath, "admin", "telegram.html"), "text/html"));
 app.MapGet("/admin/settings", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "settings.html"), "text/html"));
 app.MapGet("/", () => Results.Redirect("/show"));

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using EventPhotoBot.State;
+using EventPhotoBot.Telegram;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -551,8 +552,152 @@ public class AdminApiTests : IClassFixture<AppFactory>
             await client.DeleteAsync("/api/images/anything"),
             await client.PostAsync("/api/images", new MultipartFormDataContent()),
             await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 10 }),
+            await client.PostAsJsonAsync("/api/groups/-100/listening", new { listening = true }),
+            await client.PostAsync("/api/groups/-100/leave", null),
+            await client.GetAsync("/api/telegram/bot"),
         };
 
         Assert.All(responses, r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
+    }
+
+    // ---- Telegram groups ----
+
+    private async Task SeedGroupAsync(long id, bool listening)
+    {
+        await _factory.Store.MutateAsync(s =>
+        {
+            s.Settings.Groups.RemoveAll(g => g.Id == id);
+            s.Settings.Groups.Add(new BotGroup
+            {
+                Id = id, Title = "<b>Festkomiteen</b>", Listening = listening, FirstSeen = DateTimeOffset.UtcNow,
+            });
+        });
+    }
+
+    [Fact]
+    public async Task Settings_list_the_groups_the_bot_is_in()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2001, listening: true);
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/api/settings"));
+
+        var group = Assert.Single(document.RootElement.GetProperty("groups").EnumerateArray(),
+            g => g.GetProperty("id").GetInt64() == -2001);
+        Assert.Equal("<b>Festkomiteen</b>", group.GetProperty("title").GetString());
+        Assert.True(group.GetProperty("listening").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Turning_listening_on_posts_the_notice_in_the_group_once()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2002, listening: false);
+
+        var first = await client.PostAsJsonAsync("/api/groups/-2002/listening", new { listening = true });
+        var second = await client.PostAsJsonAsync("/api/groups/-2002/listening", new { listening = true });
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2002).Listening);
+        Assert.Single(_factory.Telegram.Sent, m => m.ChatId == -2002 && m.Text == Groups.ListeningNotice);
+    }
+
+    [Fact]
+    public async Task Turning_listening_off_posts_nothing()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2003, listening: true);
+
+        var response = await client.PostAsJsonAsync("/api/groups/-2003/listening", new { listening = false });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2003).Listening);
+        Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2003);
+    }
+
+    [Fact]
+    public async Task Listening_cannot_be_turned_on_for_a_group_the_bot_is_not_in()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.PostAsJsonAsync("/api/groups/-2999/listening", new { listening = true });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2999);
+        Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2999);
+    }
+
+    [Fact]
+    public async Task A_listening_request_without_a_value_is_rejected()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2004, listening: true);
+
+        var response = await client.PostAsJsonAsync("/api/groups/-2004/listening", new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2004).Listening);
+    }
+
+    [Fact]
+    public async Task Leaving_a_group_leaves_it_on_telegram_and_forgets_it()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2005, listening: true);
+
+        var response = await client.PostAsync("/api/groups/-2005/leave", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(-2005, _factory.Telegram.Left);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2005);
+    }
+
+    [Fact]
+    public async Task A_refused_leave_keeps_the_group_listed()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2006, listening: true);
+        _factory.Telegram.LeaveFails = true;
+        try
+        {
+            var response = await client.PostAsync("/api/groups/-2006/leave", null);
+
+            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            Assert.Contains(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2006);
+        }
+        finally
+        {
+            _factory.Telegram.LeaveFails = false;
+        }
+    }
+
+    [Fact]
+    public async Task Leaving_a_group_the_bot_is_not_in_is_404()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.PostAsync("/api/groups/-2998/leave", null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.DoesNotContain(-2998, _factory.Telegram.Left);
+    }
+
+    [Fact]
+    public async Task The_bot_endpoint_reports_whether_privacy_mode_hides_group_photos()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        _factory.Telegram.CanReadAllGroupMessages = false;
+        try
+        {
+            using var document = JsonDocument.Parse(await client.GetStringAsync("/api/telegram/bot"));
+
+            Assert.False(document.RootElement.GetProperty("canReadAllGroupMessages").GetBoolean());
+            Assert.Equal("eventphotobot", document.RootElement.GetProperty("username").GetString());
+        }
+        finally
+        {
+            _factory.Telegram.CanReadAllGroupMessages = true;
+        }
     }
 }

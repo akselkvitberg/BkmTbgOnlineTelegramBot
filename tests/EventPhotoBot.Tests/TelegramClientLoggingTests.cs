@@ -107,6 +107,14 @@ public class TelegramClientLoggingTests
         [
             (Func<ITelegramClient, Task>)(c => c.DownloadAsync("photos/file_1.jpg")),
         ];
+        yield return
+        [
+            (Func<ITelegramClient, Task>)(c => c.SetMessageReactionAsync(-100, 1, "👀")),
+        ];
+        yield return
+        [
+            (Func<ITelegramClient, Task>)(c => c.LeaveChatAsync(-100)),
+        ];
     }
 
     [Theory]

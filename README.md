@@ -1,7 +1,7 @@
 # Event photo bot
 
-Guests scan a QR on the screen to join a Telegram bot and send it photos, an
-admin approves them, and approved photos run as a slideshow on a projector.
+Guests scan a QR on the screen to join a Telegram bot and send it photos (or
+post them in a Telegram group the bot has been added to), an admin approves them, and approved photos run as a slideshow on a projector.
 Named photographers can be set to skip the queue, and a sender can be banned
 outright, which also pulls everything they already sent. The whole web side
 sits behind one shared password. It is built to be deployed for one event and
@@ -56,7 +56,8 @@ profile sets `LOCAL_DEV=true`, which:
   join QR points at a bot that does not exist;
 - adds a guest simulator at http://localhost:5055/dev, which joins as a guest and
   sends photos through the same code path the webhook uses, and shows the bot's
-  replies.
+  replies. Tick "I en gruppe" to add the bot to a simulated Telegram group and
+  post there as a member instead.
 
 `LOCAL_DEV` refuses to start outside the Development environment.
 

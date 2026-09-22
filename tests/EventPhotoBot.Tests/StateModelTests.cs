@@ -33,6 +33,32 @@ public class StateModelTests
     }
 
     [Fact]
+    public void A_state_file_from_before_groups_loads_with_no_groups()
+    {
+        const string json = """{"images":{},"settings":{"senders":[{"id":42,"name":"Ada","status":"known"}]}}""";
+
+        var state = JsonSerializer.Deserialize<EventState>(json, StateJson.Options)!;
+
+        Assert.NotNull(state.Settings.Groups);
+        Assert.Empty(state.Settings.Groups);
+        Assert.Single(state.Settings.Senders);
+    }
+
+    [Fact]
+    public void Groups_round_trip_through_json()
+    {
+        var state = new EventState();
+        state.Settings.Groups.Add(new BotGroup { Id = -1001234, Title = "Festkomiteen", Listening = true });
+
+        var json = JsonSerializer.Serialize(state, StateJson.Options);
+        var group = Assert.Single(JsonSerializer.Deserialize<EventState>(json, StateJson.Options)!.Settings.Groups);
+
+        Assert.Equal(-1001234, group.Id);
+        Assert.Equal("Festkomiteen", group.Title);
+        Assert.True(group.Listening);
+    }
+
+    [Fact]
     public void State_round_trips_through_json_with_camel_case_enums()
     {
         var state = new EventState();
