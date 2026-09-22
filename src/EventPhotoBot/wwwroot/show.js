@@ -105,6 +105,7 @@
   const captionText = document.getElementById('caption-text');
   const emptyEl = document.getElementById('empty');
   const emptyEventNameEl = document.getElementById('empty-event-name');
+  const eventTagEl = document.getElementById('event-tag');
   const offlineEl = document.getElementById('offline');
   const captionHintEl = document.getElementById('caption-hint');
   const joinEl = document.getElementById('join');
@@ -323,6 +324,8 @@
     const eventName = next.settings.eventName || '';
     emptyEventNameEl.textContent = eventName;
     emptyEventNameEl.hidden = eventName.length === 0;
+    eventTagEl.textContent = eventName;
+    eventTagEl.hidden = eventName.length === 0 || next.settings.showEventName === false;
 
     applyJoin(next);
 
@@ -715,7 +718,13 @@
     const transition = manifest?.settings?.transitionMs ?? 800;
     const reveal = () => {
       layer.classList.add('shown');
-      setTimeout(() => previous.forEach(element => element.remove()), transition + 100);
+      // Marked rather than faded here: most layers are covered exactly by the one
+      // replacing them and need no exit of their own, but a print is not - its
+      // successor lands at another angle - and show.css fades that one out.
+      previous.forEach(element => element.classList.add('leaving'));
+      // Long enough for the slowest exit: the print's, which waits one transition
+      // and then takes two (see .print.layer.shown.leaving).
+      setTimeout(() => previous.forEach(element => element.remove()), transition * 3 + 200);
     };
     img.decode().then(reveal, reveal);
   }

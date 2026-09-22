@@ -24,6 +24,7 @@ public sealed record SettingsPatch(
     int? RecurringEvery,
     bool? KenBurns,
     bool? ShowJoinInvite,
+    bool? ShowEventName,
     string? Layout);
 
 public static class ApiEndpoints
@@ -120,6 +121,7 @@ public static class ApiEndpoints
                 s.RecurringEvery,
                 s.KenBurns,
                 s.ShowJoinInvite,
+                s.ShowEventName,
                 Layout = s.Layout.ToString().ToLowerInvariant(),
                 s.TakeoverImageId,
                 s.TakeoverUntil,
@@ -384,6 +386,7 @@ public static class ApiEndpoints
                 if (patch.RecurringEvery is { } every) s.RecurringEvery = Math.Clamp(every, 1, 100);
                 if (patch.KenBurns is { } kenBurns) s.KenBurns = kenBurns;
                 if (patch.ShowJoinInvite is { } showJoinInvite) s.ShowJoinInvite = showJoinInvite;
+                if (patch.ShowEventName is { } showEventName) s.ShowEventName = showEventName;
                 if (layout is { } chosen) s.Layout = chosen;
             });
 

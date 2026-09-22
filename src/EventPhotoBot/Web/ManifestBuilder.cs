@@ -9,7 +9,7 @@ public sealed record TakeoverView(string Id, DateTimeOffset? Until);
 
 public sealed record SettingsView(
     int SlideSeconds, int TransitionMs, bool NewestFirstBoost, string Order, string EventName,
-    string? JoinUrl, bool KenBurns, bool ShowJoinInvite, string Layout);
+    string? JoinUrl, bool KenBurns, bool ShowJoinInvite, string Layout, bool ShowEventName);
 
 public sealed record Manifest(
     long Version,
@@ -58,7 +58,8 @@ public static class ManifestBuilder
                 // in its own layout table and falls back to "single" on anything it does
                 // not know, so an older screen left open across a deploy degrades to the
                 // original slideshow rather than to a black wall.
-                settings.Layout.ToString().ToLowerInvariant()),
+                settings.Layout.ToString().ToLowerInvariant(),
+                settings.ShowEventName),
             PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
     }
 

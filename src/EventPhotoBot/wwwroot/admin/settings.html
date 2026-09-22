@@ -27,9 +27,12 @@
       <h2>Arrangement</h2>
       <label for="eventName">Navn på arrangementet</label>
       <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
-      <p class="muted">Vises på skjermen så lenge ingen bilder har kommet inn ennå.</p>
+      <p class="muted">Vises stort på skjermen før det har kommet inn bilder.</p>
+      <label class="toggle" style="margin-top: 12px"><input id="showEventName" type="checkbox">
+        <span>Vis navnet i hjørnet av skjermen</span>
+        <span class="muted">Lite, oppe til venstre, mens bildene vises.</span></label>
       <div class="save-row">
-        <button class="primary" id="saveEvent">Lagre navnet</button>
+        <button class="primary" id="saveEvent">Lagre</button>
         <span class="saved" id="savedEvent">Lagret</span>
       </div>
     </section>
@@ -160,7 +163,7 @@
         const input = document.getElementById(key);
         if (!keep(input)) input.value = settings[key];
       }
-      for (const key of ['newestFirstBoost', 'kenBurns', 'showJoinInvite']) {
+      for (const key of ['newestFirstBoost', 'kenBurns', 'showJoinInvite', 'showEventName']) {
         const input = document.getElementById(key);
         if (!keep(input)) input.checked = settings[key];
       }
@@ -238,7 +241,12 @@
     document.getElementById('saveEvent').onclick = async () => {
       if (await Admin.api('PATCH', '/api/settings', {
         eventName: document.getElementById('eventName').value,
-      })) { edited.delete('eventName'); flashSaved('savedEvent'); }
+        showEventName: document.getElementById('showEventName').checked,
+      })) {
+        edited.delete('eventName');
+        edited.delete('showEventName');
+        flashSaved('savedEvent');
+      }
       load();
     };
 

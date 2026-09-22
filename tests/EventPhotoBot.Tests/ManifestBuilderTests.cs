@@ -47,6 +47,17 @@ public class ManifestBuilderTests
     }
 
     [Fact]
+    public void The_manifest_carries_the_event_name_setting()
+    {
+        var state = new EventState();
+        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.ShowEventName);
+
+        state.Settings.ShowEventName = false;
+
+        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.ShowEventName);
+    }
+
+    [Fact]
     public void The_manifest_carries_the_layout_as_a_lowercase_name()
     {
         var state = new EventState();

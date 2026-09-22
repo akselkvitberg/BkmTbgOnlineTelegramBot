@@ -117,6 +117,13 @@ public sealed class Settings
     /// already has it, and photos already sent keep arriving.
     /// </summary>
     public bool ShowJoinInvite { get; set; } = true;
+
+    /// <summary>
+    /// Whether the event's name sits small in a corner of the screen while photos
+    /// are showing. On by default; it does nothing while EventName is empty, and the
+    /// holding card shows the name regardless.
+    /// </summary>
+    public bool ShowEventName { get; set; } = true;
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
     public List<Sender> Senders { get; set; } = [];

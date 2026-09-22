@@ -285,6 +285,22 @@ public class AdminApiTests : IClassFixture<AppFactory>
         Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite);
     }
 
+    [Fact]
+    public async Task The_event_name_on_screen_can_be_turned_off_and_back_on()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName); // on unless asked otherwise
+
+        await client.PatchAsJsonAsync("/api/settings", new { showEventName = false });
+        Assert.False(_factory.Store.Snapshot.Settings.ShowEventName);
+
+        var settings = await client.GetFromJsonAsync<JsonElement>("/api/settings");
+        Assert.False(settings.GetProperty("showEventName").GetBoolean());
+
+        await client.PatchAsJsonAsync("/api/settings", new { showEventName = true });
+        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName);
+    }
+
     // The store is shared across this class, so these set the layout they start from
     // rather than assuming the default - a sibling test that changed it would
     // otherwise decide whether this one passes. SlideLayout.Single as the default is

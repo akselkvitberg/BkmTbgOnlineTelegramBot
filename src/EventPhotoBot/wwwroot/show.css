@@ -333,6 +333,21 @@ body.has-badge .layout-polaroid {
   to { transform: scale(1.09) translate(1.2%, -1.2%); }
 }
 
+/* The print underneath fades out while the new one lands. The new one sits at its
+   own angle and height, so the old one's corners show round it, and removing it
+   outright once the landing is done made those corners blink out. It waits for the
+   new print to be down, then goes slowly, like a print being slid out from under.
+   An animation, not a transition: the landing's fill mode would otherwise hold its
+   opacity at 1. show.js keeps the element for the whole of this (crossFade). */
+.print.layer.shown.leaving {
+  animation: print-leaves calc(var(--transition, 800ms) * 2) ease-in-out var(--transition, 800ms) both;
+}
+
+@keyframes print-leaves {
+  from { opacity: 1; transform: translateY(var(--lift, 0)) rotate(var(--tilt, 0deg)); }
+  to { opacity: 0; transform: translateY(var(--lift, 0)) rotate(var(--tilt, 0deg)) scale(0.98); }
+}
+
 /* Opaque early in the drop: a print is paper, and a see-through one landing on its
    predecessor reads as a double exposure rather than as a print being put down. */
 @keyframes print-lands {
@@ -493,6 +508,7 @@ body.has-badge .pane:last-child figcaption { padding-right: var(--badge-inline);
   .layer,
   .ambient-layer,
   .print.layer.shown,
+  .print.layer.shown.leaving,
   .layout-polaroid .slot,
   .print .window img,
   .track[data-motion='drift'] {
@@ -561,12 +577,14 @@ body.has-badge .pane:last-child figcaption { padding-right: var(--badge-inline);
 #offline[hidden] { display: none; }
 #caption[hidden] { display: none; }
 
-/* Top-left, not bottom: the caption bar spans the full width of the bottom edge
+/* Top centre, not bottom: the caption bar spans the full width of the bottom edge
    (see #caption above), so a hint placed there overlapped it for its whole
-   8-second visible window on any image with a caption or sender name. */
+   8-second visible window on any image with a caption or sender name. Not the
+   top-left corner either, which belongs to the event's name. */
 #caption-hint {
   position: fixed;
-  left: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   top: calc(16px + env(safe-area-inset-top, 0px));
   padding: 8px 14px;
   border-radius: 999px;
@@ -577,6 +595,30 @@ body.has-badge .pane:last-child figcaption { padding-right: var(--badge-inline);
 }
 
 #caption-hint[hidden] { display: none; }
+
+/* The event's name: small, quiet, and in the corner least likely to hold anything
+   else. The light pill keeps it legible over a bright photo without a heavy box. */
+#event-tag {
+  position: fixed;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  z-index: 5;
+  max-width: 40vw;
+  padding: 0.5vmin 1.4vmin;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(6px);
+  font-size: clamp(0.75rem, 1.6vmin, 1.1rem);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+#event-tag[hidden], #empty:not([hidden]) ~ #event-tag { display: none; }
 
 /* Large in the empty state, a small corner badge once photos are showing. Both sit
    on solid white: a QR on a dark or textured ground is markedly harder for a phone
