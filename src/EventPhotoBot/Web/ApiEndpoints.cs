@@ -349,6 +349,34 @@ public static class ApiEndpoints
                 return Results.Ok();
             });
 
+        // Clearing the slate between events. One state write for the lot, so the
+        // screen goes from every photo to none in a single generation rather than
+        // thinning out one delete at a time.
+        app.MapDelete("/api/images",
+            async (StateStore store, IObjectStore objects, CancellationToken ct) =>
+            {
+                if (store.Snapshot.Images.Count == 0) return Results.Ok(new { deleted = 0 });
+
+                var removed = await store.MutateAsync(state =>
+                {
+                    var images = state.Images.Values.ToList();
+                    state.Images.Clear();
+                    state.Settings.TakeoverImageId = null;
+                    state.Settings.TakeoverUntil = null;
+                    return images;
+                });
+
+                // State first, for the same reason as the single delete above.
+                foreach (var image in removed)
+                {
+                    await objects.DeleteAsync(ObjectPaths.Display(image.Id), ct);
+                    await objects.DeleteAsync(ObjectPaths.Thumb(image.Id), ct);
+                    await objects.DeleteAsync(ObjectPaths.Original(image.Id, image.OriginalExtension), ct);
+                }
+
+                return Results.Ok(new { deleted = removed.Count });
+            });
+
         app.MapPost("/api/images",
             async (HttpRequest http, StateStore store, IObjectStore objects, CancellationToken ct) =>
             {
