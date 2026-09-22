@@ -32,7 +32,32 @@ public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<Te
             logger.LogWarning("sendMessage failed: {StatusCode}", (int)response.StatusCode);
     }
 
-    public async Task<string?> GetMeAsync(CancellationToken ct = default)
+    public async Task SetMessageReactionAsync(
+        long chatId, long messageId, string emoji, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"{Api}/setMessageReaction", new
+        {
+            chat_id = chatId,
+            message_id = messageId,
+            reaction = new[] { new { type = "emoji", emoji } },
+        }, ct);
+        // Same as sendMessage: the photo is already stored. A group can also restrict
+        // which reactions are allowed, which makes this fail with a 400 for reasons
+        // that are nobody's fault.
+        if (!response.IsSuccessStatusCode)
+            logger.LogWarning("setMessageReaction failed: {StatusCode}", (int)response.StatusCode);
+    }
+
+    public async Task<bool> LeaveChatAsync(long chatId, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"{Api}/leaveChat", new { chat_id = chatId }, ct);
+        if (response.IsSuccessStatusCode) return true;
+
+        logger.LogWarning("leaveChat failed: {StatusCode}", (int)response.StatusCode);
+        return false;
+    }
+
+    public async Task<BotProfile?> GetMeAsync(CancellationToken ct = default)
     {
         using var response = await http.GetAsync($"{Api}/getMe", ct);
         if (!response.IsSuccessStatusCode)
@@ -42,7 +67,10 @@ public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<Te
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-        return document.RootElement.GetProperty("result")
-            .TryGetProperty("username", out var username) ? username.GetString() : null;
+        var result = document.RootElement.GetProperty("result");
+        return new BotProfile(
+            result.TryGetProperty("username", out var username) ? username.GetString() : null,
+            result.TryGetProperty("can_read_all_group_messages", out var readsAll)
+            && readsAll.ValueKind == JsonValueKind.True);
     }
 }

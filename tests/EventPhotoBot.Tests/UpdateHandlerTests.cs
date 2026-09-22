@@ -415,4 +415,345 @@ public class UpdateHandlerTests
 
         Assert.Equal(2, harness.Telegram.Sent.Count);
     }
+
+    // ---- Groups ----
+
+    private const long Group = -1001234;
+
+    private static TgChat GroupChat(long id = Group, string title = "Festkomiteen") =>
+        new() { Id = id, Type = "supergroup", Title = title };
+
+    private static TgUpdate InGroup(TgUpdate update, long groupId = Group, string title = "Festkomiteen")
+    {
+        update.Message!.Chat = GroupChat(groupId, title);
+        update.Message.MessageId = 77;
+        return update;
+    }
+
+    private static TgUpdate BotMembership(long groupId, string status, string title = "Festkomiteen") => new()
+    {
+        MyChatMember = new TgChatMemberUpdated
+        {
+            Chat = GroupChat(groupId, title),
+            NewChatMember = new TgChatMember { Status = status },
+        },
+    };
+
+    private static BotGroup Listening(long id = Group) =>
+        new() { Id = id, Title = "Festkomiteen", Listening = true, FirstSeen = DateTimeOffset.UtcNow };
+
+    [Fact]
+    public async Task Being_added_to_a_group_records_it_without_listening()
+    {
+        var harness = await Harness.CreateAsync();
+
+        await harness.Handler.HandleAsync(BotMembership(Group, "member"));
+
+        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
+        Assert.Equal(Group, group.Id);
+        Assert.Equal("Festkomiteen", group.Title);
+        Assert.False(group.Listening);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task Being_removed_from_a_group_forgets_it_listening_included()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+
+        await harness.Handler.HandleAsync(BotMembership(Group, "kicked"));
+
+        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+    }
+
+    [Fact]
+    public async Task A_private_chat_membership_change_is_ignored()
+    {
+        var harness = await Harness.CreateAsync();
+        var generation = harness.Store.Generation;
+
+        await harness.Handler.HandleAsync(new TgUpdate
+        {
+            MyChatMember = new TgChatMemberUpdated
+            {
+                Chat = new TgChat { Id = Guest, Type = "private" },
+                NewChatMember = new TgChatMember { Status = "kicked" },
+            },
+        });
+
+        Assert.Equal(generation, harness.Store.Generation);
+    }
+
+    [Fact]
+    public async Task Groups_the_bot_does_not_listen_to_are_capped_and_the_oldest_go_first()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening(-1)));
+
+        for (var i = 0; i < Groups.MaxNotListening + 5; i++)
+            await harness.Handler.HandleAsync(BotMembership(-100 - i, "member"));
+
+        var groups = harness.Store.Snapshot.Settings.Groups;
+        Assert.Equal(Groups.MaxNotListening, groups.Count(g => !g.Listening));
+        Assert.Contains(groups, g => g.Id == -1);                        // listening, never evicted
+        Assert.DoesNotContain(groups, g => g.Id == -100);                // the oldest idle one
+        Assert.Contains(groups, g => g.Id == -100 - (Groups.MaxNotListening + 4));
+    }
+
+    [Fact]
+    public async Task A_photo_in_a_group_the_bot_does_not_listen_to_is_ignored_without_a_write()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove));
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen" });
+        });
+        StockFile(harness, "large");
+        var generation = harness.Store.Generation;
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.Equal(generation, harness.Store.Generation);
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Telegram.Reactions);
+    }
+
+    [Fact]
+    public async Task A_stranger_in_an_unknown_group_gets_no_join_prompt()
+    {
+        var harness = await Harness.CreateAsync();
+        StockFile(harness, "large");
+        var generation = harness.Store.Generation;
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Stranger)));
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, "hei")));
+
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Equal(generation, harness.Store.Generation);
+    }
+
+    [Theory]
+    [InlineData($"/start {Harness.JoinCode}")]
+    [InlineData($"/start@eventphotobot {Harness.JoinCode}")]
+    [InlineData(Harness.JoinCode)]
+    public async Task The_join_code_in_a_group_starts_listening_and_posts_one_notice(string text)
+    {
+        var harness = await Harness.CreateAsync();
+
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
+
+        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
+        Assert.True(group.Listening);
+        Assert.Equal("Festkomiteen", group.Title);
+        var (chatId, notice) = Assert.Single(harness.Telegram.Sent);
+        Assert.Equal(Group, chatId);
+        Assert.Equal(Groups.ListeningNotice, notice);
+        // Posting the code opens the group; it does not put the poster on the roster.
+        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+    }
+
+    [Theory]
+    [InlineData("/start wrongcode")]
+    [InlineData("/start")]
+    [InlineData($"/start {Harness.JoinCode} extra")]
+    [InlineData($"/help {Harness.JoinCode}")]
+    public async Task Anything_but_the_join_code_leaves_a_group_closed(string text)
+    {
+        var harness = await Harness.CreateAsync();
+
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
+
+        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task A_banned_member_cannot_open_a_group_with_the_code()
+    {
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, SenderStatus.Banned)));
+
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, $"/start {Harness.JoinCode}")));
+
+        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task A_new_members_first_photo_is_queued_and_adds_them_as_known()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        StockFile(harness, "large");
+
+        var update = InGroup(PhotoFrom(Stranger));
+        update.Message!.From!.FirstName = "Kari";
+        await harness.Handler.HandleAsync(update);
+
+        var image = Assert.Single(harness.Store.Snapshot.Images.Values);
+        Assert.Equal(ImageStatus.Pending, image.Status);
+        Assert.Equal(Stranger, image.SenderId);
+        var sender = Assert.Single(harness.Store.Snapshot.Settings.Senders);
+        Assert.Equal(Stranger, sender.Id);
+        Assert.Equal("Kari", sender.Name);
+        Assert.Equal(SenderStatus.Known, sender.Status);
+
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Equal((Group, 77L, "👀"), Assert.Single(harness.Telegram.Reactions));
+    }
+
+    [Fact]
+    public async Task An_auto_approve_member_goes_straight_to_the_screen_in_a_group()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove));
+            s.Groups.Add(Listening());
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
+
+        Assert.Equal(ImageStatus.Approved, Assert.Single(harness.Store.Snapshot.Images.Values).Status);
+        Assert.Equal("🔥", Assert.Single(harness.Telegram.Reactions).Emoji);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task A_banned_member_is_ignored_in_a_group_without_a_download()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.Senders.Add(Roster(Stranger, SenderStatus.Banned));
+            s.Groups.Add(Listening());
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Stranger)));
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.DoesNotContain(harness.Objects.Paths, IsImageObject);
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Telegram.Reactions);
+    }
+
+    [Fact]
+    public async Task A_duplicate_in_a_group_is_dropped_silently()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest, fileUniqueId: "same")));
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest, fileUniqueId: "same")));
+
+        Assert.Single(harness.Store.Snapshot.Images);
+        Assert.Single(harness.Telegram.Reactions);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task Chat_declines_and_failures_in_a_group_get_no_reply()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+
+        var tooLarge = InGroup(PhotoFrom(Guest));
+        tooLarge.Message!.Photo![1].FileSize = 25 * 1024 * 1024;
+        var heic = InGroup(TextFrom(Guest, "x"));
+        heic.Message!.Text = null;
+        heic.Message.Document = new TgDocument { FileId = "doc", FileUniqueId = "doc1", MimeType = "image/heic" };
+
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Guest, "hei alle sammen")));
+        await harness.Handler.HandleAsync(InGroup(TextFrom(Guest, "/start")));
+        await harness.Handler.HandleAsync(tooLarge);
+        await harness.Handler.HandleAsync(heic);
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest, fileUniqueId: "nofile")));  // download throws
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Telegram.Reactions);
+        // Nobody was added for posting nothing usable.
+        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+    }
+
+    [Fact]
+    public async Task Posts_made_as_a_chat_or_by_a_bot_are_ignored()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        StockFile(harness, "large");
+
+        var anonymous = InGroup(PhotoFrom(1087968824, fileUniqueId: "a"));
+        anonymous.Message!.SenderChat = GroupChat();
+        var bot = InGroup(PhotoFrom(4242, fileUniqueId: "b"));
+        bot.Message!.From!.IsBot = true;
+
+        await harness.Handler.HandleAsync(anonymous);
+        await harness.Handler.HandleAsync(bot);
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+    }
+
+    [Fact]
+    public async Task A_renamed_group_gets_its_new_title_with_the_next_photo()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest), title: "Festkomiteen 2026"));
+
+        Assert.Equal("Festkomiteen 2026", Assert.Single(harness.Store.Snapshot.Settings.Groups).Title);
+    }
+
+    [Fact]
+    public async Task An_upgrade_to_a_supergroup_carries_listening_over_to_the_new_id()
+    {
+        const long OldId = -4321, NewId = -1004321;
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening(OldId)));
+
+        var to = InGroup(TextFrom(Guest, "x"), groupId: OldId);
+        to.Message!.Text = null;
+        to.Message.Chat!.Type = "group";
+        to.Message.MigrateToChatId = NewId;
+        var from = InGroup(TextFrom(Guest, "x"), groupId: NewId);
+        from.Message!.Text = null;
+        from.Message.MigrateFromChatId = OldId;
+
+        await harness.Handler.HandleAsync(to);
+        await harness.Handler.HandleAsync(from);
+
+        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
+        Assert.Equal(NewId, group.Id);
+        Assert.True(group.Listening);
+        Assert.Empty(harness.Telegram.Sent);
+    }
+
+    [Fact]
+    public async Task A_private_chat_with_an_explicit_type_behaves_as_before()
+    {
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        StockFile(harness, "large");
+
+        var update = PhotoFrom(Stranger);
+        update.Message!.Chat!.Type = "private";
+        await harness.Handler.HandleAsync(update);
+
+        var (chatId, text) = Assert.Single(harness.Telegram.Sent);
+        Assert.Equal(Stranger, chatId);
+        Assert.Contains("QR", text);
+        Assert.Empty(harness.Telegram.Reactions);
+    }
+
+    [Fact]
+    public async Task A_chat_of_an_unknown_type_is_ignored()
+    {
+        var harness = await Harness.CreateAsync();
+
+        var update = TextFrom(Stranger, $"/start {Harness.JoinCode}");
+        update.Message!.Chat = new TgChat { Id = -100777, Type = "channel" };
+        await harness.Handler.HandleAsync(update);
+
+        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+    }
 }

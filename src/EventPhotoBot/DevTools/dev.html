@@ -11,6 +11,7 @@
     <a href="/admin/queue">Kø<span class="badge"></span></a>
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
+    <a href="/admin/telegram">Telegram</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <a href="/dev" class="active">Gjest (lokal)</a>
@@ -44,6 +45,31 @@
     </section>
 
     <section class="card">
+      <h2>Hvor gjesten skriver</h2>
+      <label class="toggle"><input id="inGroup" type="checkbox">
+        <span>I en gruppe</span>
+        <span class="muted">
+          Av: en privat chat med boten. På: gjesten er medlem i gruppen under og legger ut
+          der. Boten ser ingenting i gruppen før den er lagt til, og henter ikke bilder før
+          noen har skrevet koden der eller «Hent bilder» er slått på under Telegram.
+        </span></label>
+      <div class="field-row">
+        <div class="field">
+          <label for="groupTitle">Gruppenavn</label>
+          <input id="groupTitle" type="text" value="Festkomiteen">
+        </div>
+        <div class="field">
+          <label for="groupId">Gruppe-id</label>
+          <input id="groupId" type="number" value="-1001234">
+        </div>
+      </div>
+      <div class="row">
+        <button id="addBot">Legg boten til i gruppen</button>
+        <button id="removeBot">Fjern boten fra gruppen</button>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>Send bilder</h2>
       <label for="caption">Bildetekst</label>
       <input id="caption" type="text" placeholder="Valgfritt">
@@ -64,10 +90,31 @@
   <script>
     'use strict';
 
+    const group = () => ({
+      id: Number(document.getElementById('groupId').value),
+      title: document.getElementById('groupTitle').value,
+    });
+
+    const inGroup = () => document.getElementById('inGroup').checked;
+
     const guest = () => ({
       id: Number(document.getElementById('guestId').value),
       name: document.getElementById('guestName').value,
+      ...(inGroup() ? { groupId: group().id, groupTitle: group().title } : {}),
     });
+
+    const setBotInGroup = async present => {
+      await Admin.api('POST', '/dev/group', { ...group(), present });
+      loadReplies();
+    };
+    document.getElementById('addBot').onclick = () => setBotInGroup(true);
+    document.getElementById('removeBot').onclick = () => setBotInGroup(false);
+
+    // In a group the join button posts the code there, which is what opens the group.
+    document.getElementById('inGroup').onchange = () => {
+      document.getElementById('join').textContent =
+        inGroup() ? 'Skriv koden i gruppen' : 'Skann QR-koden (bli med)';
+    };
 
     const NAMES = ['Ola', 'Kari', 'Per', 'Ingrid', 'Lars', 'Sofie', 'Emil', 'Nora'];
     document.getElementById('newGuest').onclick = () => {
@@ -87,9 +134,13 @@
 
     document.getElementById('files').onchange = async event => {
       const form = new FormData();
-      const { id, name } = guest();
+      const { id, name, groupId, groupTitle } = guest();
       form.append('id', id);
       form.append('name', name);
+      if (groupId !== undefined) {
+        form.append('groupId', groupId);
+        form.append('groupTitle', groupTitle);
+      }
       form.append('caption', document.getElementById('caption').value);
       for (const file of event.target.files) form.append('files', file);
       event.target.value = '';
@@ -106,9 +157,10 @@
         const item = document.createElement('li');
         const meta = document.createElement('span');
         meta.className = 'muted';
-        meta.textContent = `Til ${reply.chatId} · ${new Date(reply.at).toLocaleTimeString()}`;
+        const where = reply.chatId < 0 ? `gruppe ${reply.chatId}` : reply.chatId;
+        meta.textContent = `Til ${where} · ${new Date(reply.at).toLocaleTimeString()}`;
         const text = document.createElement('p');
-        text.textContent = reply.text;
+        text.textContent = reply.reaction ? `Reagerte med ${reply.text} på bildet` : reply.text;
         item.append(meta, text);
         return item;
       }));

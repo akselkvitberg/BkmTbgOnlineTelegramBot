@@ -10,6 +10,9 @@ public sealed record PinRequest(string Pin);
 public sealed record TakeoverRequest(string ImageId, int? Minutes);
 public sealed record SenderStatusRequest(string Status);
 
+/// <summary>Nullable so a body without the field is a 400, not a silent "off".</summary>
+public sealed record GroupListeningRequest(bool? Listening);
+
 /// <summary>
 /// The roster is deliberately absent here. An array replacement cannot carry the
 /// ban cascade, so allowing it would be a second write path that silently skips
@@ -136,8 +139,81 @@ public static class ApiEndpoints
                     sender.FirstSeen,
                     Status = JsonNamingPolicy.CamelCase.ConvertName(sender.Status.ToString()),
                 }),
+                Groups = s.Groups.Select(group => new
+                {
+                    group.Id,
+                    group.Title,
+                    group.Listening,
+                    group.FirstSeen,
+                }),
             });
         });
+
+        // Asked of Telegram on each call rather than cached from startup: the answer
+        // changes when someone flips privacy mode in BotFather, and the admin page
+        // that shows it is opened a handful of times, not polled.
+        app.MapGet("/api/telegram/bot", async (ITelegramClient telegram, CancellationToken ct) =>
+        {
+            BotProfile? profile;
+            try
+            {
+                profile = await telegram.GetMeAsync(ct);
+            }
+            catch (HttpRequestException)
+            {
+                profile = null;
+            }
+
+            return profile is null
+                ? Results.Json(new { error = "Fikk ikke svar fra Telegram." }, statusCode: StatusCodes.Status502BadGateway)
+                : Results.Ok(new { profile.Username, profile.CanReadAllGroupMessages });
+        });
+
+        app.MapPost("/api/groups/{id:long}/listening",
+            async (long id, GroupListeningRequest request, StateStore store, ITelegramClient telegram,
+                CancellationToken ct) =>
+            {
+                if (request.Listening is not { } listening)
+                    return Results.BadRequest(new { error = "listening må være true eller false." });
+
+                // Only a group the bot is actually in. Creating a row by id here would
+                // let the list claim a group the bot cannot hear.
+                var started = await store.MutateAsync(state =>
+                {
+                    var group = state.Settings.Groups.FirstOrDefault(g => g.Id == id);
+                    if (group is null) return (bool?)null;
+                    if (!listening)
+                    {
+                        group.Listening = false;
+                        return false;
+                    }
+                    return Groups.Listen(state, id, null, DateTimeOffset.UtcNow);
+                }, ct);
+
+                if (started is null) return Results.NotFound();
+
+                // The same notice as when a member posts the join code: the members
+                // did not choose this, and are told once, in the group itself.
+                if (started == true) await telegram.SendMessageAsync(id, Groups.ListeningNotice, ct);
+                return Results.Ok();
+            });
+
+        app.MapPost("/api/groups/{id:long}/leave",
+            async (long id, StateStore store, ITelegramClient telegram, CancellationToken ct) =>
+            {
+                if (store.Snapshot.Settings.Groups.All(g => g.Id != id)) return Results.NotFound();
+
+                // Telegram first: if it refuses, the bot is still in the group and the
+                // row has to stay so the page keeps saying so.
+                if (!await telegram.LeaveChatAsync(id, ct))
+                    return Results.Json(new { error = "Telegram lot ikke boten forlate gruppen." },
+                        statusCode: StatusCodes.Status502BadGateway);
+
+                // The my_chat_member update that follows would remove it too; doing it
+                // here as well means the page is right the moment this returns.
+                await store.MutateAsync(state => state.Settings.Groups.RemoveAll(g => g.Id == id), ct);
+                return Results.Ok();
+            });
 
         app.MapGet("/api/manifest",
             (HttpContext http, StateStore store, BotIdentity identity) =>

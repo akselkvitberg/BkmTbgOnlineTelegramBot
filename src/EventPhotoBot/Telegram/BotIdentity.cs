@@ -20,7 +20,7 @@ public sealed class BotIdentity(AppConfig config)
     {
         try
         {
-            Username = await telegram.GetMeAsync();
+            Username = (await telegram.GetMeAsync())?.Username;
         }
         catch (Exception e)
         {

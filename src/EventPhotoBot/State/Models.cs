@@ -74,6 +74,31 @@ public sealed class Sender
     public DateTimeOffset FirstSeen { get; set; }
 }
 
+/// <summary>
+/// A Telegram group the bot is a member of. The Bot API has no call that lists a
+/// bot's groups, so this is the bot's own record, kept from the membership updates
+/// Telegram sends when the bot is added or removed (my_chat_member).
+///
+/// Being in a group is not the same as listening to it: anyone can add a bot to a
+/// group of their own, and a bot that collected from every group it landed in would
+/// be a way to feed the approval queue from outside the event. A group is listened
+/// to only once somebody posts the join code in it, or an admin turns it on.
+/// Messages from any other group are dropped without a reply.
+/// </summary>
+public sealed class BotGroup
+{
+    /// <summary>Telegram's chat id. Negative for every group.</summary>
+    public long Id { get; set; }
+
+    /// <summary>The group's name as last seen. Set by the group's owner, so untrusted.</summary>
+    public string Title { get; set; } = "";
+
+    /// <summary>Whether members' photos are collected from this group.</summary>
+    public bool Listening { get; set; }
+
+    public DateTimeOffset FirstSeen { get; set; }
+}
+
 public sealed class Settings
 {
     /// <summary>
@@ -127,6 +152,13 @@ public sealed class Settings
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
     public List<Sender> Senders { get; set; } = [];
+
+    /// <summary>
+    /// Empty by default, and for a state.json written before groups existed: the
+    /// property is simply absent there, so the initializer stands and no group is
+    /// listened to until someone posts the join code in it.
+    /// </summary>
+    public List<BotGroup> Groups { get; set; } = [];
 }
 
 public sealed class EventState
