@@ -447,15 +447,18 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent
   --t: color-mix(in srgb, var(--muted) 55%, transparent);
 }
 .layout-option i[data-l="single"]    { background-image: linear-gradient(var(--t), var(--t)); background-size: 60% 80%; background-position: center; background-repeat: no-repeat; }
-.layout-option i[data-l="mosaic"]    { background-image: linear-gradient(90deg, var(--panel-2) 3px, transparent 3px), linear-gradient(var(--panel-2) 3px, transparent 3px), linear-gradient(var(--t), var(--t));
-                                       background-size: 33.34% 50%, 33.34% 50%, 100% 100%; }
+.layout-option i[data-l="mosaic"]    { background-image: linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t));
+                                       background-size: 27% 36%, 27% 60%, 42% 100%, 27% 60%, 27% 36%;
+                                       background-position: 0 0, 0 100%, 50% 0, 100% 0, 100% 100%; background-repeat: no-repeat; }
 .layout-option i[data-l="polaroid"]  { background-image: linear-gradient(#ddd, #ddd), linear-gradient(#ddd, #ddd), linear-gradient(#ddd, #ddd);
                                        background-size: 22% 70%; background-position: 15% 50%, 50% 40%, 85% 55%; background-repeat: no-repeat; }
 .layout-option i[data-l="filmstrip"] { background-image: repeating-linear-gradient(90deg, var(--t) 0 17%, transparent 17% 20%);
                                        background-size: 100% 56%; background-position: center; background-repeat: no-repeat; }
-.layout-option i[data-l="collage"]   { background-image: linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t));
-                                       background-size: 38% 58%, 26% 38%, 30% 36%, 24% 50%, 34% 34%;
-                                       background-position: 4% 10%, 50% 6%, 94% 12%, 38% 94%, 92% 92%; background-repeat: no-repeat; }
+.layout-option i[data-l="collage"]   { background-image:
+                                         repeating-linear-gradient(90deg, var(--t) 0 22%, transparent 22% 24%, var(--t) 24% 36%, transparent 36% 38%),
+                                         repeating-linear-gradient(90deg, var(--t) 0 23.5%, transparent 23.5% 25.5%),
+                                         repeating-linear-gradient(90deg, var(--t) 0 12%, transparent 12% 14%, var(--t) 14% 36%, transparent 36% 38%);
+                                       background-size: 100% 31%; background-position: 0 0, 0 50%, 0 100%; background-repeat: no-repeat; }
 .layout-option i[data-l="split"]     { background-image: linear-gradient(var(--t), var(--t)), linear-gradient(var(--t), var(--t));
                                        background-size: 45% 80%; background-position: 8% center, 92% center; background-repeat: no-repeat; }
 

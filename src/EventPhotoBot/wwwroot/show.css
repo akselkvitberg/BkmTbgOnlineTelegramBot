@@ -124,169 +124,293 @@ html, body {
 .layout-collage,
 .layout-split { padding: var(--stage-safe); }
 
-/* The polaroid's mats and the split's captions both sit low, where the corner QR
-   badge is. Reserved only while it is showing: with the invite turned off, or
+/* The polaroid's mats sit low, where the corner QR badge is. Reserved only while it is showing: with the invite turned off, or
    before anyone has sent a photo, there is nothing there to avoid. */
-body.has-badge .layout-polaroid,
-body.has-badge .layout-split {
+body.has-badge .layout-polaroid {
   padding-inline-end: calc(var(--stage-safe) + var(--badge-inline));
 }
 
-/* -- mosaic: six photos on a fixed grid ---------------------------------- */
+/* -- shared: layers and the ambient backdrop ----------------------------- */
 
-/* Named areas rather than an auto-placed flow, so the shape is the same on the
-   first photo of the night and the four hundredth, and two screens on one event
-   show the same thing. One large area and five small ones: a flat 3x2 of equal
-   tiles reads as a contact sheet, and nothing on it is big enough to look at. */
-.layout-mosaic {
+/* A layered cell stacks every layer it holds in the same grid area, so a new photo
+   sits exactly over the one it replaces and fades in on top of it. show.js removes
+   the old layer once the fade is done. */
+.tile, .cell, .slot, .pane {
+  position: relative;
   display: grid;
-  gap: var(--stage-gap);
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  grid-template-areas:
-    'a a b c'
-    'a a d d'
-    'e e f f';
 }
 
-.layout-mosaic .area-0 { grid-area: a; }
-.layout-mosaic .area-1 { grid-area: b; }
-.layout-mosaic .area-2 { grid-area: c; }
-.layout-mosaic .area-3 { grid-area: d; }
-.layout-mosaic .area-4 { grid-area: e; }
-.layout-mosaic .area-5 { grid-area: f; }
+.tile > .layer, .cell > .layer, .slot > .layer, .pane > .layer {
+  grid-area: 1 / 1;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.layer {
+  opacity: 0;
+  transition: opacity var(--transition, 800ms) ease-in-out;
+}
+
+.layer.shown { opacity: 1; }
+
+/* The single layout's blurred backdrop, behind the whole stage: the gaps between
+   tiles and the margins round a filmstrip or a row of prints take the colour of
+   what is on screen, instead of being black holes in it. A thumb is plenty - it is
+   blurred to nothing - and the dimming keeps it from competing with the photos. */
+.ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background: #000;
+}
+
+.ambient-layer {
+  position: absolute;
+  inset: -8%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(56px) brightness(0.42) saturate(1.25);
+  opacity: 0;
+  transition: opacity calc(var(--transition, 800ms) * 2) ease-in-out;
+}
+
+.ambient-layer.shown { opacity: 1; }
+
+/* -- mosaic and collage: walls of landscape and portrait cells ------------ */
+
+/* Both are built by show.js as a wall of lines - columns for the mosaic, rows for
+   the collage - holding cells marked L (4:3) or P (3:4). Each cell's flex-grow,
+   set inline, is its aspect ratio in a row and the inverse in a column, from a zero
+   basis, so the cells come out in their own shape and the lines fill the screen.
+   The fit is close enough that the cover crop takes only a sliver.
+
+   Absolutely placed so that the outgoing wall and the incoming one can sit on top of
+   each other while one dissolves into the other. */
+.wall {
+  position: absolute;
+  inset: var(--stage-safe);
+  display: flex;
+  gap: var(--stage-gap);
+  opacity: 0;
+  transition: opacity calc(var(--transition, 800ms) * 1.5) ease-in-out;
+}
+
+.wall.shown { opacity: 1; }
+.wall.leaving { opacity: 0; }
+
+.wall.in-rows { flex-direction: column; }
+.wall.in-columns { flex-direction: row; }
+
+.wall-line {
+  display: flex;
+  flex: 1 1 0;
+  gap: var(--stage-gap);
+  min-width: 0;
+  min-height: 0;
+}
+
+.wall.in-columns .wall-line { flex-direction: column; flex-basis: 0; }
+
+.wall-line > figure { flex-shrink: 1; flex-basis: 0; }
 
 .tile, .cell {
   overflow: hidden;
   border-radius: var(--cell-radius);
-  background: #111;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0.8vmin 2.4vmin rgba(0, 0, 0, 0.35);
 }
 
-/* `cover` is the crop these layouts are allowed, and the areas above stay near 4:3
-   and 1:1 to limit what it costs: nothing detects a face, so the best this can do
-   is never hand a photo a slot shaped nothing like it. */
+/* `cover` is the crop these layouts are allowed, and the areas stay near 4:3 and
+   1:1 to limit what it costs: nothing detects a face, so the best this can do is
+   never hand a photo a slot shaped nothing like it. */
 .tile img, .cell img, .frame img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* Faces sit above the middle of most photos of people, so crop from a little
+     below the top rather than evenly from both ends. */
+  object-position: 50% 35%;
 }
 
-.tile { animation: cell-fades-in var(--transition, 800ms) ease-in-out both; }
-
-@keyframes cell-fades-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* -- polaroid: three prints on the dark ground --------------------------- */
+/* -- polaroid: three prints on the table --------------------------------- */
 
 /* Three columns rather than a pile, because a pile has to overlap and an overlapped
    print is somebody's photo with a corner missing. Turning each one a few degrees
-   is enough to read as handmade without hiding anything. */
+   and setting it a little above or below its neighbours is enough to read as
+   handmade without hiding anything. */
 .layout-polaroid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   align-items: center;
-  gap: 4vmin;
-  /* A print is as tall as its photo plus its caption, and somebody who writes two
-     long lines makes it taller. The stage clips rather than letting a mat run off
-     the screen, which on a projector means off the wall and into the room. */
+  gap: 3vmin;
+  padding-inline: 5vmin;
+  /* The stage clips rather than letting a mat run off the screen, which on a
+     projector means off the wall and into the room. */
   overflow: hidden;
 }
 
+.slot { place-items: center; }
+
+/* Sized from the screen's height, not the column's width: a print is square, and
+   the column is always wider than the screen is tall divided by three. */
 .print {
   display: grid;
-  gap: 1.4vmin;
-  /* A wider mat at the foot is what makes this read as a print rather than as a
-     photo with a white border. */
-  padding: 1.4vmin 1.4vmin 3.2vmin;
-  border-radius: 0.6vmin;
-  background: #f4f1ea;
+  gap: 1.6vmin;
+  width: min(100%, 60vh);
+  /* The wide foot is what makes this read as an instant print rather than as a
+     photo with a white border, and it is where the caption is written. */
+  padding: 2.2vmin 2.2vmin 3vmin;
+  border-radius: 0.4vmin;
+  background: linear-gradient(160deg, #fbf9f4, #ece7dc);
   color: #1c1c1c;
-  box-shadow: 0 1.6vmin 3.6vmin rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 0.3vmin 0.6vmin rgba(0, 0, 0, 0.35),
+    0 2.4vmin 5vmin rgba(0, 0, 0, 0.55);
   /* Declared here and not only inside the keyframe: the tilt is composition, not
      motion, so it has to survive both prefers-reduced-motion and the moment
      between two landings when no animation is running. */
-  transform: rotate(var(--tilt, 0deg));
-  animation: print-lands var(--transition, 800ms) ease-out both;
-  will-change: transform, opacity;
+  transform: translateY(var(--lift, 0)) rotate(var(--tilt, 0deg));
 }
 
-/* A 4:5 window, a print's own shape. The photo fills it, which is the crop the
-   metaphor costs - a print is a fixed piece of paper. */
+/* A new print is dropped on top of the old one rather than faded in over it. */
+.print.layer { transition: none; }
+.print.layer.shown { animation: print-lands var(--transition, 800ms) cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+
+/* Square, the instant print's own shape, and the fair crop for a mix of portrait
+   and landscape phone photos: both lose the same quarter. */
 .print .window {
   display: block;
   overflow: hidden;
-  aspect-ratio: 4 / 5;
-  background: #000;
+  aspect-ratio: 1 / 1;
+  background: #111;
+  box-shadow: inset 0 0 0.6vmin rgba(0, 0, 0, 0.45);
 }
 
-.print .window img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.print .window img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; }
 
 .print figcaption {
   display: grid;
-  gap: 0.15em;
+  gap: 0.1em;
+  min-height: 2.6em;
+  align-content: center;
   text-align: center;
-  font-size: clamp(0.75rem, 1.2vw, 1.15rem);
+  font-family: "Segoe Print", "Bradley Hand", "Marker Felt", "Comic Neue", cursive;
+  font-size: clamp(0.8rem, 1.5vw, 1.4rem);
+  line-height: 1.25;
   /* Ink on paper: the one caption in this app that is not light laid over a photo. */
-  color: #2c2c2c;
+  color: #2a2a2a;
   overflow: hidden;
 }
 
-.print figcaption span:first-child { font-weight: 600; opacity: 0.7; }
+/* With captions off (the C key), or a photo sent without a name or a caption, the
+   foot keeps its height, as a real print's does. */
+#stage.captions-off .print figcaption { display: grid; visibility: hidden; }
 
-@keyframes print-lands {
-  from { opacity: 0; transform: rotate(var(--tilt, 0deg)) translateY(-4%) scale(1.04); }
-  to { opacity: 1; transform: rotate(var(--tilt, 0deg)) translateY(0) scale(1); }
+.print figcaption span:first-child { font-weight: 700; opacity: 0.75; }
+.print figcaption span:empty { display: none; }
+
+/* A slow sway on the slot, and a slower zoom on the photo inside the print, so the
+   table reads as live rather than as a still. Each is on its own element because
+   the print's own transform belongs to its tilt and its landing. The three slots run
+   at different speeds and phases, so the prints never move in step. */
+.layout-polaroid .slot { animation: print-sway 14s ease-in-out infinite alternate; }
+.layout-polaroid .slot:nth-child(3n + 2) { animation-duration: 17s; animation-delay: -6s; }
+.layout-polaroid .slot:nth-child(3n + 3) { animation-duration: 15s; animation-delay: -11s; }
+
+.print .window img { animation: print-drift 22s ease-in-out infinite alternate; }
+.layout-polaroid .slot:nth-child(3n + 2) .window img { animation-duration: 19s; animation-direction: alternate-reverse; }
+.layout-polaroid .slot:nth-child(3n + 3) .window img { animation-duration: 25s; animation-delay: -9s; }
+
+@keyframes print-sway {
+  from { transform: translate(-0.3vw, -0.6vh) rotate(-0.7deg); }
+  to { transform: translate(0.3vw, 0.6vh) rotate(0.7deg); }
 }
 
-/* -- filmstrip: a band drifting sideways --------------------------------- */
+@keyframes print-drift {
+  from { transform: scale(1.02) translate(0, 0); }
+  to { transform: scale(1.09) translate(1.2%, -1.2%); }
+}
+
+/* Opaque early in the drop: a print is paper, and a see-through one landing on its
+   predecessor reads as a double exposure rather than as a print being put down. */
+@keyframes print-lands {
+  from { opacity: 0; transform: translateY(calc(var(--lift, 0) - 6vh)) rotate(calc(var(--tilt, 0deg) * 2.5)) scale(1.08); }
+  25% { opacity: 1; }
+  to { opacity: 1; transform: translateY(var(--lift, 0)) rotate(var(--tilt, 0deg)) scale(1); }
+}
+
+/* -- filmstrip: a strip of film across the screen ------------------------ */
 
 .layout-filmstrip {
   display: grid;
-  align-content: center;
+  place-items: center;
   overflow: hidden;
-  /* Block axis only. The band is meant to run off both side edges; insetting it
-     would put a black margin where the strip should be continuing. */
-  padding: var(--stage-safe) 0;
+}
+
+/* Wider than the screen and turned a few degrees, so the strip runs in from beyond
+   one edge and out past the other rather than stopping at both. */
+.band {
+  width: 150vw;
+  transform: rotate(-4deg);
+  background: #0e0d0c;
+  box-shadow: 0 2vmin 6vmin rgba(0, 0, 0, 0.6);
 }
 
 .track {
   --frames: 5;
+  --rail: 5vmin;
+  position: relative;
   display: flex;
-  /* Frames size themselves from their own square window; stretching them to the
-     line would hand the band whatever height the tallest photo happened to have. */
   align-items: center;
-  /* The stage's width, not the frames' - the drift below translates by a fraction
-     of this box, so one fifth of it is exactly one frame however many the band
-     is actually carrying. */
+  /* The band's width, not the frames' - the drift below translates by a fraction
+     of this box, so one fifth of it is exactly one frame however many the band is
+     actually carrying. */
   width: 100%;
+  padding-block: var(--rail);
 }
+
+/* The sprocket holes ride on the track, so they move with the frames. Eight holes
+   per frame: the drift travels exactly one frame and then restarts, so the pattern
+   has to repeat on a frame boundary for the restart to be invisible. Drawn across
+   one frame more than the track, for the frame waiting off the right-hand edge. */
+.track::before, .track::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: calc(100% + 100% / var(--frames));
+  height: calc(var(--rail) * 0.36);
+  background:
+    linear-gradient(90deg, transparent 32%, rgba(236, 228, 214, 0.78) 32% 68%, transparent 68%)
+    0 0 / calc(100% / (var(--frames) + 1) / 8) 100% repeat-x;
+  border-radius: 0.3vmin;
+}
+
+.track::before { top: calc(var(--rail) * 0.32); }
+.track::after { bottom: calc(var(--rail) * 0.32); }
 
 /* A full band overflows, and must do so only to the right. A centred flex container
    splits its overflow across both edges, which leaves the drift ending with a blank
-   fifth of the screen down the right-hand side at the end of every slide. */
+   frame down the right-hand side at the end of every slide. */
 .track[data-strip='scrolling'] { justify-content: flex-start; }
 
-/* A playlist too short to fill the band sits in the middle of the screen instead of
-   hugging the left edge. Nothing overflows here, so there is nothing to split. */
+/* A playlist too short to fill the band sits in the middle of the screen. */
 .track[data-strip='short'] { justify-content: center; }
 
 .frame {
   flex: 0 0 calc(100% / var(--frames));
-  padding-inline: calc(var(--stage-gap) / 2);
+  padding-inline: calc(var(--stage-gap) * 0.8);
 }
 
-/* Square, and stated on the image rather than the frame so that the gap between
-   frames is not counted into the shape. The band has to survive both orientations:
-   a phone's portrait shot and a camera's landscape one lose the same amount, which
-   is the fairest crop available to a layout that crops at all. */
+/* Square, like medium-format film, and stated on the image rather than the frame
+   so the spacing between frames is not counted into the shape: a phone's portrait
+   shot and its landscape one lose the same amount. */
 .frame img {
   height: auto;
   aspect-ratio: 1 / 1;
-  border-radius: var(--cell-radius);
-  background: #111;
+  border-radius: 0.3vmin;
+  background: #1a1918;
 }
 
 /* Exactly one frame of travel per slide. The duration is the slide clock itself,
@@ -303,94 +427,77 @@ body.has-badge .layout-split {
   to { transform: translateX(calc(-100% / var(--frames))); }
 }
 
-/* -- collage: a grid that grows ------------------------------------------ */
-
-/* Auto-placed in DOM order across a fixed 4x3, so a cell keeps its position for the
-   whole evening and growth appends rather than reflows. `align-content: start` is
-   what makes a half-full grid read as a composition in progress instead of as a
-   grid with holes in the middle of it. */
-.layout-collage {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: calc((100% - var(--stage-gap) * 2) / 3);
-  gap: var(--stage-gap);
-  align-content: start;
-}
-
-.cell { animation: cell-arrives var(--transition, 800ms) ease-out both; }
-
-@keyframes cell-arrives {
-  from { opacity: 0; transform: scale(0.94); }
-  to { opacity: 1; transform: scale(1); }
-}
-
 /* -- split: two whole photos side by side -------------------------------- */
 
 .layout-split {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 3vmin;
+  gap: var(--stage-gap);
 }
 
-/* Both rows size to their contents and the pair is centred as a whole, rather than
-   the photo filling a 1fr row with the caption pinned under it: that put a
-   letterboxed landscape photo in the middle of the pane and its caption 200px below
-   at the foot of the screen, reading as a line of text that belonged to nothing.
-   The caption gets its own row under the photo rather than a band across it, so a
-   pane is a photo and a line of text instead of a photo with writing on it. */
 .pane {
-  display: grid;
-  grid-template-rows: auto auto;
-  align-content: center;
-  justify-items: center;
-  gap: 1.4vmin;
-  animation: cell-fades-in var(--transition, 800ms) ease-in-out both;
-}
-
-.pane .window {
-  display: grid;
-  place-items: center;
-  max-width: 100%;
   overflow: hidden;
+  border-radius: var(--cell-radius);
+  background: #000;
 }
 
-/* `contain`, not `cover`: half a wide screen is still larger than anything a phone
-   took, so the promise that nobody's head is cut off survives the split. This is the
-   only one of the five that keeps it.
+.pane-layer { position: relative; overflow: hidden; }
 
-   The height cap is spelled out against the viewport because the rows above size to
-   their content, which leaves the pane no definite height for a percentage to
-   resolve against - a portrait photo would take its full intrinsic height and push
-   its caption off the bottom of the screen. The 7vmin is the caption's own row plus
-   the gap above it. */
-.pane .window img {
-  max-width: 100%;
-  max-height: calc(100vh - var(--stage-safe) * 2 - 7vmin);
+/* Each half is the single layout in miniature: the whole photo, on a blurred copy
+   of itself. Half a 16:9 screen is close to a phone's 3:4 portrait, so a portrait
+   photo fills its pane and a landscape one sits on its own backdrop. */
+.pane .backdrop {
+  position: absolute;
+  inset: -8%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(40px) brightness(0.5);
+}
+
+/* `contain`, not `cover`: the promise that nobody's head is cut off survives the
+   split. This is the only multi-photo layout that keeps it. */
+.pane-layer > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
 .pane figcaption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
-  gap: 0.6em;
+  flex-wrap: wrap;
+  gap: 0 0.6em;
   align-items: baseline;
-  justify-content: center;
-  font-size: clamp(0.85rem, 1.4vw, 1.4rem);
+  padding: 6vmin 3vmin 2.4vmin;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  font-size: clamp(0.85rem, 1.5vw, 1.5rem);
 }
 
 .pane figcaption span:first-child { font-weight: 600; opacity: 0.85; }
 .pane figcaption span:last-child { opacity: 0.95; }
+
+/* The corner QR badge sits over the right pane's caption; keep the text clear of it
+   while it is showing. */
+body.has-badge .pane:last-child figcaption { padding-right: var(--badge-inline); }
 
 /* The polaroid's tilt is the one thing here that stays: it is composition rather
    than motion, and `animation: none` leaves the print resting on the static
    transform `.print` declares for itself above. Everything else - the fades, the
    landing, the drift - is exactly what the preference is asking to be spared. */
 @media (prefers-reduced-motion: reduce) {
-  .tile,
-  .cell,
-  .pane,
-  .print,
+  .layer,
+  .ambient-layer,
+  .print.layer.shown,
+  .layout-polaroid .slot,
+  .print .window img,
   .track[data-motion='drift'] {
     animation: none;
+    transition: none;
   }
 }
 

@@ -30,26 +30,65 @@
   /// projector is already about 480x270 per photo before the gap - roughly the point
   /// at which a face stops being a face from five metres.
   ///
-  /// `enters` is whether a photo taking a slot's turn animates in. The filmstrip is
-  /// the one that says no: its whole band shifts by one frame per slide, so every
-  /// frame's contents change at once and fading them all in would destroy the
-  /// illusion that the strip is simply sliding.
+  /// `layered` is whether a photo taking a slot's turn cross-fades over the one it
+  /// replaces. Each new photo is built as a layer on top of the old, revealed once it
+  /// has decoded, and the old layer is removed after the fade; the slot never blinks
+  /// through to the background in between. The filmstrip is the one that says no: its
+  /// whole band shifts by one frame per slide, so every frame's contents change at
+  /// once and fading them all would destroy the illusion that the strip is sliding.
   ///
-  /// `thumbs` sends a layout to /thumb rather than /display. Only the collage does.
-  /// Twelve display copies (2560px on the long edge) is something like 100 megapixels
-  /// of decoded bitmap held at once, which is real memory on the mini PC under the
-  /// projector; at a twelfth of the screen the 480px thumb is the right size anyway.
-  /// The mosaic's largest tile is half the screen, where a thumb would visibly soften,
-  /// so six display copies is the trade there.
+  /// `ambient` puts a dimmed, blurred copy of the newest photo behind the whole
+  /// layout, the multi-photo counterpart of the single layout's backdrop: the gaps and
+  /// margins take the colour of what is on screen instead of flat black. The split has
+  /// no need of it - each pane carries its own blurred backdrop (`backdrop`).
+  ///
+  /// `thumbs` lets a layout use /thumb rather than /display where a cell is small
+  /// enough for the 480px thumb not to soften. Only the collage does: twelve display
+  /// copies (2560px on the long edge) is something like 100 megapixels of decoded
+  /// bitmap held at once, which is real memory on the mini PC under the projector.
+  /// Its large cells still get the display copy - see imageFor.
   /// </summary>
   const LAYOUTS = {
-    single:    { slots: 1,  cell: null,    window: false, caption: false, enters: false, tilt: false, thumbs: false },
-    mosaic:    { slots: 6,  cell: 'tile',  window: false, caption: false, enters: true,  tilt: false, thumbs: false },
-    polaroid:  { slots: 3,  cell: 'print', window: true,  caption: true,  enters: true,  tilt: true,  thumbs: false },
-    filmstrip: { slots: 5,  cell: 'frame', window: false, caption: false, enters: false, tilt: false, thumbs: false },
-    collage:   { slots: 12, cell: 'cell',  window: false, caption: false, enters: true,  tilt: false, thumbs: true  },
-    split:     { slots: 2,  cell: 'pane',  window: true,  caption: true,  enters: true,  tilt: false, thumbs: false },
+    single:    { slots: 1,  cell: null,    layered: false, ambient: false, caption: false, tilt: false, thumbs: false, backdrop: false },
+    mosaic:    { slots: 6,  cell: 'tile',  layered: true,  ambient: true,  caption: false, tilt: false, thumbs: false, backdrop: false },
+    polaroid:  { slots: 3,  cell: 'slot',  layered: true,  ambient: true,  caption: true,  tilt: true,  thumbs: false, backdrop: false },
+    filmstrip: { slots: 5,  cell: 'frame', layered: false, ambient: true,  caption: false, tilt: false, thumbs: false, backdrop: false },
+    collage:   { slots: 14, cell: 'cell',  layered: true,  ambient: true,  caption: false, tilt: false, thumbs: true,  backdrop: false },
+    split:     { slots: 2,  cell: 'pane',  layered: true,  ambient: false, caption: true,  tilt: false, thumbs: false, backdrop: true  },
   };
+
+  /// The collage's walls, largest first, each a list of rows of landscape (L, 4:3)
+  /// and portrait (P, 3:4) cells. Phones shoot both, and a wall that knows which is
+  /// which can show nearly every photo whole: a portrait photo takes its turn in a
+  /// portrait cell. show.css sizes each cell in proportion to its shape, so a row of
+  /// them fills the width of the screen.
+  ///
+  /// The collage uses the largest wall the playlist can fill, so early in the night it
+  /// is a smaller wall that is full, rather than a big one that is mostly holes; it
+  /// changes shape only when the playlist crosses one of these sizes.
+  const COLLAGE_WALLS = [
+    { min: 14, rows: [['L', 'P', 'L', 'P', 'L'], ['L', 'L', 'L', 'L'], ['P', 'L', 'L', 'P', 'L']] },
+    { min: 6,  rows: [['L', 'L', 'P'], ['P', 'L', 'L']] },
+    { min: 2,  rows: [['L', 'P']] },
+    { min: 0,  rows: [['L']] },
+  ];
+
+  /// The mosaic's walls: a few large photos, in columns rather than rows, so a
+  /// portrait can run the full height of the screen. Same shapes as the collage, so
+  /// portrait photos go to portrait cells here too. Three arrangements, taking turns
+  /// every MOSAIC_WALL_SLIDES slides so a long evening in this layout does not look
+  /// the same for hours.
+  const MOSAIC_WALLS = [
+    { columns: [['P'], ['L', 'P'], ['P', 'L']] },
+    { columns: [['L', 'L'], ['P', 'P'], ['L', 'L']] },
+    { columns: [['L', 'P'], ['P'], ['P', 'L']] },
+  ];
+  const MOSAIC_WALL_SLIDES = 10;
+
+  /// Width over height of each cell shape. A row of cells grows in proportion to
+  /// this and a column in proportion to its inverse, which is what gives each cell
+  /// its shape from nothing but flex-grow.
+  const SHAPE_ASPECT = { L: 4 / 3, P: 3 / 4 };
 
   const DEFAULT_LAYOUT = 'single';
 
@@ -93,7 +132,9 @@
   let cells = [];          // the stage's slot elements, in slot order
   let cellIds = [];        // which image each of those slots is holding
   let track = null;        // the filmstrip's sliding band, null in every other layout
-  let slidesShown = 0;     // advances this page has rendered - see the collage
+  let ambient = null;      // the blurred backdrop behind a multi-photo layout, if it has one
+  let ambientId = null;    // which image the ambient backdrop is currently showing
+  let lastPlaced = null;   // the photo most recently put into a cell, for the backdrop
 
   const imageUrl = (id, thumb) =>
     `/img/${encodeURIComponent(id)}/${thumb ? 'thumb' : 'display'}`;
@@ -414,10 +455,13 @@
     const spec = LAYOUTS[name];
 
     stage.className = `layout-${name}`;
+    delete stage.dataset.wall;
     stage.replaceChildren();
     cells = [];
     cellIds = [];
     track = null;
+    ambient = null;
+    ambientId = null;
     activeSlot = 0;
     // Nothing on the old stage survives, so the "same image, skip the swap"
     // short-circuit in renderSingle must not match against what used to be there.
@@ -436,46 +480,43 @@
       return;
     }
 
-    // The filmstrip's frames ride on a band that slides as one; every other layout
-    // places its cells on the stage directly.
+    if (spec.ambient) {
+      ambient = document.createElement('div');
+      ambient.className = 'ambient';
+      stage.append(ambient);
+    }
+
+    // The filmstrip's frames ride on a track that slides as one, inside a band that
+    // tilts it across the screen; every other layout places its cells on the stage
+    // directly.
     let parent = stage;
     if (name === 'filmstrip') {
+      const band = document.createElement('div');
+      band.className = 'band';
       track = document.createElement('div');
       track.className = 'track';
-      stage.append(track);
+      band.append(track);
+      stage.append(band);
       parent = track;
     }
 
     // One frame more than the filmstrip shows: the photo waiting off the right-hand
     // edge, which one slide's worth of drift brings into view.
-    const count = name === 'filmstrip' ? spec.slots + 1 : spec.slots;
+    // The mosaic and the collage build their cells per wall, in buildWall.
+    const count = name === 'filmstrip' ? spec.slots + 1
+      : name === 'collage' || name === 'mosaic' ? 0
+      : spec.slots;
 
     for (let slot = 0; slot < count; slot++) {
       const figure = document.createElement('figure');
       figure.className = spec.cell;
-      // The mosaic's cells are placed into named grid areas rather than flowing, so
-      // that a photo arriving at 23:00 never reshuffles the wall.
-      if (name === 'mosaic') figure.classList.add(`area-${slot}`);
 
-      const image = document.createElement('img');
-      image.alt = '';
-
-      if (spec.window) {
-        const windowEl = document.createElement('span');
-        windowEl.className = 'window';
-        windowEl.append(image);
-        figure.append(windowEl);
-      } else {
+      // A layered cell starts empty; fillCell builds a layer per photo. The
+      // filmstrip's frames keep one <img> each for the whole evening.
+      if (!spec.layered) {
+        const image = document.createElement('img');
+        image.alt = '';
         figure.append(image);
-      }
-
-      if (spec.caption) {
-        const caption = document.createElement('figcaption');
-        // Two spans, matching the caption bar: a sender's name set apart from their
-        // words. Both are filled with textContent in fillCell - a caption and a
-        // Telegram display name are attacker-controlled and never become markup.
-        caption.append(document.createElement('span'), document.createElement('span'));
-        figure.append(caption);
       }
 
       parent.append(figure);
@@ -500,9 +541,12 @@
         cell.replaceChildren();
       } else {
         cell.hidden = true;
+        if (LAYOUTS[stageLayout]?.layered) cell.replaceChildren();
       }
     }
     cellIds = cellIds.map(() => null);
+    ambient?.replaceChildren();
+    ambientId = null;
     activeSlot = 0;
   }
 
@@ -597,16 +641,111 @@
     return (hash % TILT_RANGE) - (TILT_RANGE - 1) / 2;
   }
 
+  /// A second, independent angle-like number for the same id - how far a print sits
+  /// above or below the line, in the same whole-number range as the tilt. Salted so
+  /// a print's lift does not simply follow its tilt.
+  const liftFor = id => tiltFor(`${id}~lift`);
+
+  /// The collage's small cells get the thumb; anything the thumb would visibly soften
+  /// in - a double cell, or every cell of a small arrangement - gets the display copy.
+  function imageFor(image, spec, figure) {
+    const thumbs = spec.thumbs && figure.clientWidth * (window.devicePixelRatio || 1) <= 560;
+    return imageUrl(image.id, thumbs);
+  }
+
+  /// One photo's layer for a layered cell: the element that fades in over whatever
+  /// the cell showed before. Text goes in with textContent only - a caption and a
+  /// Telegram display name are attacker-controlled and never become markup.
+  function buildLayer(image, spec, figure) {
+    const url = imageFor(image, spec, figure);
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = url;
+
+    let layer = img;
+    if (spec.cell === 'slot' || spec.cell === 'pane') {
+      layer = document.createElement('div');
+      layer.className = spec.cell === 'slot' ? 'print' : 'pane-layer';
+
+      if (spec.backdrop) {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'backdrop';
+        backdrop.style.backgroundImage = `url('${imageUrl(image.id, true)}')`;
+        layer.append(backdrop);
+      }
+
+      if (spec.cell === 'slot') {
+        const windowEl = document.createElement('span');
+        windowEl.className = 'window';
+        windowEl.append(img);
+        layer.append(windowEl);
+      } else {
+        layer.append(img);
+      }
+
+      if (spec.caption) {
+        const caption = document.createElement('figcaption');
+        const sender = document.createElement('span');
+        const text = document.createElement('span');
+        sender.textContent = image.senderName ?? '';
+        text.textContent = image.caption ?? '';
+        caption.append(sender, text);
+        // A photo sent with neither a caption nor a name would otherwise leave an
+        // empty band of leading, for no visible reason.
+        // A print keeps its foot either way (see .print figcaption in show.css).
+        caption.hidden = spec.cell !== 'slot' && !image.senderName && !image.caption;
+        layer.append(caption);
+      }
+    }
+
+    layer.classList.add('layer');
+    if (spec.tilt) {
+      layer.style.setProperty('--tilt', `${tiltFor(image.id)}deg`);
+      layer.style.setProperty('--lift', `${liftFor(image.id) * 0.8}vh`);
+    }
+    return { layer, img };
+  }
+
+  /// Reveals `layer` once `img` has decoded, then drops whatever `container` held
+  /// before it. Waiting for the decode is what keeps a half-loaded photo from
+  /// painting in stripes over the old one; a failed decode reveals anyway, so a
+  /// broken image cannot freeze a cell on its predecessor for the rest of the night.
+  function crossFade(container, layer, img) {
+    const previous = [...container.children].filter(child => child !== layer);
+    const transition = manifest?.settings?.transitionMs ?? 800;
+    const reveal = () => {
+      layer.classList.add('shown');
+      setTimeout(() => previous.forEach(element => element.remove()), transition + 100);
+    };
+    img.decode().then(reveal, reveal);
+  }
+
+  /// The blurred backdrop behind a multi-photo layout, following the newest photo.
+  function setAmbient(image) {
+    if (!ambient || !image || ambientId === image.id) return;
+    ambientId = image.id;
+
+    const url = imageUrl(image.id, true);
+    const layer = document.createElement('div');
+    layer.className = 'ambient-layer';
+    layer.style.backgroundImage = `url('${url}')`;
+    ambient.append(layer);
+
+    const probe = new Image();
+    probe.src = url;
+    crossFade(ambient, layer, probe);
+  }
+
   /// Puts `image` in slot `slot`, or empties the slot when there is no image for it
   /// (a playlist shorter than the grid). A slot whose photo has not changed is left
-  /// entirely alone: re-setting an unchanged src would restart the entrance animation
-  /// of every cell on the screen on every slide, which is the whole-wall refresh
-  /// rotatingSlots exists to avoid.
+  /// entirely alone: rebuilding it would fade every cell on the screen on every
+  /// slide, which is the whole-wall refresh rotatingSlots exists to avoid.
   function fillCell(slot, image, spec) {
     const figure = cells[slot];
 
     if (!image) {
       figure.hidden = true;
+      if (spec.layered) figure.replaceChildren();
       cellIds[slot] = null;
       return;
     }
@@ -615,21 +754,115 @@
     if (cellIds[slot] === image.id) return;
     cellIds[slot] = image.id;
 
-    figure.querySelector('img').src = imageUrl(image.id, spec.thumbs);
-
-    if (spec.caption) {
-      const caption = figure.querySelector('figcaption');
-      const [sender, text] = caption.children;
-      sender.textContent = image.senderName ?? '';
-      text.textContent = image.caption ?? '';
-      // A photo sent with neither a caption nor a name would otherwise leave an
-      // empty line of leading under the print, making one mat taller than its
-      // neighbours for no visible reason.
-      caption.hidden = !image.senderName && !image.caption;
+    if (!spec.layered) {
+      figure.querySelector('img').src = imageUrl(image.id, spec.thumbs);
+      lastPlaced = image;
+      return;
     }
 
-    if (spec.tilt) figure.style.setProperty('--tilt', `${tiltFor(image.id)}deg`);
-    if (spec.enters) restartAnimation(figure);
+    const { layer, img } = buildLayer(image, spec, figure);
+    figure.append(layer);
+    crossFade(figure, layer, img);
+    lastPlaced = image;
+  }
+
+  /// Lays out a wall - one of COLLAGE_WALLS (rows) or MOSAIC_WALLS (columns) - with
+  /// a cell per entry, marked with the shape it wants. The wall it replaces fades out
+  /// under it and is then removed, so a change of arrangement is one dissolve rather
+  /// than a cut to black; the ambient backdrop stays throughout.
+  function buildWall(wall, cellClass) {
+    const transition = manifest?.settings?.transitionMs ?? 800;
+    for (const old of stage.querySelectorAll('.wall:not(.leaving)')) {
+      old.classList.add('leaving');
+      setTimeout(() => old.remove(), transition * 1.5 + 200);
+    }
+
+    cells = [];
+    cellIds = [];
+
+    const inColumns = Boolean(wall.columns);
+    const container = document.createElement('div');
+    container.className = `wall ${inColumns ? 'in-columns' : 'in-rows'}`;
+
+    for (const shapes of wall.columns ?? wall.rows) {
+      const line = document.createElement('div');
+      line.className = 'wall-line';
+      // A column's width is set by how tall its cells are when stacked: the sum of
+      // their heights at unit width is how many widths tall it is.
+      if (inColumns) {
+        const height = shapes.reduce((sum, shape) => sum + 1 / SHAPE_ASPECT[shape], 0);
+        line.style.flexGrow = String(1 / height);
+      }
+      for (const shape of shapes) {
+        const figure = document.createElement('figure');
+        figure.className = cellClass;
+        figure.dataset.shape = shape;
+        figure.style.flexGrow = String(inColumns ? 1 / SHAPE_ASPECT[shape] : SHAPE_ASPECT[shape]);
+        line.append(figure);
+        cells.push(figure);
+        cellIds.push(null);
+      }
+      container.append(line);
+    }
+
+    stage.append(container);
+    // Next frame, so the fade starts from the wall's initial transparent state.
+    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('shown')));
+  }
+
+  const isPortrait = image => image.height > image.width;
+
+  /// Whether `items` has enough photos of each shape to fill every cell of `wall`
+  /// with one of its own shape.
+  function sortable(wall, items) {
+    const shapes = (wall.columns ?? wall.rows).flat();
+    const portraits = items.filter(isPortrait).length;
+    const needP = shapes.filter(shape => shape === 'P').length;
+    return portraits >= needP && items.length - portraits >= shapes.length - needP;
+  }
+
+  /// The wall's cells at slide `index`: each cell rotates through the photos of its
+  /// own shape. The landscape and the portrait cells take alternate slides, so one
+  /// cell changes per slide, as on the other layouts.
+  ///
+  /// When either shape has too few photos to fill its cells - an evening of nothing
+  /// but landscape shots - the wall stops sorting and rotates everything through
+  /// every cell, cropping to fit, rather than leaving holes or showing a photo twice.
+  function shapeSlots(items, index, wall) {
+    const wanted = new Array(cells.length);
+
+    if (!sortable(wall, items)) {
+      rotatingSlots(items, index, cells.length).forEach((image, slot) => { wanted[slot] = image; });
+      return wanted;
+    }
+
+    const byShape = { L: items.filter(image => !isPortrait(image)), P: items.filter(isPortrait) };
+    const slotsOf = shape => cells
+      .map((cell, slot) => (cell.dataset.shape === shape ? slot : -1))
+      .filter(slot => slot >= 0);
+    const turns = { L: Math.ceil(index / 2), P: Math.floor(index / 2) };
+
+    for (const shape of ['L', 'P']) {
+      const group = slotsOf(shape);
+      rotatingSlots(byShape[shape], turns[shape], group.length)
+        .forEach((image, at) => { wanted[group[at]] = image; });
+    }
+    return wanted;
+  }
+
+  /// Which wall the mosaic shows now. The arrangements take turns by the clock rather
+  /// than by a count of slides, so two screens in one room change together. Only the
+  /// ones the playlist can fill without cropping are in the rotation, when there are
+  /// any; a playlist too short for any of them gets one of the collage's small walls.
+  function mosaicWall(items) {
+    const fits = MOSAIC_WALLS.filter(wall => wall.columns.flat().length <= items.length);
+    if (fits.length === 0) return COLLAGE_WALLS.find(wall => items.length >= wall.min);
+
+    const sorted = fits.filter(wall => sortable(wall, items));
+    const choices = sorted.length > 0 ? sorted : fits;
+    const seconds = manifest?.settings?.slideSeconds ?? 8;
+    const turn = Math.floor(Date.now() / (seconds * MOSAIC_WALL_SLIDES * 1000));
+    return choices[turn % choices.length];
   }
 
   // ---- rendering -----------------------------------------------------------
@@ -737,27 +970,39 @@
     currentImage = playlist[index] ?? null;
     currentImageId = currentImage?.id ?? null;
 
+    lastPlaced = null;
+    fillLayout(name, index, spec);
+    // The backdrop follows the photo that just arrived, which in the rotating walls
+    // is not necessarily the one at the cursor.
+    setAmbient(lastPlaced ?? (ambientId === null ? currentImage : null));
+  }
+
+  function fillLayout(name, index, spec) {
     if (name === 'filmstrip') { renderFilmstrip(index, spec); return; }
 
-    const wanted = name === 'split'
-      ? splitPanes(playlist, index)
-      : rotatingSlots(playlist, index, spec.slots);
+    if (name === 'split') {
+      splitPanes(playlist, index).forEach((image, slot) => fillCell(slot, image, spec));
+      for (let slot = playlist.length; slot < cells.length; slot++) fillCell(slot, undefined, spec);
+      return;
+    }
 
-    // The collage is the one layout that deliberately shows less than it could at the
-    // start of the night: it opens on a single photo and gains a cell per slide, so
-    // the room watches the screen compose itself. How full it is comes from how many
-    // slides this page has rendered, not from the playlist position - the position
-    // wraps, and the grid would shrink again every time the show came round. That
-    // makes it a per-screen number, and it is meant to be: a machine that reloads at
-    // 23:00 drops back to one cell and refills over the next twelve slides. Switching
-    // into the collage from another layout does not, because the count has been
-    // running all along - the organiser who picks it two hours in gets a full grid
-    // rather than a minute of the room watching it fill again.
-    const filled = name === 'collage'
-      ? Math.min(slidesShown + 1, wanted.length)
-      : wanted.length;
+    if (name === 'collage' || name === 'mosaic') {
+      const wall = name === 'collage'
+        ? COLLAGE_WALLS.find(candidate => playlist.length >= candidate.min)
+        : mosaicWall(playlist);
+      const key = JSON.stringify(wall);
+      // A new wall moves every cell, so nothing on the old one can be kept.
+      if (stage.dataset.wall !== key) {
+        stage.dataset.wall = key;
+        buildWall(wall, spec.cell);
+      }
+      const wanted = shapeSlots(playlist, index, wall);
+      cells.forEach((_, slot) => fillCell(slot, wanted[slot], spec));
+      return;
+    }
 
-    cells.forEach((_, slot) => fillCell(slot, slot < filled ? wanted[slot] : undefined, spec));
+    const wanted = rotatingSlots(playlist, index, spec.slots);
+    cells.forEach((_, slot) => fillCell(slot, wanted[slot], spec));
   }
 
   /// Arms one slide's zoom. The direction is drawn per slide - in or out, toward one
@@ -824,8 +1069,6 @@
     else renderLayout(layout, lastShownIndex);
 
     cursor = (lastShownIndex + 1) % playlist.length;
-    // Counted after the render, so the collage's first slide shows one cell.
-    slidesShown++;
     preload(2, LAYOUTS[layout].thumbs);
 
     const seconds = manifest?.settings?.slideSeconds ?? 8;
