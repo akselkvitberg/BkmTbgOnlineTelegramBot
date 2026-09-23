@@ -33,6 +33,12 @@ public sealed class AppConfig
     public bool LocalDev { get; init; }
     public string? StorageDir { get; init; }
 
+    /// <summary>
+    /// Optional. The header Cloud Scheduler sends to /internal/retention. Unset, the
+    /// route answers 404 and photos are only removed by hand.
+    /// </summary>
+    public string? RetentionSecret { get; init; }
+
     private static readonly string[] SecretKeys =
     [
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_PATH",
@@ -91,6 +97,7 @@ public sealed class AppConfig
             JoinCode = joinCode,
             LocalDev = localDev,
             StorageDir = config["STORAGE_DIR"]?.Trim(),
+            RetentionSecret = string.IsNullOrWhiteSpace(config["RETENTION_SECRET"]) ? null : config["RETENTION_SECRET"]!.Trim(),
         };
     }
 
@@ -99,6 +106,7 @@ public sealed class AppConfig
     {
         foreach (var key in SecretKeys) logger.LogInformation("Secret {Key} loaded.", key);
         if (JoinCode is not null) logger.LogInformation("Secret {Key} loaded.", "JOIN_CODE");
+        if (RetentionSecret is not null) logger.LogInformation("Secret {Key} loaded.", "RETENTION_SECRET");
         if (LocalDev)
             logger.LogWarning("LOCAL_DEV: storing files in {Dir}; Telegram is offline.", StorageDir);
         else

@@ -134,6 +134,7 @@ public static class ApiEndpoints
                 Layout = s.Layout.ToString().ToLowerInvariant(),
                 s.TakeoverImageId,
                 s.TakeoverUntil,
+                Retention = new { ev.Retention.MaxAgeDays, ev.Retention.KeepNewest },
                 Senders = state.Senders.Select(sender => new
                 {
                     sender.Id,

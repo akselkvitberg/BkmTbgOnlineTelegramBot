@@ -140,4 +140,12 @@ public class AppConfigTests
 
         Assert.Equal("party2026", AppConfig.Load(Config(pairs)).JoinCode);
     }
+
+    [Fact]
+    public void The_retention_secret_is_optional_and_trimmed()
+    {
+        Assert.Null(AppConfig.Load(Config(Complete())).RetentionSecret);
+        var pairs = Complete().Append(("RETENTION_SECRET", " s3cret\n")).ToArray();
+        Assert.Equal("s3cret", AppConfig.Load(Config(pairs)).RetentionSecret);
+    }
 }

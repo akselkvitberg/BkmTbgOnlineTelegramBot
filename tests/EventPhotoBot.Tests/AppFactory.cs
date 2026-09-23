@@ -16,6 +16,10 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     public const string WebhookPath = "hook-abc";
     public const string WebhookSecret = "tg-secret";
     public const string JoinCode = "party2026";
+    public const string DefaultRetentionSecret = "retention-secret";
+
+    /// <summary>Set before the first client is created; null leaves RETENTION_SECRET unset.</summary>
+    public string? RetentionSecret { get; init; } = DefaultRetentionSecret;
 
     public InMemoryObjectStore Objects { get; } = new();
     public FakeTelegramClient Telegram { get; } = new();
@@ -31,6 +35,7 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         builder.UseSetting("ADMIN_PASSWORD", Password);
         builder.UseSetting("COOKIE_SIGNING_KEY", SigningKey);
         builder.UseSetting("JOIN_CODE", JoinCode);
+        if (RetentionSecret is not null) builder.UseSetting("RETENTION_SECRET", RetentionSecret);
 
         builder.ConfigureServices(services =>
         {
