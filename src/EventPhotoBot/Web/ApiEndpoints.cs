@@ -1,7 +1,7 @@
-using System.Text.Json;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
+using Microsoft.AspNetCore.Mvc;
 
 namespace EventPhotoBot.Web;
 
@@ -36,11 +36,6 @@ public static class ApiEndpoints
     // takeover banner exists to catch after the fact; clamping up front means a typo
     // strands a photo for at most a day, not indefinitely.
     private const int MaxTakeoverMinutes = 24 * 60;
-
-    // Truncated rather than rejected: the name is display text on one screen, and
-    // losing the tail of an absurd paste beats handing the organiser a validation
-    // error in the middle of setting up.
-    private const int MaxEventNameLength = 100;
 
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
@@ -92,7 +87,8 @@ public static class ApiEndpoints
 
     public static void MapApi(this WebApplication app)
     {
-        app.MapGet("/api/images", (string? status, StateStore store) =>
+        app.MapGet("/api/images",
+            (string? status, [FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
             var images = store.Snapshot.Images.Values.AsEnumerable();
 
@@ -103,24 +99,31 @@ public static class ApiEndpoints
                 images = images.Where(i => i.Status == wanted);
             }
 
+            if (!string.IsNullOrEmpty(eventId))
+            {
+                if (store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
+                images = images.Where(i => i.EventId == eventId);
+            }
+
             return Results.Ok(images
                 .OrderByDescending(i => i.SortKey, StringComparer.Ordinal)
                 .Select(i => new
                 {
-                    i.Id, i.SenderId, i.SenderName, i.Caption, i.Width, i.Height,
+                    i.Id, i.EventId, i.SenderId, i.SenderName, i.Caption, i.Width, i.Height,
                     Status = i.Status.ToString().ToLowerInvariant(),
                     Pin = i.Pin.ToString().ToLowerInvariant(),
                     i.ReceivedAt,
                 }));
         });
 
-        app.MapGet("/api/settings", (StateStore store) =>
+        app.MapGet("/api/settings", ([FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
             var state = store.Snapshot;
-            var ev = state.Default();
+            if (EventScope.Resolve(state, eventId) is not { } ev) return EventScope.UnknownEvent();
             var s = ev.Settings;
             return Results.Ok(new
             {
+                EventId = ev.Id,
                 EventName = ev.Name,
                 s.SlideSeconds,
                 s.TransitionMs,
@@ -218,25 +221,25 @@ public static class ApiEndpoints
             });
 
         app.MapGet("/api/manifest",
-            (HttpContext http, StateStore store, BotIdentity identity) =>
+            (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
-            var etag = $"\"{store.Generation}\"";
+            var state = store.Snapshot;
+            if (EventScope.Resolve(state, eventId) is not { } ev) return EventScope.UnknownEvent();
+            var now = DateTimeOffset.UtcNow;
+
+            // The generation alone is not enough: which event this is, and whether it is
+            // open, change what the screen gets — and an event opens and closes on its
+            // own clock, with no write to move the generation.
+            var etag = $"\"{store.Generation}-{ev.Id}-{(ev.IsOpen(now) ? "open" : "closed")}\"";
 
             if (http.Request.Headers.IfNoneMatch.Any(v => v == etag))
                 return Results.StatusCode(StatusCodes.Status304NotModified);
 
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
-
-            // The join URL depends only on the event's code, which changes only with
-            // a state write — the ETag above still keys off store.Generation alone,
-            // and the no-object-store-IO guarantee this path is tested for is unaffected.
-            var state = store.Snapshot;
-            var ev = state.Default();
-            return Results.Ok(ManifestBuilder.Build(
-                state, ev, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrlFor(ev.JoinCode)));
+            return Results.Ok(ManifestBuilder.Build(state, ev, store.Generation, now, identity.JoinUrlFor(ev.JoinCode)));
         });
 
         app.MapPost("/api/images/{id}/status",
@@ -309,8 +312,11 @@ public static class ApiEndpoints
             });
         });
 
-        app.MapDelete("/api/takeover", async (StateStore store) =>
+        app.MapDelete("/api/takeover",
+            async ([FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
+            if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
+
             // StateStore.MutateAsync always writes, even when the mutation callback
             // changes nothing - so guarding inside the callback would not have
             // avoided the write. Skipping the call outright when there is plainly
@@ -321,13 +327,13 @@ public static class ApiEndpoints
             // in this codebase: not authoritative by itself, but MutateAsync's own
             // clone-and-check inside the lock would just no-op harmlessly on the rare
             // race where a takeover appears between this check and the call.
-            if (store.Snapshot.Default().Settings.TakeoverImageId is null) return Results.Ok();
+            if (target.Settings.TakeoverImageId is null) return Results.Ok();
 
             await store.MutateAsync(state =>
             {
-                var settings = state.Default().Settings;
-                settings.TakeoverImageId = null;
-                settings.TakeoverUntil = null;
+                if (state.Find(target.Id) is not { } ev) return;
+                ev.Settings.TakeoverImageId = null;
+                ev.Settings.TakeoverUntil = null;
             });
             return Results.Ok();
         });
@@ -356,16 +362,18 @@ public static class ApiEndpoints
         // screen goes from every photo to none in a single generation rather than
         // thinning out one delete at a time.
         app.MapDelete("/api/images",
-            async (StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async ([FromQuery(Name = "event")] string? eventId, StateStore store, IObjectStore objects,
+                CancellationToken ct) =>
             {
-                var eventId = store.Snapshot.Default().Id;
-                if (!store.Snapshot.Images.Values.Any(i => i.EventId == eventId)) return Results.Ok(new { deleted = 0 });
+                if (EventScope.Resolve(store.Snapshot, eventId) is not { } ev) return EventScope.UnknownEvent();
+                var targetId = ev.Id;
+                if (!store.Snapshot.Images.Values.Any(i => i.EventId == targetId)) return Results.Ok(new { deleted = 0 });
 
                 var removed = await store.MutateAsync(state =>
                 {
-                    var images = state.Images.Values.Where(i => i.EventId == eventId).ToList();
+                    var images = state.Images.Values.Where(i => i.EventId == targetId).ToList();
                     foreach (var image in images) state.Images.Remove(image.Id);
-                    var settings = state.Default().Settings;
+                    var settings = state.Find(targetId)!.Settings;
                     settings.TakeoverImageId = null;
                     settings.TakeoverUntil = null;
                     return images;
@@ -378,8 +386,10 @@ public static class ApiEndpoints
             });
 
         app.MapPost("/api/images",
-            async (HttpRequest http, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async (HttpRequest http, [FromQuery(Name = "event")] string? eventId, StateStore store,
+                IObjectStore objects, CancellationToken ct) =>
             {
+                if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
                 if (!http.HasFormContentType) return Results.BadRequest(new { error = "Forventet en filopplasting." });
 
                 var form = await http.ReadFormAsync(ct);
@@ -424,6 +434,7 @@ public static class ApiEndpoints
                 var extension = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
                 if (!AllowedUploadExtensions.Contains(extension)) extension = "jpg";
                 var now = DateTimeOffset.UtcNow;
+                var targetId = target.Id;
 
                 await objects.WriteAsync(ObjectPaths.Original(id, extension),
                     original, "application/octet-stream", null, ct);
@@ -433,7 +444,7 @@ public static class ApiEndpoints
                 await store.MutateAsync(state => state.Images[id] = new ImageRecord
                 {
                     Id = id,
-                    EventId = state.Default().Id,
+                    EventId = targetId,
                     Source = ImageSource.Admin,
                     SenderId = null,
                     SenderName = null,
@@ -453,8 +464,11 @@ public static class ApiEndpoints
                 return Results.Ok(new { id });
             }).DisableAntiforgery();
 
-        app.MapPatch("/api/settings", async (SettingsPatch patch, StateStore store) =>
+        app.MapPatch("/api/settings",
+            async (SettingsPatch patch, [FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
+            if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
+
             if (patch.Order is { } order
                 && order is not ("shuffle" or "newest-first"))
                 return Results.BadRequest(new { error = "order må være shuffle eller newest-first." });
@@ -474,17 +488,19 @@ public static class ApiEndpoints
                 layout = parsed;
             }
 
+            // Validated before the mutation, like the name check above: an empty name
+            // must be a 400 that leaves the existing name untouched, not a value the
+            // mutation callback has to reject after already committing other fields.
+            string? name = null;
+            if (patch.EventName is { } eventName && (name = EventEndpoints.CleanName(eventName)) is null)
+                return Results.BadRequest(new { error = "Navnet kan ikke være tomt." });
+            var targetId = target.Id;
+
             await store.MutateAsync(state =>
             {
-                var ev = state.Default();
+                if (state.Find(targetId) is not { } ev) return;
                 var s = ev.Settings;
-                if (patch.EventName is { } eventName)
-                {
-                    var trimmed = eventName.Trim();
-                    ev.Name = trimmed.Length > MaxEventNameLength
-                        ? trimmed[..MaxEventNameLength]
-                        : trimmed;
-                }
+                if (name is not null) ev.Name = name;
                 if (patch.SlideSeconds is { } slideSeconds) s.SlideSeconds = Math.Clamp(slideSeconds, 2, 120);
                 if (patch.TransitionMs is { } transitionMs) s.TransitionMs = Math.Clamp(transitionMs, 0, 5000);
                 if (patch.Order is { } o) s.Order = o == "newest-first" ? SlideOrder.NewestFirst : SlideOrder.Shuffle;

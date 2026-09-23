@@ -365,16 +365,58 @@ public class ManifestBuilderTests
     }
 
     [Fact]
-    public void An_event_whose_name_has_never_been_set_reports_an_empty_name()
+    public void An_empty_event_name_is_passed_through_to_the_screen()
     {
-        // The screen's empty state hides the heading on an empty string, so a
-        // freshly deployed event with nobody in admin yet shows no name rather
-        // than the word "null".
+        // The screen's empty state hides the heading on an empty string, so an
+        // event whose name was cleared shows no name rather than the word "null".
         var state = TestState.New();
         state.Default().Name = "";
 
         var manifest = Build(state, 0);
 
         Assert.Equal("", manifest.Settings.EventName);
+    }
+
+    [Fact]
+    public void Another_events_images_and_pending_count_stay_out()
+    {
+        var state = StateWith(("a", ImageStatus.Approved, PinKind.None), ("p", ImageStatus.Pending, PinKind.None));
+        state.AddEvent("other");
+        state.Images["o"] = new ImageRecord
+        {
+            Id = "o", EventId = "other", Status = ImageStatus.Approved, Sha256 = "o", SortKey = "9999", OriginalExtension = "jpg",
+        };
+
+        var manifest = Build(state, 1);
+
+        Assert.Equal(["a"], manifest.Images.Select(i => i.Id));
+        Assert.Equal(1, manifest.PendingCount);
+    }
+
+    [Fact]
+    public void The_pending_total_counts_every_open_event_and_skips_closed_ones()
+    {
+        var state = StateWith(("p1", ImageStatus.Pending, PinKind.None));
+        state.AddEvent("open");
+        state.AddEvent("shut", closed: true);
+        foreach (var (id, ev) in new[] { ("p2", "open"), ("p3", "shut") })
+            state.Images[id] = new ImageRecord
+            {
+                Id = id, EventId = ev, Status = ImageStatus.Pending, Sha256 = id, SortKey = id, OriginalExtension = "jpg",
+            };
+
+        Assert.Equal(2, Build(state, 1).PendingTotal);
+    }
+
+    [Fact]
+    public void A_closed_event_hides_the_invite_whatever_the_setting_says()
+    {
+        var state = TestState.New();
+        var ev = state.AddEvent("shut", closed: true);
+
+        var manifest = ManifestBuilder.Build(state, ev, 1, Now, "https://t.me/bot?start=x");
+
+        Assert.False(manifest.Settings.ShowJoinInvite);
+        Assert.Null(manifest.Settings.JoinUrl);
     }
 }

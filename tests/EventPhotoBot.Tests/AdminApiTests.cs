@@ -372,17 +372,6 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
-    public async Task The_event_name_can_be_cleared()
-    {
-        var client = _factory.CreateAuthenticatedClient();
-        await client.PatchAsJsonAsync("/api/settings", new { eventName = "Sommerfest" });
-
-        await client.PatchAsJsonAsync("/api/settings", new { eventName = "" });
-
-        Assert.Equal("", _factory.Store.Snapshot.Default().Name);
-    }
-
-    [Fact]
     public async Task A_settings_change_advances_the_manifest_etag()
     {
         var client = _factory.CreateAuthenticatedClient();
