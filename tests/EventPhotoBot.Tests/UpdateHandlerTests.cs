@@ -234,7 +234,8 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(TextFrom(Guest, "/start"));
 
         var (_, text) = Assert.Single(harness.Telegram.Sent);
-        Assert.Contains("slettes etter arrangementet", text);
+        Assert.StartsWith("Du sender bilder til Daglig.", text);
+        Assert.DoesNotContain("slettes", text);
     }
 
     [Fact]
@@ -751,5 +752,157 @@ public class UpdateHandlerTests
         Assert.Empty(harness.Telegram.Sent);
         Assert.Empty(harness.Store.Snapshot.Senders);
         Assert.Empty(harness.Store.Snapshot.Groups);
+    }
+
+    // ---- Events ----
+
+    private const string WeddingCode = "wedding-code";
+
+    // Controller ruling: Wedding must return the event, since
+    // A_code_for_a_scheduled_event_admits_nobody_yet sets OpensAt on the result.
+    private static Event Wedding(EventState s, bool closed = false) =>
+        s.AddEvent("bryllup", name: "Bryllup", joinCode: WeddingCode, closed: closed);
+
+    [Fact]
+    public async Task A_new_sender_joining_a_special_event_is_a_member_of_that_event_only()
+    {
+        var harness = await Harness.CreateAsync(s => Wedding(s));
+
+        await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {WeddingCode}"));
+
+        var sender = Assert.Single(harness.Store.Snapshot.Senders);
+        Assert.Equal(["bryllup"], sender.Memberships.Select(m => m.EventId));
+        Assert.Equal("bryllup", sender.CurrentEventId);
+        Assert.Contains("Bryllup", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task A_daily_member_switching_to_a_special_event_is_told_where_photos_go()
+    {
+        var harness = await Harness.CreateAsync(s => { Wedding(s); s.Senders.Add(Roster(Guest)); });
+
+        await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {WeddingCode}"));
+
+        var sender = Assert.Single(harness.Store.Snapshot.Senders);
+        Assert.Equal("bryllup", sender.CurrentEventId);
+        Assert.Equal(2, sender.Memberships.Count);
+        Assert.Equal("Du sender nå bilder til Bryllup.", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task A_photo_goes_to_the_current_event_and_the_reply_names_it()
+    {
+        var harness = await Harness.CreateAsync(s => { Wedding(s); s.Senders.Add(Roster(Guest)); });
+        await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {WeddingCode}"));
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest));
+
+        Assert.Equal("bryllup", Assert.Single(harness.Store.Snapshot.Images.Values).EventId);
+        Assert.StartsWith("Mottatt til Bryllup", harness.Telegram.Sent[^1].Text);
+    }
+
+    [Fact]
+    public async Task Once_the_special_event_closes_a_daily_member_falls_back_silently()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            Wedding(s, closed: true);
+            var guest = Roster(Guest);
+            guest.CurrentEventId = "bryllup";
+            guest.Memberships.Add(new Membership { EventId = "bryllup" });
+            s.Senders.Add(guest);
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest));
+
+        Assert.Equal("daglig", Assert.Single(harness.Store.Snapshot.Images.Values).EventId);
+        // Only the acknowledgement; no "the wedding has ended" notice.
+        Assert.StartsWith("Mottatt til Daglig", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task Once_the_special_event_closes_a_guest_of_only_that_event_is_declined()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            Wedding(s, closed: true);
+            s.Senders.Add(new Sender
+            {
+                Id = Guest, Name = "Guest", CurrentEventId = "bryllup",
+                Memberships = [new Membership { EventId = "bryllup" }],
+            });
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest));
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.DoesNotContain(harness.Objects.Paths, IsImageObject);
+        Assert.Equal("Bryllup er avsluttet.", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task A_code_for_a_closed_event_admits_nobody()
+    {
+        var harness = await Harness.CreateAsync(s => Wedding(s, closed: true));
+
+        await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {WeddingCode}"));
+
+        Assert.Empty(harness.Store.Snapshot.Senders);
+        Assert.Equal("Bryllup er avsluttet.", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task A_code_for_a_scheduled_event_admits_nobody_yet()
+    {
+        var harness = await Harness.CreateAsync(s => Wedding(s).OpensAt = DateTimeOffset.UtcNow.AddDays(1));
+
+        await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {WeddingCode}"));
+
+        Assert.Empty(harness.Store.Snapshot.Senders);
+        Assert.Equal("Bryllup har ikke startet ennå.", Assert.Single(harness.Telegram.Sent).Text);
+    }
+
+    [Fact]
+    public async Task Auto_approve_in_the_daily_event_does_not_carry_over_to_a_special_one()
+    {
+        var harness = await Harness.CreateAsync(s => { Wedding(s); s.Senders.Add(Roster(Guest, autoApprove: true)); });
+        await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {WeddingCode}"));
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest));
+
+        Assert.Equal(ImageStatus.Pending, Assert.Single(harness.Store.Snapshot.Images.Values).Status);
+    }
+
+    [Fact]
+    public async Task The_same_photo_can_be_sent_to_two_events()
+    {
+        var harness = await Harness.CreateAsync(s => { Wedding(s); s.Senders.Add(Roster(Guest)); });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "same"));
+        await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {WeddingCode}"));
+        await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "same"));
+
+        Assert.Equal(["bryllup", "daglig"], harness.Store.Snapshot.Images.Values.Select(i => i.EventId).Order());
+    }
+
+    [Fact]
+    public async Task An_event_closing_during_the_download_is_seen_under_the_lock()
+    {
+        var harness = await Harness.CreateAsync(s => { Wedding(s); s.Senders.Add(Roster(Guest)); });
+        await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {WeddingCode}"));
+        StockFile(harness, "large");
+        harness.Telegram.OnDownload = () => harness.Store
+            .MutateAsync(s => s.Find("bryllup")!.ClosedAt = DateTimeOffset.UtcNow.AddSeconds(-1))
+            .GetAwaiter().GetResult();
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest));
+
+        Assert.Equal("daglig", Assert.Single(harness.Store.Snapshot.Images.Values).EventId);
+        Assert.StartsWith("Mottatt til Daglig", harness.Telegram.Sent[^1].Text);
     }
 }
