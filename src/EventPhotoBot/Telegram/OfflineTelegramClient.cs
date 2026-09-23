@@ -68,10 +68,10 @@ public sealed class OfflineTelegramClient(ILogger<OfflineTelegramClient> logger)
     }
 
     public Task SetMessageReactionAsync(
-        long chatId, long messageId, string emoji, CancellationToken ct = default)
+        long chatId, long messageId, string? emoji, CancellationToken ct = default)
     {
         logger.LogInformation("Bot → {ChatId}: {Emoji} on message {MessageId}", chatId, emoji, messageId);
-        Record(new BotReply(chatId, emoji, DateTimeOffset.UtcNow, Reaction: true));
+        Record(new BotReply(chatId, emoji ?? "", DateTimeOffset.UtcNow, Reaction: true));
         return Task.CompletedTask;
     }
 

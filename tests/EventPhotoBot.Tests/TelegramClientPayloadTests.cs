@@ -55,4 +55,14 @@ public class TelegramClientPayloadTests
         Assert.Equal("editMessageText", capture.Calls[1].Method);
         Assert.Equal(9, capture.Calls[1].Body.GetProperty("message_id").GetInt64());
     }
+
+    [Fact]
+    public async Task Clearing_a_reaction_sends_an_empty_list()
+    {
+        var (client, capture) = Build();
+
+        await client.SetMessageReactionAsync(-100, 7, null);
+
+        Assert.Equal(0, capture.Calls.Single().Body.GetProperty("reaction").GetArrayLength());
+    }
 }

@@ -18,8 +18,9 @@ public interface ITelegramClient
     /// <summary>
     /// Puts one emoji reaction on a message. How the bot acknowledges a photo in a
     /// group, where a text reply per photo would be noise in everybody's chat.
+    /// Null takes the bot's reaction off.
     /// </summary>
-    Task SetMessageReactionAsync(long chatId, long messageId, string emoji, CancellationToken ct = default);
+    Task SetMessageReactionAsync(long chatId, long messageId, string? emoji, CancellationToken ct = default);
 
     /// <summary>Takes the bot out of a group. False if Telegram refused.</summary>
     Task<bool> LeaveChatAsync(long chatId, CancellationToken ct = default);

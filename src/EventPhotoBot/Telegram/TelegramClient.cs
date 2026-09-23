@@ -64,13 +64,13 @@ public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<Te
     };
 
     public async Task SetMessageReactionAsync(
-        long chatId, long messageId, string emoji, CancellationToken ct = default)
+        long chatId, long messageId, string? emoji, CancellationToken ct = default)
     {
         using var response = await http.PostAsJsonAsync($"{Api}/setMessageReaction", new
         {
             chat_id = chatId,
             message_id = messageId,
-            reaction = new[] { new { type = "emoji", emoji } },
+            reaction = emoji is null ? Array.Empty<object>() : new object[] { new { type = "emoji", emoji } },
         }, ct);
         // Same as sendMessage: the photo is already stored. A group can also restrict
         // which reactions are allowed, which makes this fail with a 400 for reasons

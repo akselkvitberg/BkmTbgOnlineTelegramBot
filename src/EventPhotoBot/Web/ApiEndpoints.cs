@@ -243,25 +243,31 @@ public static class ApiEndpoints
         });
 
         app.MapPost("/api/images/{id}/status",
-            async (string id, StatusRequest request, StateStore store) =>
+            async (string id, StatusRequest request, StateStore store,
+                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (!TryParseName<ImageStatus>(request.Status, out var status)
                     || status == ImageStatus.Pending)
                     return Results.BadRequest(
                         new { error = "status må være approved, hidden eller rejected." });
 
-                return await store.MutateAsync(state =>
+                var (result, image) = await store.MutateAsync(state =>
                 {
-                    if (!state.Images.TryGetValue(id, out var image)) return Results.NotFound();
+                    if (!state.Images.TryGetValue(id, out var img)) return (Results.NotFound(), (ImageRecord?)null);
 
-                    image.Status = status;
-                    image.DecidedAt = DateTimeOffset.UtcNow;
+                    img.Status = status;
+                    img.DecidedAt = DateTimeOffset.UtcNow;
 
                     // An image that is no longer approved cannot be holding the screen.
                     if (status != ImageStatus.Approved) ClearTakeoverIfHeldBy(state, id);
 
-                    return Results.Ok();
+                    return (Results.Ok(), img);
                 });
+
+                if (image is not null)
+                    await Reactions.SyncAsync(telegram, image, loggers.CreateLogger("Reactions"), ct);
+
+                return result;
             });
 
         app.MapPost("/api/images/{id}/pin",
@@ -279,7 +285,8 @@ public static class ApiEndpoints
                 });
             });
 
-        app.MapPut("/api/takeover", async (TakeoverRequest request, StateStore store) =>
+        app.MapPut("/api/takeover", async (TakeoverRequest request, StateStore store,
+            ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
         {
             // Guard before the dictionary lookup: System.Text.Json happily deserializes
             // a missing or explicitly null "imageId" into ImageId = null (the record's
@@ -290,26 +297,31 @@ public static class ApiEndpoints
             if (string.IsNullOrEmpty(request.ImageId))
                 return Results.BadRequest(new { error = "imageId er påkrevd." });
 
-            return await store.MutateAsync(state =>
+            var (result, image) = await store.MutateAsync(state =>
             {
-                if (!state.Images.TryGetValue(request.ImageId, out var image))
-                    return Results.NotFound();
+                if (!state.Images.TryGetValue(request.ImageId, out var img))
+                    return (Results.NotFound(), (ImageRecord?)null);
 
                 // Takeover implies the image is on screen, so it is approved by definition.
-                if (image.Status != ImageStatus.Approved)
+                if (img.Status != ImageStatus.Approved)
                 {
-                    image.Status = ImageStatus.Approved;
-                    image.DecidedAt = DateTimeOffset.UtcNow;
+                    img.Status = ImageStatus.Approved;
+                    img.DecidedAt = DateTimeOffset.UtcNow;
                 }
 
-                var settings = state.EventOf(image).Settings;
+                var settings = state.EventOf(img).Settings;
                 settings.TakeoverImageId = request.ImageId;
                 settings.TakeoverUntil = request.Minutes is { } minutes
                     ? DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(minutes, 1, MaxTakeoverMinutes))
                     : null;
 
-                return Results.Ok();
+                return (Results.Ok(), img);
             });
+
+            if (image is not null)
+                await Reactions.SyncAsync(telegram, image, loggers.CreateLogger("Reactions"), ct);
+
+            return result;
         });
 
         app.MapDelete("/api/takeover",
@@ -339,7 +351,8 @@ public static class ApiEndpoints
         });
 
         app.MapDelete("/api/images/{id}",
-            async (string id, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async (string id, StateStore store, IObjectStore objects,
+                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 var removed = await store.MutateAsync(state =>
                 {
@@ -355,12 +368,16 @@ public static class ApiEndpoints
                 // invisible and the lifecycle rule sweeps them up.
                 await ImageObjects.DeleteAsync(objects, removed, ct);
 
+                await Reactions.ClearAsync(telegram, removed, loggers.CreateLogger("Reactions"), ct);
+
                 return Results.Ok();
             });
 
         // Clearing the slate between events. One state write for the lot, so the
         // screen goes from every photo to none in a single generation rather than
         // thinning out one delete at a time.
+        // Reactions are left alone on bulk deletes: hundreds of calls inside one
+        // request would meet Telegram's rate limit and the request timeout.
         app.MapDelete("/api/images",
             async ([FromQuery(Name = "event")] string? eventId, StateStore store, IObjectStore objects,
                 CancellationToken ct) =>
@@ -516,13 +533,14 @@ public static class ApiEndpoints
         });
 
         app.MapPost("/api/senders/{id:long}/status",
-            async (long id, SenderStatusRequest request, StateStore store) =>
+            async (long id, SenderStatusRequest request, StateStore store,
+                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (!TryParseName<SenderStatusInput>(request.Status, out var status))
                     return Results.BadRequest(
                         new { error = "status må være known, autoApprove eller banned." });
 
-                return await store.MutateAsync(state =>
+                var (result, rejected) = await store.MutateAsync(state =>
                 {
                     var eventId = state.Default().Id;
                     var sender = state.Senders.FirstOrDefault(s => s.Id == id);
@@ -550,6 +568,7 @@ public static class ApiEndpoints
                     // A ban revokes what they already sent, in this same write, so the
                     // screen can never be showing a banned sender's photo between two
                     // state generations.
+                    var images = new List<ImageRecord>();
                     if (sender.Banned)
                     {
                         var now = DateTimeOffset.UtcNow;
@@ -558,11 +577,17 @@ public static class ApiEndpoints
                             image.Status = ImageStatus.Rejected;
                             image.DecidedAt = now;
                             ClearTakeoverIfHeldBy(state, image.Id);
+                            images.Add(image);
                         }
                     }
 
-                    return Results.Ok();
+                    return (Results.Ok(), images);
                 });
+
+                var log = loggers.CreateLogger("Reactions");
+                foreach (var image in rejected) await Reactions.SyncAsync(telegram, image, log, ct);
+
+                return result;
             });
     }
 

@@ -38,11 +38,6 @@ public sealed class UpdateHandler(
     private readonly Dictionary<long, DateTimeOffset> _lastUnlistedReplyAt = [];
     private static readonly TimeSpan UnlistedReplyCooldown = TimeSpan.FromSeconds(60);
 
-    // A photo in a group is acknowledged with a reaction on it rather than a reply.
-    // Two, so a pre-approved photographer can tell "on the screen" from "queued".
-    private const string QueuedReaction = "👀";
-    private const string LiveReaction = "🔥";
-
     private const string JoinPrompt =
         "Du står ikke på listen for dette arrangementet ennå. Skann QR-koden på skjermen — " +
         "den sender koden til meg, og du kan begynne å sende bilder med en gang.";
@@ -618,7 +613,7 @@ public sealed class UpdateHandler(
             // Per message, not per album: a reaction sits on the photo it is about,
             // so five of them are no noisier than one.
             await telegram.SetMessageReactionAsync(
-                chat.Id, message.MessageId, approved ? LiveReaction : QueuedReaction, ct);
+                chat.Id, message.MessageId, approved ? Reactions.Live : Reactions.Queued, ct);
             return;
         }
 
