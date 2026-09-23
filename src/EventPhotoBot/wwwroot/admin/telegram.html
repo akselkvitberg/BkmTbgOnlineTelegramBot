@@ -111,7 +111,13 @@
               <td>
                 <select data-id="${Number(group.id)}" aria-label="Arrangement">
                   <option value="" ${group.eventId ? '' : 'selected'}>Ikke koblet</option>
-                  ${events.map(ev => `
+                  ${events
+                    // Closed events can't be routed to (the server refuses it) and would
+                    // only ever ignore the group's photos, so they're left out of the
+                    // list — except the one the group is already pointed at, so an
+                    // organiser can see that route rather than have it vanish silently.
+                    .filter(ev => ev.phase !== 'closed' || ev.id === group.eventId)
+                    .map(ev => `
                     <option value="${Admin.escapeHtml(ev.id)}" ${group.eventId === ev.id ? 'selected' : ''}>
                       ${Admin.escapeHtml(ev.name)}${ev.phase === 'open' ? '' : ' (' + (ev.phase === 'closed' ? 'avsluttet' : 'planlagt') + ')'}
                     </option>`).join('')}

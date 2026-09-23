@@ -116,7 +116,7 @@ public static class EventEndpoints
             await Change(store, id, ev => null, (state, ev) => ev.JoinCode = EventRules.UniqueJoinCode(state)));
 
         app.MapDelete("/api/events/{id}",
-            async (string id, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async (string id, StateStore store, IObjectStore objects, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (store.Snapshot.Find(id) is not { } target) return EventScope.UnknownEvent();
                 if (target.IsDefault) return BadRequest("Standardarrangementet kan ikke slettes.");
@@ -140,7 +140,11 @@ public static class EventEndpoints
                 }, ct);
 
                 if (removed is null) return EventScope.UnknownEvent();
-                foreach (var image in removed) await ImageObjects.DeleteAsync(objects, image, ct);
+                // Best effort, past this point: the state write above already removed
+                // every record, so a cancelled request or one failing GCS delete must not
+                // leave the rest of a large event's bytes orphaned with nothing left
+                // pointing at them — see ImageObjects.DeleteAllAsync.
+                await ImageObjects.DeleteAllAsync(objects, removed, loggers.CreateLogger("ImageObjects"));
                 return Results.Ok(new { deleted = removed.Count });
             });
 

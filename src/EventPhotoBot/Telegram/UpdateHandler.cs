@@ -263,12 +263,18 @@ public sealed class UpdateHandler(
         var outcome = await store.MutateAsync(state =>
         {
             // Re-checked under the store's lock: two /start messages racing must not
-            // produce two rows, and a ban landing meanwhile must win.
+            // produce two rows, and a ban landing meanwhile must win. The event itself
+            // is re-checked too — deleted or closed between the phase switch above and
+            // this write must not leave a dangling membership, which a later event
+            // reusing the same slug could otherwise silently inherit.
+            var lockNow = DateTimeOffset.UtcNow;
+            if (state.Find(eventId) is not { } ev || !ev.IsOpen(lockNow)) return (Joined: false, IsNew: false);
+
             var row = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
             var isNew = row is null;
             if (row is null)
             {
-                row = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = now };
+                row = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = lockNow };
                 state.Senders.Add(row);
             }
             if (row.Banned) return (Joined: false, IsNew: false);
@@ -594,6 +600,26 @@ public sealed class UpdateHandler(
             };
             return (IngestOutcome.Stored, eventId);
         }, ct);
+
+        if (outcome != IngestOutcome.Stored)
+        {
+            // The three objects above were written before the outcome was known; a
+            // non-Stored one leaves nothing in state pointing at them. Best effort, the
+            // same way as the admin delete paths — CancellationToken.None so a request
+            // that is about to return regardless does not race the delete, and a
+            // failure here is logged rather than surfaced to the sender, who already
+            // gets their own reply below. See ImageObjects.DeleteAllAsync.
+            try
+            {
+                await ImageObjects.DeleteAsync(objects, id, candidate.Extension, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e,
+                    "Failed to delete objects for image {ImageId} after a {Outcome} outcome; its bytes are now orphaned.",
+                    id, outcome);
+            }
+        }
 
         if (outcome == IngestOutcome.Refused) return;
         if (outcome == IngestOutcome.Closed)

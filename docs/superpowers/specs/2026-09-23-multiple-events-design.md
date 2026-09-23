@@ -415,3 +415,9 @@ it into tasks:
   service account in `infra/wif/main.tf`. `infra/wif` needs to be re-applied
   once before the first Actions deploy of this release, on any project where
   it was applied before this role existed.
+- **A group cannot be routed to a closed event.** The API refuses it with
+  400, and the group dropdown in `telegram.html` leaves closed events out
+  (keeping the group's own route visible if it already points at one that
+  has since closed). Routing to a closed event would otherwise send the
+  "you're now connected" notice and then silently ignore every photo posted
+  from then on.

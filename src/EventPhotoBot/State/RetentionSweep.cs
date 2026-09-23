@@ -50,23 +50,11 @@ public static class RetentionSweep
             return gone;
         }, ct);
 
-        // CancellationToken.None, not ct: the records are already gone from state, so an
-        // aborted request (Cloud Scheduler's attempt deadline, a dropped connection) must
-        // not leave their bytes behind forever with nothing left pointing at them to retry
-        // the delete later. Each image is also isolated in its own try/catch — one failing
-        // GCS call (anything but 404, which DeleteAsync already treats as success) must not
-        // stop the rest of the batch from being cleaned up.
-        foreach (var image in removed)
-        {
-            try
-            {
-                await ImageObjects.DeleteAsync(objects, image, CancellationToken.None);
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Failed to delete objects for image {ImageId}; its bytes are now orphaned.", image.Id);
-            }
-        }
+        // Same helper the admin delete paths use, for the same reason: CancellationToken.None
+        // and one image at a time in its own try/catch, so a dropped connection or one
+        // failing GCS call (anything but 404, which DeleteAsync already treats as success)
+        // does not leave the rest of the batch's bytes behind with nothing pointing at them.
+        await ImageObjects.DeleteAllAsync(objects, removed, logger);
 
         var counts = removed.GroupBy(i => i.EventId).ToDictionary(g => g.Key, g => g.Count());
         foreach (var (eventId, count) in counts)

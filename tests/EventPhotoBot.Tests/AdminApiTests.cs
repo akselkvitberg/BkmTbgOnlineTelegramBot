@@ -628,6 +628,21 @@ public class AdminApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task Routing_a_group_to_a_closed_event_is_rejected_and_the_route_is_unchanged()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2010, StateMigration.DefaultEventId);
+        await _factory.Store.MutateAsync(s => { if (s.Find("r-closed") is null) s.AddEvent("r-closed", "Ferdig", closed: true); });
+        var before = _factory.Telegram.Sent.Count;
+
+        var response = await client.PostAsJsonAsync("/api/groups/-2010/event", new { eventId = "r-closed" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(StateMigration.DefaultEventId, _factory.Store.Snapshot.Groups.Single(g => g.Id == -2010).EventId);
+        Assert.Equal(before, _factory.Telegram.Sent.Count);
+    }
+
+    [Fact]
     public async Task Routing_an_unknown_group_or_to_an_unknown_event_is_404()
     {
         var client = _factory.CreateAuthenticatedClient();

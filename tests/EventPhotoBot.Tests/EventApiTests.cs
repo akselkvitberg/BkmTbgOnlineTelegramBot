@@ -205,4 +205,65 @@ public class EventApiTests : IClassFixture<AppFactory>
         Assert.Equal(HttpStatusCode.NotFound, (await Client.PostAsync("/api/events/nope/close", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Client.DeleteAsync("/api/events/nope")).StatusCode);
     }
+
+    [Fact]
+    public async Task Deleting_an_event_finishes_even_when_one_objects_delete_fails()
+    {
+        // C1: the state write already removed every record by the time the object
+        // deletes run, so one failing GCS call must not stop the rest of a large
+        // event's bytes from being cleaned up, or turn the response into a 500 —
+        // see ImageObjects.DeleteAllAsync. A standalone factory, not the shared
+        // fixture: only this test needs an IObjectStore that fails on demand.
+        var badId = Guid.NewGuid().ToString("N");
+        var goodId = Guid.NewGuid().ToString("N");
+        using var factory = new AppFactory
+        {
+            ObjectStoreOverride = inner => new FailingDeleteObjectStore(inner, ObjectPaths.Display(badId)),
+        };
+        foreach (var id in new[] { badId, goodId })
+        {
+            await factory.Objects.WriteAsync(ObjectPaths.Display(id), [1], "image/jpeg", null);
+            await factory.Objects.WriteAsync(ObjectPaths.Thumb(id), [1], "image/jpeg", null);
+            await factory.Objects.WriteAsync(ObjectPaths.Original(id, "jpg"), [1], "image/jpeg", null);
+        }
+        await factory.Store.MutateAsync(s =>
+        {
+            s.AddEvent("failtest");
+            foreach (var id in new[] { badId, goodId })
+                s.Images[id] = new ImageRecord
+                    { Id = id, EventId = "failtest", Sha256 = id, SortKey = id, OriginalExtension = "jpg" };
+        });
+
+        var response = await factory.CreateAuthenticatedClient().DeleteAsync("/api/events/failtest");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(factory.Store.Snapshot.Find("failtest"));
+        Assert.Empty(factory.Store.Snapshot.Images);
+        // The good image's objects are all gone. The bad one's Display delete throws
+        // first in DeleteAsync's own sequence, so its Thumb and Original are never
+        // even attempted — that one image is left exactly as it was, which is the
+        // point: the *other* image in the batch is what must not be affected by it.
+        Assert.Contains(ObjectPaths.Display(badId), factory.Objects.Paths);
+        Assert.Contains(ObjectPaths.Thumb(badId), factory.Objects.Paths);
+        Assert.Contains(ObjectPaths.Original(badId, "jpg"), factory.Objects.Paths);
+        Assert.DoesNotContain(ObjectPaths.Display(goodId), factory.Objects.Paths);
+        Assert.DoesNotContain(ObjectPaths.Thumb(goodId), factory.Objects.Paths);
+        Assert.DoesNotContain(ObjectPaths.Original(goodId, "jpg"), factory.Objects.Paths);
+    }
+
+    /// <summary>Wraps an InMemoryObjectStore and throws instead of deleting one exact path.</summary>
+    private sealed class FailingDeleteObjectStore(InMemoryObjectStore inner, string failingPath) : IObjectStore
+    {
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default) => inner.ReadAsync(path, ct);
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType, long? ifGenerationMatch,
+            CancellationToken ct = default) => inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) => inner.OpenReadAsync(path, ct);
+
+        public Task DeleteAsync(string path, CancellationToken ct = default) =>
+            path == failingPath
+                ? throw new InvalidOperationException($"Simulated failure deleting {path}.")
+                : inner.DeleteAsync(path, ct);
+    }
 }

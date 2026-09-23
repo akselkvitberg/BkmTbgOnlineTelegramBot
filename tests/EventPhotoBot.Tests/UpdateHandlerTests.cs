@@ -1,3 +1,4 @@
+using System.Text.Json;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
@@ -275,6 +276,28 @@ public class UpdateHandlerTests
 
         Assert.Single(harness.Store.Snapshot.Images);
         Assert.Contains(harness.Telegram.Sent, m => m.Text.Contains("allerede", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task A_duplicate_caught_only_under_the_lock_leaves_no_orphaned_objects()
+    {
+        // C1: the two fast-path pre-checks in IngestAsync both read a Snapshot taken
+        // before this request's own download, so neither one sees a record written
+        // while the download was in flight — only the authoritative check inside
+        // MutateAsync does, by which point this request has already written its own
+        // three objects. Before the fix those were never cleaned up.
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
+        StockFile(harness, "large");
+        harness.Telegram.OnDownload = () => harness.Store.MutateAsync(s => s.Images["already"] = new ImageRecord
+        {
+            Id = "already", EventId = StateMigration.DefaultEventId, SenderId = Guest,
+            FileUniqueId = "dup", Sha256 = "unrelated-hash", SortKey = "already", OriginalExtension = "jpg",
+        }).GetAwaiter().GetResult();
+
+        await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "dup"));
+
+        Assert.Single(harness.Store.Snapshot.Images);   // only "already" — this request's own entry was never added
+        Assert.DoesNotContain(harness.Objects.Paths, IsImageObject);
     }
 
     [Fact]
@@ -957,5 +980,28 @@ public class UpdateHandlerTests
 
         Assert.Equal("daglig", Assert.Single(harness.Store.Snapshot.Images.Values).EventId);
         Assert.StartsWith("Mottatt til Daglig", harness.Telegram.Sent[^1].Text);
+    }
+
+    [Fact]
+    public async Task Joining_an_event_deleted_between_the_phase_check_and_the_lock_admits_nobody()
+    {
+        // M1: HandleJoinCodeAsync's own phase check runs before the store's lock; this
+        // simulates an event deleted in that window by a concurrent request — a second
+        // writer bumping state.json's generation behind this store's back, the same
+        // technique StateStoreTests uses for an interleaved write — so the join's own
+        // MutateAsync loses its precondition, reloads the state without "bryllup", and
+        // must re-check under the lock rather than trust the stale read.
+        var harness = await Harness.CreateAsync(s => Wedding(s));
+
+        var withoutEvent = JsonSerializer.Deserialize<EventState>(
+            JsonSerializer.SerializeToUtf8Bytes(harness.Store.Snapshot, StateJson.Options), StateJson.Options)!;
+        withoutEvent.Events.RemoveAll(e => e.Id == "bryllup");
+        harness.Objects.ForceWrite(StateStore.StatePath,
+            JsonSerializer.SerializeToUtf8Bytes(withoutEvent, StateJson.Options));
+
+        await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {WeddingCode}"));
+
+        Assert.Empty(harness.Store.Snapshot.Senders);
+        Assert.Empty(harness.Telegram.Sent);
     }
 }

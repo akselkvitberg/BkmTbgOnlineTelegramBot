@@ -58,6 +58,47 @@ public class SenderApiTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task Pre_approving_a_sender_lets_their_first_private_photo_land_approved()
+    {
+        // I2: before this fix, a photographer added here had no CurrentEventId, so
+        // their first private photo resolved to nowhere and got the misleading
+        // "Arrangementet er avsluttet." instead of landing in the event they were
+        // just pre-approved for.
+        await _factory.Store.MutateAsync(s => { if (s.Find("s-bryllup") is null) s.AddEvent("s-bryllup"); });
+        const long PhotographerId = 5020;
+        _factory.Telegram.Files["path/photo1"] =
+            await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "TestAssets", "landscape.jpg"));
+
+        var pre = await Client.PostAsJsonAsync(
+            $"/api/senders/{PhotographerId}/memberships/s-bryllup", new { autoApprove = true });
+        Assert.Equal(HttpStatusCode.OK, pre.StatusCode);
+        Assert.Equal("s-bryllup", _factory.Store.Snapshot.Senders.Single(s => s.Id == PhotographerId).CurrentEventId);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/tg/{AppFactory.WebhookPath}")
+        {
+            Content = JsonContent.Create(new
+            {
+                update_id = 9001,
+                message = new
+                {
+                    message_id = 1,
+                    from = new { id = PhotographerId, first_name = "Fotograf" },
+                    chat = new { id = PhotographerId },
+                    photo = new[] { new { file_id = "photo1", file_unique_id = "photo1", width = 800, height = 600 } },
+                },
+            }),
+        };
+        request.Headers.Add("X-Telegram-Bot-Api-Secret-Token", AppFactory.WebhookSecret);
+
+        var response = await _factory.CreateAnonymousClient().SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var image = Assert.Single(_factory.Store.Snapshot.Images.Values, i => i.SenderId == PhotographerId);
+        Assert.Equal("s-bryllup", image.EventId);
+        Assert.Equal(ImageStatus.Approved, image.Status);
+    }
+
+    [Fact]
     public async Task A_membership_in_an_unknown_event_is_404_and_a_missing_value_is_400()
     {
         Assert.Equal(HttpStatusCode.NotFound,

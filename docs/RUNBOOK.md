@@ -604,8 +604,18 @@ This section is for a project that was already running the app before events
 existed, not for a brand new one — a new project just follows **One-time
 setup** and **Before the event** above, which already cover everything here.
 
-**Before the first deploy of this release:**
+**Before deploying:**
 
+- **Back up `state.json` to a name nothing writes to.** The new revision
+  starts while the old one can still be taking 100% of traffic and writing
+  `state.json` in the old shape — its deserializer knows nothing about
+  `events`, `senders` or `groups`, so a write from it landing in that window
+  wipes the roster (bans and auto-approve lost), every group's route and the
+  display settings. `state/state-prev.json` is not a safe copy for this: the
+  first write after the upgrade overwrites it, which happens with the first
+  approval, delete or incoming photo — often within minutes. Take your own
+  copy first, before deploying:
+  `gcloud storage cp gs://BUCKET_NAME/state/state.json gs://BUCKET_NAME/state/state-pre-events.json`
 - **Add a version to the `<name>-retention-secret` secret**, the same as any
   other required secret in step 5 above — Cloud Run mounts it and the
   revision fails to start without one, whether or not retention is ever
@@ -624,20 +634,59 @@ setup** and **Before the event** above, which already cover everything here.
   `-SchedulerRegion` to `deploy.ps1` if `europe-west1` is not a good place
   for the retention job to run from — see **Events and retention** above.
 
+**Deploy at a quiet time.** No event should be in progress — a wedding or a
+concert mid-event is the worst moment for the writer-overlap above to land
+badly. Daglig itself never closes, so there is no fully quiet moment for the
+deployment as a whole; pick its lowest-traffic hour instead. Every deploy —
+this one included, and every one after it — drops whatever Telegram updates
+were in flight at that moment; a photo sent in that window is gone, silently.
+That was already true before this release, it just could no longer be
+scheduled around "between events" once Daglig runs every day.
+
 **What the first start after upgrading does, automatically, no action
 needed:** it rewrites `state.json` into the events shape — a `Daglig` event
 is created from the old settings, every image gets `EventId = "daglig"`,
 every sender becomes a Daglig member with their old status carried over, and
-`JOIN_CODE` seeds Daglig's join code if it was set. The pre-upgrade file is
-kept at `state/state-prev.json`, for as long as nothing else writes to
-`state.json` afterwards — which in practice means as long as nobody
-approves, deletes or otherwise changes anything.
+`JOIN_CODE` seeds Daglig's join code if it was set.
 
-**To roll back** before anything has been written since the upgrade: redeploy
-the previous image, then copy `state-prev.json` over `state.json` *before*
-that previous version starts and writes anything of its own. Once something
-has written to `state.json` post-upgrade, `state-prev.json` is stale and a
-rollback means accepting whatever has changed since, not a clean revert.
+**Right after the first start, check:**
+
+- [ ] Telegram → Personer still lists everyone, with the same auto-approve
+      and ban status as before.
+- [ ] Telegram → Grupper: every group still routes to Daglig.
+- [ ] Innstillinger for Daglig still shows the old slideshow settings.
+
+**Retention is different now — decide it, don't inherit it.** Before this
+release, the bucket's own lifecycle rule deleted a photo's files about 30
+days after upload, by age alone, regardless of what the app thought. That
+rule is gone (see **Events and retention** above): nothing deletes a photo
+any more except an organiser deleting the event, or an event's own retention
+setting doing it — and every event's retention, Daglig included, starts off
+after the upgrade. Left alone, that means photos that used to disappear
+after a month are now kept indefinitely; for a church handling members'
+photos, that is a change worth deciding rather than inheriting by accident.
+Right after the upgrade:
+
+- [ ] Set Daglig's retention in Innstillinger — for example 30 days, with a
+      keep-newest pool so the screen still has a pool of recent approved
+      photos right after a sweep.
+- [ ] Have the church's privacy contact confirm that period. A group told
+      "bildene slettes etter N dager" under the old text was told a number;
+      make sure whatever you configure still matches it.
+
+**To roll back:** redeploy the previous image, then copy
+`state-pre-events.json` back over `state.json` —
+`gcloud storage cp gs://BUCKET_NAME/state/state-pre-events.json gs://BUCKET_NAME/state/state.json`
+— before the redeployed previous version writes anything of its own. This
+means accepting that photos and changes made between the upgrade and the
+rollback are lost from state; there is no way to keep those and also undo
+the upgrade. `state/state-prev.json` is **not** a rollback path here: by the
+time you notice a problem worth rolling back for, it holds whatever
+`state.json` looked like one write before the current one — already in the
+new, post-upgrade shape, not the pre-upgrade one. If the backup above is
+missing or too old to help, GCS soft delete — check whether it is enabled on
+your bucket — may still hold an older generation of `state.json` worth
+recovering by hand, as a last resort.
 
 ## Deploying
 

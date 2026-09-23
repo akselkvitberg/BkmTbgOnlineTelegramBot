@@ -175,7 +175,8 @@ public static class ApiEndpoints
         });
 
         app.MapPost("/api/groups/{id:long}/event",
-            async (long id, GroupEventRequest request, StateStore store, ITelegramClient telegram, CancellationToken ct) =>
+            async (long id, GroupEventRequest request, StateStore store, ITelegramClient telegram,
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (request.EventId is not { } eventId)
                     return Results.BadRequest(new { error = "eventId må være en arrangement-id, eller tom for å koble fra." });
@@ -193,13 +194,30 @@ public static class ApiEndpoints
                         return (Results.Ok(), null);
                     }
                     if (state.Find(eventId) is not { } ev) return (EventScope.UnknownEvent(), null);
+                    // A closed event takes no more photos: routing a group to one would
+                    // send the notice and then ignore everything posted there from then on.
+                    if (ev.PhaseAt(DateTimeOffset.UtcNow) == EventPhase.Closed)
+                        return (EventEndpoints.BadRequest("Arrangementet er avsluttet."), null);
                     return Groups.Route(state, id, null, DateTimeOffset.UtcNow, ev.Id)
                         ? (Results.Ok(), Groups.NoticeFor(ev))
                         : (Results.Ok(), null);
                 }, ct);
 
-                // Told in the group itself, once per change: its members did not choose this.
-                if (notice is not null) await telegram.SendMessageAsync(id, notice, ct);
+                // Told in the group itself, once per change: its members did not choose
+                // this. Best effort, like the spec already commits to elsewhere — the
+                // route stays committed even when Telegram cannot be reached.
+                if (notice is not null)
+                {
+                    try
+                    {
+                        await telegram.SendMessageAsync(id, notice, ct);
+                    }
+                    catch (Exception e)
+                    {
+                        loggers.CreateLogger("ApiEndpoints")
+                            .LogWarning(e, "Failed to send the routing notice to group {GroupId}.", id);
+                    }
+                }
                 return result;
             });
 
@@ -365,8 +383,8 @@ public static class ApiEndpoints
 
                 // State first here, unlike ingest: an entry pointing at deleted bytes
                 // would put a broken image on the projector, while orphaned bytes are
-                // invisible and the lifecycle rule sweeps them up.
-                await ImageObjects.DeleteAsync(objects, removed, ct);
+                // invisible. Best effort past this point — see DeleteAllAsync.
+                await ImageObjects.DeleteAllAsync(objects, [removed], loggers.CreateLogger("ImageObjects"));
 
                 await Reactions.ClearAsync(telegram, removed, loggers.CreateLogger("Reactions"), ct);
 
@@ -380,7 +398,7 @@ public static class ApiEndpoints
         // request would meet Telegram's rate limit and the request timeout.
         app.MapDelete("/api/images",
             async ([FromQuery(Name = "event")] string? eventId, StateStore store, IObjectStore objects,
-                CancellationToken ct) =>
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (EventScope.Resolve(store.Snapshot, eventId) is not { } ev) return EventScope.UnknownEvent();
                 var targetId = ev.Id;
@@ -388,16 +406,22 @@ public static class ApiEndpoints
 
                 var removed = await store.MutateAsync(state =>
                 {
+                    // Guarded, not `state.Find(targetId)!`: the event can be deleted
+                    // concurrently between the check above and this write, and that
+                    // must come back as the usual unknown-event result, not a 500.
+                    if (state.Find(targetId) is not { } target) return null;
                     var images = state.Images.Values.Where(i => i.EventId == targetId).ToList();
                     foreach (var image in images) state.Images.Remove(image.Id);
-                    var settings = state.Find(targetId)!.Settings;
-                    settings.TakeoverImageId = null;
-                    settings.TakeoverUntil = null;
+                    target.Settings.TakeoverImageId = null;
+                    target.Settings.TakeoverUntil = null;
                     return images;
-                });
+                }, ct);
 
-                // State first, for the same reason as the single delete above.
-                foreach (var image in removed) await ImageObjects.DeleteAsync(objects, image, ct);
+                if (removed is null) return EventScope.UnknownEvent();
+
+                // State first, for the same reason as the single delete above. Best
+                // effort past this point — see DeleteAllAsync.
+                await ImageObjects.DeleteAllAsync(objects, removed, loggers.CreateLogger("ImageObjects"));
 
                 return Results.Ok(new { deleted = removed.Count });
             });
@@ -597,6 +621,10 @@ public static class ApiEndpoints
                         sender.Memberships.Add(membership);
                     }
                     membership.AutoApprove = autoApprove;
+                    // As UpdateHandler does for a group member's first photo: without
+                    // this, a photographer pre-approved here and nowhere else has no
+                    // current event, and their first private photo resolves to nothing.
+                    sender.CurrentEventId ??= eventId;
                     return Results.Ok();
                 });
             });

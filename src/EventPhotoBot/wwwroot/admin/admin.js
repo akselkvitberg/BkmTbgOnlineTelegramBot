@@ -9,7 +9,7 @@
   // ---- event context -------------------------------------------------------
   // The event a page is about lives in ?event=; absent means the default event,
   // which is what every page and bookmark from before events already meant.
-  const eventId = new URLSearchParams(location.search).get('event');
+  let eventId = new URLSearchParams(location.search).get('event');
   let eventsPromise = null;
   const PHASES = { open: 'åpent', scheduled: 'planlagt', closed: 'avsluttet' };
 
@@ -25,6 +25,23 @@
   async function currentEvent() {
     const list = await events();
     return list.find(e => e.id === eventId) ?? list.find(e => e.isDefault) ?? null;
+  }
+
+  /**
+   * If ?event= names an id the events list doesn't know (deleted, or just mistyped),
+   * drop it once the list is in. Left alone, currentEvent() falls back to Daglig for
+   * display while withEvent() keeps sending the unknown id, so every event-scoped call
+   * — settings, upload, takeover, the manifest poll — 404s while the page claims to be
+   * showing Daglig.
+   */
+  async function reconcileEventId() {
+    if (!eventId) return;
+    const list = await events();
+    if (list.some(e => e.id === eventId)) return;
+    eventId = null;
+    const url = new URL(location.href);
+    url.searchParams.delete('event');
+    history.replaceState(null, '', url);
   }
 
   function withEvent(path) {
@@ -80,7 +97,7 @@
     events,
     currentEvent,
     withEvent,
-    eventId,
+    get eventId() { return eventId; },
   };
 
   /** A short message at the bottom of the screen, instead of a blocking alert(). */
@@ -278,16 +295,21 @@
     setTimeout(loop, POLL_MS);
   }
 
-  // Pages about one event carry the choice along; Telegram and the events list are
-  // about every event, so their links stay plain.
-  const GLOBAL_PAGES = ['/admin/telegram', '/admin/events', '/dev'];
-  for (const link of document.querySelectorAll('nav a')) {
-    const href = link.getAttribute('href');
-    if (href === location.pathname) link.classList.add('active');
-    if (!GLOBAL_PAGES.includes(href)) link.href = withEvent(href);
+  async function init() {
+    await reconcileEventId();
+
+    // Pages about one event carry the choice along; Telegram and the events list are
+    // about every event, so their links stay plain.
+    const GLOBAL_PAGES = ['/admin/telegram', '/admin/events', '/dev'];
+    for (const link of document.querySelectorAll('nav a')) {
+      const href = link.getAttribute('href');
+      if (href === location.pathname) link.classList.add('active');
+      if (!GLOBAL_PAGES.includes(href)) link.href = withEvent(href);
+    }
+
+    renderEventPicker();
+    loop();
   }
 
-  renderEventPicker();
-
-  loop();
+  init();
 })();
