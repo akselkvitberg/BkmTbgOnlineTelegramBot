@@ -517,7 +517,11 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var sender = Assert.Single(root.GetProperty("senders").EnumerateArray());
         Assert.Equal(42, sender.GetProperty("id").GetInt64());
         Assert.Equal("Guest", sender.GetProperty("name").GetString());
-        Assert.Equal("autoApprove", sender.GetProperty("status").GetString());
+        Assert.False(sender.GetProperty("banned").GetBoolean());
+        var membership = Assert.Single(sender.GetProperty("memberships").EnumerateArray());
+        Assert.Equal("daglig", membership.GetProperty("eventId").GetString());
+        Assert.True(membership.GetProperty("autoApprove").GetBoolean());
+        Assert.False(sender.TryGetProperty("status", out _));
     }
 
     [Fact]

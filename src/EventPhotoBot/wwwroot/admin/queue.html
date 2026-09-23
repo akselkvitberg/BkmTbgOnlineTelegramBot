@@ -125,7 +125,7 @@
         danger: true,
       });
       if (!sure) return;
-      if (await Admin.api('POST', `/api/senders/${senderId}/status`, { status: 'banned' }))
+      if (await Admin.api('POST', `/api/senders/${senderId}/ban`, { banned: true }))
         Admin.toast(`${name} er utestengt.`);
       await loadPending();
     }

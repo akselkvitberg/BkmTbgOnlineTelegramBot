@@ -8,7 +8,8 @@ namespace EventPhotoBot.Web;
 public sealed record StatusRequest(string Status);
 public sealed record PinRequest(string Pin);
 public sealed record TakeoverRequest(string ImageId, int? Minutes);
-public sealed record SenderStatusRequest(string Status);
+public sealed record BanRequest(bool? Banned);
+public sealed record MembershipRequest(bool? AutoApprove);
 
 /// <summary>An event id routes the group, "" un-routes it; null (or missing) is a 400, so a malformed body cannot un-route a group.</summary>
 public sealed record GroupEventRequest(string? EventId);
@@ -16,7 +17,7 @@ public sealed record GroupEventRequest(string? EventId);
 /// <summary>
 /// The roster is deliberately absent here. An array replacement cannot carry the
 /// ban cascade, so allowing it would be a second write path that silently skips
-/// revoking a banned sender's photos — see POST /api/senders/{id}/status.
+/// revoking a banned sender's photos — see POST /api/senders/{id}/ban.
 /// </summary>
 public sealed record SettingsPatch(
     string? EventName,
@@ -39,9 +40,6 @@ public static class ApiEndpoints
 
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
-
-    /// <summary>Exists only until Task 8 replaces the sender status route.</summary>
-    private enum SenderStatusInput { Known, AutoApprove, Banned }
 
     /// <summary>
     /// Parses one of an enum's declared names, case-insensitively. The only way an
@@ -141,8 +139,9 @@ public static class ApiEndpoints
                     sender.Id,
                     sender.Name,
                     sender.FirstSeen,
-                    Status = sender.Banned ? "banned"
-                        : sender.MembershipIn(ev.Id)?.AutoApprove == true ? "autoApprove" : "known",
+                    sender.Banned,
+                    sender.CurrentEventId,
+                    Memberships = sender.Memberships.Select(m => new { m.EventId, m.AutoApprove }),
                 }),
                 Groups = state.Groups.Select(group => new
                 {
@@ -532,62 +531,73 @@ public static class ApiEndpoints
             return Results.Ok();
         });
 
-        app.MapPost("/api/senders/{id:long}/status",
-            async (long id, SenderStatusRequest request, StateStore store,
-                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
+        app.MapPost("/api/senders/{id:long}/ban",
+            async (long id, BanRequest request, StateStore store, ITelegramClient telegram,
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
-                if (!TryParseName<SenderStatusInput>(request.Status, out var status))
-                    return Results.BadRequest(
-                        new { error = "status må være known, autoApprove eller banned." });
+                if (request.Banned is not { } banned)
+                    return Results.BadRequest(new { error = "banned må være true eller false." });
 
-                var (result, rejected) = await store.MutateAsync(state =>
+                var rejected = await store.MutateAsync(state =>
                 {
-                    var eventId = state.Default().Id;
                     var sender = state.Senders.FirstOrDefault(s => s.Id == id);
                     if (sender is null)
                     {
-                        // Creating on write is how an organiser pre-approves a
-                        // photographer, or pre-bans a nuisance, before that person has
-                        // ever messaged the bot.
+                        // Creating on write is how an organiser pre-bans a nuisance
+                        // before that person has ever messaged the bot.
                         sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
                         state.Senders.Add(sender);
                     }
 
-                    sender.Banned = status == SenderStatusInput.Banned;
-                    if (!sender.Banned)
-                    {
-                        var membership = sender.MembershipIn(eventId);
-                        if (membership is null)
-                        {
-                            membership = new Membership { EventId = eventId };
-                            sender.Memberships.Add(membership);
-                        }
-                        membership.AutoApprove = status == SenderStatusInput.AutoApprove;
-                    }
+                    // Memberships are left as they are, so an unban restores them.
+                    sender.Banned = banned;
+                    if (!banned) return [];
 
-                    // A ban revokes what they already sent, in this same write, so the
-                    // screen can never be showing a banned sender's photo between two
-                    // state generations.
-                    var images = new List<ImageRecord>();
-                    if (sender.Banned)
+                    // A ban revokes what they already sent, in every event and in this
+                    // same write, so no screen can be showing a banned sender's photo
+                    // between two state generations.
+                    var now = DateTimeOffset.UtcNow;
+                    var images = state.Images.Values.Where(i => i.SenderId == id).ToList();
+                    foreach (var image in images)
                     {
-                        var now = DateTimeOffset.UtcNow;
-                        foreach (var image in state.Images.Values.Where(i => i.SenderId == id))
-                        {
-                            image.Status = ImageStatus.Rejected;
-                            image.DecidedAt = now;
-                            ClearTakeoverIfHeldBy(state, image.Id);
-                            images.Add(image);
-                        }
+                        image.Status = ImageStatus.Rejected;
+                        image.DecidedAt = now;
+                        ClearTakeoverIfHeldBy(state, image.Id);
                     }
-
-                    return (Results.Ok(), images);
-                });
+                    return images;
+                }, ct);
 
                 var log = loggers.CreateLogger("Reactions");
                 foreach (var image in rejected) await Reactions.SyncAsync(telegram, image, log, ct);
+                return Results.Ok();
+            });
 
-                return result;
+        app.MapPost("/api/senders/{id:long}/memberships/{eventId}",
+            async (long id, string eventId, MembershipRequest request, StateStore store) =>
+            {
+                if (request.AutoApprove is not { } autoApprove)
+                    return Results.BadRequest(new { error = "autoApprove må være true eller false." });
+                if (store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
+
+                return await store.MutateAsync(state =>
+                {
+                    if (state.Find(eventId) is null) return EventScope.UnknownEvent();
+                    var sender = state.Senders.FirstOrDefault(s => s.Id == id);
+                    if (sender is null)
+                    {
+                        // How an organiser pre-approves a photographer for one event.
+                        sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
+                        state.Senders.Add(sender);
+                    }
+                    var membership = sender.MembershipIn(eventId);
+                    if (membership is null)
+                    {
+                        membership = new Membership { EventId = eventId };
+                        sender.Memberships.Add(membership);
+                    }
+                    membership.AutoApprove = autoApprove;
+                    return Results.Ok();
+                });
             });
     }
 

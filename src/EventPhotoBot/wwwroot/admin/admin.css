@@ -497,6 +497,7 @@ td select { min-height: 38px; padding: 6px 10px; width: auto; }
 .status-dot[data-status="autoApprove"] { background: var(--ok); }
 .status-dot[data-status="banned"] { background: var(--danger); }
 .table-wrap { overflow-x: auto; }
+.membership { display: flex; gap: 6px; align-items: center; font-size: 0.9em; margin: 2px 0; }
 
 /* ---- Upload page ---- */
 

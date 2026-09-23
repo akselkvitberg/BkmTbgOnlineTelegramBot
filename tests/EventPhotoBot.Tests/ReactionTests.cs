@@ -63,7 +63,7 @@ public class ReactionTests : IClassFixture<AppFactory>
     {
         var (_, message) = await SeedGroupPhotoAsync(ImageStatus.Approved);
 
-        await _factory.CreateAuthenticatedClient().PostAsJsonAsync("/api/senders/4242/status", new { status = "banned" });
+        await _factory.CreateAuthenticatedClient().PostAsJsonAsync("/api/senders/4242/ban", new { banned = true });
 
         Assert.Equal((-4000L, message, (string?)null), LastReactionOn(message));
     }
