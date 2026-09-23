@@ -102,13 +102,11 @@ public class AppConfigTests
     }
 
     [Fact]
-    public void Load_throws_when_the_join_code_is_missing()
+    public void Load_accepts_a_missing_join_code()
     {
         var partial = Complete().Where(p => p.Item1 is not "JOIN_CODE").ToArray();
 
-        var error = Assert.Throws<InvalidOperationException>(() => AppConfig.Load(Config(partial)));
-
-        Assert.Contains("JOIN_CODE", error.Message);
+        Assert.Null(AppConfig.Load(Config(partial)).JoinCode);
     }
 
     [Theory]

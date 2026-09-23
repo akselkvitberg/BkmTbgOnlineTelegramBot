@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 
@@ -9,7 +7,6 @@ public sealed class UpdateHandler(
     StateStore store,
     IObjectStore objects,
     ITelegramClient telegram,
-    AppConfig config,
     ILogger<UpdateHandler> logger)
 {
     private const long MaxDownloadBytes = 20L * 1024 * 1024;
@@ -69,14 +66,14 @@ public sealed class UpdateHandler(
         // into the private flow below and getting the join prompt posted into it.
         if (message?.From is not { } sender || message.Chat is not { IsPrivate: true } chat) return;
 
-        var entry = store.Snapshot.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+        var entry = store.Snapshot.Senders.FirstOrDefault(s => s.Id == sender.Id);
 
         // Banned first, and before anything that costs a download, a reply or a
         // write. A banned sender gets no signal at all — a reply would both confirm
         // the ban landed and make the bot a reply relay for whoever earned it.
-        if (entry is { Status: SenderStatus.Banned }) return;
+        if (entry is { Banned: true }) return;
 
-        if (entry is null)
+        if (entry?.MembershipIn(store.Snapshot.Default().Id) is null)
         {
             await HandleUnredeemedAsync(message, sender, chat, ct);
             return;
@@ -126,8 +123,8 @@ public sealed class UpdateHandler(
 
         // Removed or left. The row goes, listening included: a bot that is re-added
         // later has to be given the code again, and the notice goes out again with it.
-        if (store.Snapshot.Settings.Groups.All(g => g.Id != chat.Id)) return;
-        await store.MutateAsync(state => state.Settings.Groups.RemoveAll(g => g.Id == chat.Id), ct);
+        if (store.Snapshot.Groups.All(g => g.Id != chat.Id)) return;
+        await store.MutateAsync(state => state.Groups.RemoveAll(g => g.Id == chat.Id), ct);
     }
 
     /// <summary>
@@ -155,17 +152,17 @@ public sealed class UpdateHandler(
         // person would lump them together, and banning it would ban all of them.
         if (message.From is not { IsBot: false } sender || message.SenderChat is not null) return;
 
-        var entry = store.Snapshot.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+        var entry = store.Snapshot.Senders.FirstOrDefault(s => s.Id == sender.Id);
 
         // Banned first, as in a private chat, and before the join code: a banned
         // person must not be able to open a group of their own to the queue.
-        if (entry is { Status: SenderStatus.Banned }) return;
+        if (entry is { Banned: true }) return;
 
-        var group = store.Snapshot.Settings.Groups.FirstOrDefault(g => g.Id == chat.Id);
-        if (group is not { Listening: true })
+        var group = store.Snapshot.Groups.FirstOrDefault(g => g.Id == chat.Id);
+        if (group?.EventId is null)
         {
             if (message.Text is { } text && TryReadGroupJoinCode(text, out var supplied)
-                && JoinCodeMatches(config.JoinCode, supplied))
+                && SecretComparison.Matches(store.Snapshot.Default().JoinCode, supplied))
                 await StartListeningAsync(chat, ct);
             return;
         }
@@ -188,7 +185,7 @@ public sealed class UpdateHandler(
     private async Task StartListeningAsync(TgChat chat, CancellationToken ct)
     {
         var started = await store.MutateAsync(state =>
-            Groups.Listen(state, chat.Id, chat.Title, DateTimeOffset.UtcNow), ct);
+            Groups.Route(state, chat.Id, chat.Title, DateTimeOffset.UtcNow, state.Default().Id), ct);
 
         if (started) await telegram.SendMessageAsync(chat.Id, Groups.ListeningNotice, ct);
     }
@@ -202,17 +199,17 @@ public sealed class UpdateHandler(
     private async Task MigrateGroupAsync(long from, long to, CancellationToken ct)
     {
         // Both halves of the pair arrive; the second finds nothing left to move.
-        if (store.Snapshot.Settings.Groups.All(g => g.Id != from)) return;
+        if (store.Snapshot.Groups.All(g => g.Id != from)) return;
 
         await store.MutateAsync(state =>
         {
-            var groups = state.Settings.Groups;
+            var groups = state.Groups;
             var old = groups.FirstOrDefault(g => g.Id == from);
             if (old is null) return;
 
             if (groups.FirstOrDefault(g => g.Id == to) is { } existing)
             {
-                existing.Listening |= old.Listening;
+                existing.EventId ??= old.EventId;
                 groups.Remove(old);
             }
             else
@@ -254,22 +251,25 @@ public sealed class UpdateHandler(
         TgMessage message, TgUser sender, TgChat chat, CancellationToken ct)
     {
         if (message.Text is { } text && TryReadJoinCode(text, out var supplied)
-            && JoinCodeMatches(config.JoinCode, supplied))
+            && SecretComparison.Matches(store.Snapshot.Default().JoinCode, supplied))
         {
-            await store.MutateAsync(state =>
+            var joined = await store.MutateAsync(state =>
             {
                 // Re-checked under the store's lock: two /start messages racing must
-                // not produce two rows, and a row added by an admin in the meantime
-                // must not be overwritten with a weaker status.
-                if (state.Settings.Senders.Any(s => s.Id == sender.Id)) return;
-                state.Settings.Senders.Add(new Sender
+                // not produce two rows, and a ban landing meanwhile must win.
+                var eventId = state.Default().Id;
+                var row = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
+                if (row is null)
                 {
-                    Id = sender.Id,
-                    Name = sender.DisplayName,
-                    Status = SenderStatus.Known,
-                    FirstSeen = DateTimeOffset.UtcNow,
-                });
+                    row = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = DateTimeOffset.UtcNow };
+                    state.Senders.Add(row);
+                }
+                if (row.Banned) return false;
+                if (row.MembershipIn(eventId) is null) row.Memberships.Add(new Membership { EventId = eventId });
+                row.CurrentEventId ??= eventId;
+                return true;
             }, ct);
+            if (!joined) return;
 
             // Deliberately outside the throttle: being rate-limited out of joining is
             // the worst possible moment to go quiet on somebody.
@@ -295,20 +295,6 @@ public sealed class UpdateHandler(
 
         code = parts[1];
         return true;
-    }
-
-    /// <summary>
-    /// Constant-time, hashing both sides first. Same reasoning as the webhook
-    /// secret check in Program.cs: this is reachable by anyone who finds the bot,
-    /// and FixedTimeEquals on its own leaks length through its argument check.
-    /// </summary>
-    private static bool JoinCodeMatches(string expected, string supplied)
-    {
-        Span<byte> hashA = stackalloc byte[32];
-        Span<byte> hashB = stackalloc byte[32];
-        SHA256.HashData(Encoding.UTF8.GetBytes(expected), hashA);
-        SHA256.HashData(Encoding.UTF8.GetBytes(supplied), hashB);
-        return CryptographicOperations.FixedTimeEquals(hashA, hashB);
     }
 
     /// <summary>
@@ -461,42 +447,49 @@ public sealed class UpdateHandler(
             if (isDuplicate) return IngestOutcome.Duplicate;
 
             var now = DateTimeOffset.UtcNow;
-            var status = entry?.Status;
+            string eventId;
             if (chat.IsGroup)
             {
                 // Re-read under the lock, unlike the private path's entry: a group
                 // member was never asked to join, so an admin removing the group or
                 // banning the member during the download must win. A ban that lost
                 // this race would leave a photo the ban cascade has already swept past.
-                var group = state.Settings.Groups.FirstOrDefault(g => g.Id == chat.Id);
-                if (group is not { Listening: true }) return IngestOutcome.Refused;
+                var group = state.Groups.FirstOrDefault(g => g.Id == chat.Id);
+                if (group?.EventId is not { } routed) return IngestOutcome.Refused;
 
-                var member = state.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+                var member = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
                 if (member is null)
                 {
-                    // Posting a photo in a group the bot listens to is this member's
-                    // join. The group was told so by the notice when listening started.
-                    member = new Sender
-                    {
-                        Id = sender.Id,
-                        Name = sender.DisplayName,
-                        Status = SenderStatus.Known,
-                        FirstSeen = now,
-                    };
-                    state.Settings.Senders.Add(member);
+                    // Posting a photo in a group the bot collects from is this member's
+                    // join. The group was told so by the notice when collecting started.
+                    member = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = now };
+                    state.Senders.Add(member);
                 }
-                if (member.Status == SenderStatus.Banned) return IngestOutcome.Refused;
+                if (member.Banned) return IngestOutcome.Refused;
+
+                var membership = member.MembershipIn(routed);
+                if (membership is null)
+                {
+                    membership = new Membership { EventId = routed };
+                    member.Memberships.Add(membership);
+                }
 
                 // Free: this write happens anyway, and it keeps a renamed group
                 // recognisable on the admin page.
                 if (!string.IsNullOrWhiteSpace(chat.Title)) group.Title = chat.Title;
-                status = member.Status;
+                eventId = routed;
+                approved = membership.AutoApprove;
+            }
+            else
+            {
+                eventId = state.Default().Id;
+                approved = entry?.MembershipIn(eventId)?.AutoApprove == true;
             }
 
-            approved = status == SenderStatus.AutoApprove;
             state.Images[id] = new ImageRecord
             {
                 Id = id,
+                EventId = eventId,
                 Source = ImageSource.Telegram,
                 SenderId = sender.Id,
                 SenderName = sender.DisplayName,

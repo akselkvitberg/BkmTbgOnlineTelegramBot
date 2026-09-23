@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using EventPhotoBot;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
@@ -19,6 +17,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 var config = AppConfig.Load(builder.Configuration);
 builder.Services.AddSingleton(config);
+builder.Services.AddSingleton(new StateSeed(config.JoinCode));
 
 // A flag that swaps storage for the local disk and silences Telegram must never
 // reach Cloud Run by accident; there the environment is Production.
@@ -81,8 +80,8 @@ var app = builder.Build();
 
 config.LogLoaded(app.Logger);
 
-// Load state once, at startup. This is the only read of state.json.
-await app.Services.GetRequiredService<StateStore>().LoadAsync();
+// Load state once, at startup — the only read of state.json — and persist any migration.
+await app.Services.GetRequiredService<StateStore>().InitializeAsync();
 
 // Vanity, not correctness: a failure here omits the join QR and nothing else,
 // so unlike the state load above it must never stop the revision coming up.
@@ -99,7 +98,7 @@ app.MapGet("/healthz", () => Results.Text("ok"));
 app.MapPost($"/tg/{config.WebhookPath}",
     async (HttpContext http, TgUpdate update, UpdateHandler handler, CancellationToken ct) =>
     {
-        if (!SecretTokenMatches(config.WebhookSecret,
+        if (!SecretComparison.Matches(config.WebhookSecret,
                 http.Request.Headers["X-Telegram-Bot-Api-Secret-Token"]))
             return Results.Unauthorized();
 
@@ -141,22 +140,5 @@ app.MapGet("/admin/settings", () => Results.File(
 app.MapGet("/", () => Results.Redirect("/show"));
 
 app.Run();
-
-/// <summary>
-/// Constant-time over the UTF-8 bytes, the one endpoint strangers can reach.
-/// Hashes both sides before comparing, the same way SessionCookie.PasswordMatches
-/// does it: CryptographicOperations.FixedTimeEquals alone still leaks length through
-/// its own argument check unless both inputs are already the same size, and hashing
-/// first fixes that at 32 bytes regardless of what was supplied — a missing header
-/// (null) hashes and compares exactly like a present-but-wrong one.
-/// </summary>
-static bool SecretTokenMatches(string expected, string? supplied)
-{
-    Span<byte> hashA = stackalloc byte[32];
-    Span<byte> hashB = stackalloc byte[32];
-    SHA256.HashData(Encoding.UTF8.GetBytes(expected), hashA);
-    SHA256.HashData(Encoding.UTF8.GetBytes(supplied ?? ""), hashB);
-    return CryptographicOperations.FixedTimeEquals(hashA, hashB);
-}
 
 public partial class Program { }

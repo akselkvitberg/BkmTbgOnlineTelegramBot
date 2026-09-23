@@ -16,7 +16,13 @@ public sealed class AppConfig
     public required string WebhookPath { get; init; }
     public required string AdminPassword { get; init; }
     public required string CookieSigningKey { get; init; }
-    public required string JoinCode { get; init; }
+
+    /// <summary>
+    /// Optional. Read once, by StateMigration, to give the default event the code
+    /// already printed on the QR of a deployment from before events. After that every
+    /// event's code lives in state and is rotated from admin.
+    /// </summary>
+    public string? JoinCode { get; init; }
 
     /// <summary>
     /// LOCAL_DEV=true runs the app on a workstation: photos and state go to
@@ -30,7 +36,7 @@ public sealed class AppConfig
     private static readonly string[] SecretKeys =
     [
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_PATH",
-        "ADMIN_PASSWORD", "COOKIE_SIGNING_KEY", "JOIN_CODE",
+        "ADMIN_PASSWORD", "COOKIE_SIGNING_KEY",
     ];
 
     // Telegram's deep-link payload charset. A code outside it produces a
@@ -55,8 +61,12 @@ public sealed class AppConfig
                 "Secrets come from Secret Manager via Cloud Run; check the service's env vars.");
         }
 
-        var joinCode = config["JOIN_CODE"]!.Trim();
-        if (!JoinCodePattern.IsMatch(joinCode))
+        var joinCode = config["JOIN_CODE"]?.Trim();
+        if (string.IsNullOrEmpty(joinCode))
+        {
+            joinCode = null;
+        }
+        else if (!JoinCodePattern.IsMatch(joinCode))
         {
             throw new InvalidOperationException(
                 "JOIN_CODE must be 1-64 characters from A-Z, a-z, 0-9, underscore or hyphen " +
@@ -88,6 +98,7 @@ public sealed class AppConfig
     public void LogLoaded(ILogger logger)
     {
         foreach (var key in SecretKeys) logger.LogInformation("Secret {Key} loaded.", key);
+        if (JoinCode is not null) logger.LogInformation("Secret {Key} loaded.", "JOIN_CODE");
         if (LocalDev)
             logger.LogWarning("LOCAL_DEV: storing files in {Dir}; Telegram is offline.", StorageDir);
         else

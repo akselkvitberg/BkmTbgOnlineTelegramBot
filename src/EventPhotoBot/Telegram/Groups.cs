@@ -3,16 +3,16 @@ using EventPhotoBot.State;
 namespace EventPhotoBot.Telegram;
 
 /// <summary>
-/// The rules for <see cref="Settings.Groups"/>, shared by the update handler (the bot
+/// The rules for <see cref="EventState.Groups"/>, shared by the update handler (the bot
 /// joining, leaving, or being given the join code) and the admin API (an organiser
 /// turning listening on or off, or making the bot leave).
 /// </summary>
 public static class Groups
 {
     /// <summary>
-    /// How many groups the bot keeps a row for while not listening to them. Anyone
-    /// can add the bot to a group, and each add is a state write nobody at the event
-    /// authorised; the cap keeps a stranger adding it to hundreds of groups from
+    /// How many groups the bot keeps a row for while they are not routed to an event.
+    /// Anyone can add the bot to a group, and each add is a state write nobody at the
+    /// event authorised; the cap keeps a stranger adding it to hundreds of groups from
     /// growing state.json without bound. Listening groups are never evicted.
     /// </summary>
     public const int MaxNotListening = 20;
@@ -33,14 +33,14 @@ public static class Groups
     /// <summary>Adds or refreshes the row for a group the bot is in. Never changes Listening.</summary>
     public static BotGroup Remember(EventState state, long id, string? title, DateTimeOffset now)
     {
-        var groups = state.Settings.Groups;
+        var groups = state.Groups;
         var group = groups.FirstOrDefault(g => g.Id == id);
         if (group is null)
         {
             group = new BotGroup { Id = id, FirstSeen = now };
             groups.Add(group);
 
-            var idle = groups.Where(g => !g.Listening).OrderBy(g => g.FirstSeen).ToList();
+            var idle = groups.Where(g => g.EventId is null).OrderBy(g => g.FirstSeen).ToList();
             foreach (var evicted in idle.Take(Math.Max(0, idle.Count - MaxNotListening)))
                 groups.Remove(evicted);
         }
@@ -50,14 +50,15 @@ public static class Groups
     }
 
     /// <summary>
-    /// Turns listening on, adding the row if the bot joined before it kept one.
-    /// True only if this call is what turned it on, so the notice goes out once.
+    /// Routes the group to an event, adding the row if the bot joined before it kept
+    /// one. True only if this call changed where the group's photos go, so the notice
+    /// goes out once per change.
     /// </summary>
-    public static bool Listen(EventState state, long id, string? title, DateTimeOffset now)
+    public static bool Route(EventState state, long id, string? title, DateTimeOffset now, string eventId)
     {
         var group = Remember(state, id, title, now);
-        if (group.Listening) return false;
-        group.Listening = true;
+        if (group.EventId == eventId) return false;
+        group.EventId = eventId;
         return true;
     }
 }

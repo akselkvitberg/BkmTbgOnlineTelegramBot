@@ -8,7 +8,7 @@ namespace EventPhotoBot.State;
 /// interleaved write is detected and retried rather than silently overwritten.
 /// This is the only type that writes state.json.
 /// </summary>
-public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger = null)
+public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger = null, StateSeed? seed = null)
 {
     public const string StatePath = "state/state.json";
     public const string PrevPath = "state/state-prev.json";
@@ -27,6 +27,13 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
     /// <summary>The GCS generation of state.json, used directly as the manifest ETag.</summary>
     public long Generation => _generation;
 
+    /// <summary>
+    /// Whether the last load changed the state it read (a file from before events, or
+    /// no file at all). InitializeAsync persists it, so a generated join code is fixed
+    /// before anyone scans it.
+    /// </summary>
+    public bool MigratedOnLoad { get; private set; }
+
     public async Task LoadAsync(CancellationToken ct = default)
     {
         var stored = await ReadStateWithRetryAsync(ct);
@@ -36,15 +43,26 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
             _lastBytes = [];
             _generation = 0;
             logger?.LogInformation("No existing state found; starting from defaults.");
-            return;
+        }
+        else
+        {
+            _state = JsonSerializer.Deserialize<EventState>(stored.Bytes, StateJson.Options)
+                     ?? new EventState();
+            _lastBytes = stored.Bytes;
+            _generation = stored.Generation;
+            logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
+                _generation, _state.Images.Count);
         }
 
-        _state = JsonSerializer.Deserialize<EventState>(stored.Bytes, StateJson.Options)
-                 ?? new EventState();
-        _lastBytes = stored.Bytes;
-        _generation = stored.Generation;
-        logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
-            _generation, _state.Images.Count);
+        MigratedOnLoad = StateMigration.Migrate(_state, seed?.JoinCode, DateTimeOffset.UtcNow);
+        if (MigratedOnLoad) logger?.LogInformation("Migrated state to the events shape.");
+    }
+
+    /// <summary>Startup's load: LoadAsync, then one write if the load migrated anything.</summary>
+    public async Task InitializeAsync(CancellationToken ct = default)
+    {
+        await LoadAsync(ct);
+        if (MigratedOnLoad) await MutateAsync(_ => { }, ct);
     }
 
     /// <summary>
@@ -106,6 +124,10 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
                         ifGenerationMatch: _generation, ct);
                     _state = working;
                     _lastBytes = bytes;
+                    // One line per write, so the point where one file stops being
+                    // enough is visible in the logs before it is felt in admin.
+                    logger?.LogInformation("Wrote state.json at generation {Generation}: {Bytes} bytes.",
+                        _generation, bytes.Length);
                     return result;
                 }
                 catch (PreconditionFailedException) when (attempt < MaxAttempts)
@@ -134,12 +156,15 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
     /// </summary>
     private static void ClearExpiredTakeover(EventState state)
     {
-        var s = state.Settings;
-        if (s.TakeoverImageId is null) return;
-        if (s.TakeoverUntil is { } until && until <= DateTimeOffset.UtcNow)
+        foreach (var ev in state.Events)
         {
-            s.TakeoverImageId = null;
-            s.TakeoverUntil = null;
+            var s = ev.Settings;
+            if (s.TakeoverImageId is null) continue;
+            if (s.TakeoverUntil is { } until && until <= DateTimeOffset.UtcNow)
+            {
+                s.TakeoverImageId = null;
+                s.TakeoverUntil = null;
+            }
         }
     }
 }

@@ -24,7 +24,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await _factory.Objects.WriteAsync(ObjectPaths.Original(id, "jpg"), [1], "image/jpeg", null);
         await _factory.Store.MutateAsync(s => s.Images[id] = new ImageRecord
         {
-            Id = id, Sha256 = id, SortKey = id, Status = status,
+            Id = id, EventId = StateMigration.DefaultEventId, Sha256 = id, SortKey = id, Status = status,
             Width = 10, Height = 10, OriginalExtension = "jpg",
             ReceivedAt = DateTimeOffset.UtcNow,
         });
@@ -254,7 +254,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 12 });
         await client.PatchAsJsonAsync("/api/settings", new { order = "newest-first" });
 
-        var settings = _factory.Store.Snapshot.Settings;
+        var settings = _factory.Store.Snapshot.Default().Settings;
         Assert.Equal(12, settings.SlideSeconds);
         Assert.Equal(SlideOrder.NewestFirst, settings.Order);
         Assert.Equal(800, settings.TransitionMs); // untouched fields survive
@@ -264,42 +264,42 @@ public class AdminApiTests : IClassFixture<AppFactory>
     public async Task Ken_burns_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.KenBurns); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.KenBurns); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { kenBurns = false });
-        Assert.False(_factory.Store.Snapshot.Settings.KenBurns);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.KenBurns);
 
         await client.PatchAsJsonAsync("/api/settings", new { kenBurns = true });
-        Assert.True(_factory.Store.Snapshot.Settings.KenBurns);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.KenBurns);
     }
 
     [Fact]
     public async Task The_join_invite_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = false });
-        Assert.False(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite);
 
         await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = true });
-        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite);
     }
 
     [Fact]
     public async Task The_event_name_on_screen_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowEventName); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { showEventName = false });
-        Assert.False(_factory.Store.Snapshot.Settings.ShowEventName);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.ShowEventName);
 
         var settings = await client.GetFromJsonAsync<JsonElement>("/api/settings");
         Assert.False(settings.GetProperty("showEventName").GetBoolean());
 
         await client.PatchAsJsonAsync("/api/settings", new { showEventName = true });
-        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowEventName);
     }
 
     // The store is shared across this class, so these set the layout they start from
@@ -314,10 +314,10 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await client.PatchAsJsonAsync("/api/settings", new { layout = "single" });
 
         await client.PatchAsJsonAsync("/api/settings", new { layout = "mosaic" });
-        Assert.Equal(SlideLayout.Mosaic, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Mosaic, _factory.Store.Snapshot.Default().Settings.Layout);
 
         await client.PatchAsJsonAsync("/api/settings", new { layout = "split" });
-        Assert.Equal(SlideLayout.Split, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Split, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Theory]
@@ -335,7 +335,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var response = await client.PatchAsJsonAsync("/api/settings", new { layout });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(SlideLayout.Polaroid, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Polaroid, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Fact]
@@ -346,7 +346,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 6 });
 
-        Assert.Equal(SlideLayout.Collage, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Collage, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Fact]
@@ -358,7 +358,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         // Trimmed: the field is typed into a web form, and a stray space would
         // show up centred on the projector.
-        Assert.Equal("Sommerfest 2026", _factory.Store.Snapshot.Settings.EventName);
+        Assert.Equal("Sommerfest 2026", _factory.Store.Snapshot.Default().Name);
     }
 
     [Fact]
@@ -368,7 +368,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { eventName = new string('a', 300) });
 
-        Assert.Equal(100, _factory.Store.Snapshot.Settings.EventName.Length);
+        Assert.Equal(100, _factory.Store.Snapshot.Default().Name.Length);
     }
 
     [Fact]
@@ -379,7 +379,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { eventName = "" });
 
-        Assert.Equal("", _factory.Store.Snapshot.Settings.EventName);
+        Assert.Equal("", _factory.Store.Snapshot.Default().Name);
     }
 
     [Fact]
@@ -487,12 +487,18 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var client = _factory.CreateAuthenticatedClient();
         await _factory.Store.MutateAsync(s =>
         {
-            s.Settings.SlideSeconds = 42;
-            s.Settings.Order = SlideOrder.NewestFirst;
-            s.Settings.EventName = "Sommerfest";
-            s.Settings.Layout = SlideLayout.Mosaic;
-            s.Settings.Senders =
-                [new Sender { Id = 42, Name = "Guest", Status = SenderStatus.AutoApprove }];
+            s.Default().Settings.SlideSeconds = 42;
+            s.Default().Settings.Order = SlideOrder.NewestFirst;
+            s.Default().Name = "Sommerfest";
+            s.Default().Settings.Layout = SlideLayout.Mosaic;
+            s.Senders =
+            [
+                new Sender
+                {
+                    Id = 42, Name = "Guest",
+                    Memberships = [new Membership { EventId = StateMigration.DefaultEventId, AutoApprove = true }],
+                },
+            ];
         });
 
         var response = await client.GetAsync("/api/settings");
@@ -567,10 +573,12 @@ public class AdminApiTests : IClassFixture<AppFactory>
     {
         await _factory.Store.MutateAsync(s =>
         {
-            s.Settings.Groups.RemoveAll(g => g.Id == id);
-            s.Settings.Groups.Add(new BotGroup
+            s.Groups.RemoveAll(g => g.Id == id);
+            s.Groups.Add(new BotGroup
             {
-                Id = id, Title = "<b>Festkomiteen</b>", Listening = listening, FirstSeen = DateTimeOffset.UtcNow,
+                Id = id, Title = "<b>Festkomiteen</b>",
+                EventId = listening ? StateMigration.DefaultEventId : null,
+                FirstSeen = DateTimeOffset.UtcNow,
             });
         });
     }
@@ -600,7 +608,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
-        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2002).Listening);
+        Assert.True(_factory.Store.Snapshot.Groups.Single(g => g.Id == -2002).EventId is not null);
         Assert.Single(_factory.Telegram.Sent, m => m.ChatId == -2002 && m.Text == Groups.ListeningNotice);
     }
 
@@ -613,7 +621,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var response = await client.PostAsJsonAsync("/api/groups/-2003/listening", new { listening = false });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.False(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2003).Listening);
+        Assert.False(_factory.Store.Snapshot.Groups.Single(g => g.Id == -2003).EventId is not null);
         Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2003);
     }
 
@@ -625,7 +633,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var response = await client.PostAsJsonAsync("/api/groups/-2999/listening", new { listening = true });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2999);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Groups, g => g.Id == -2999);
         Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2999);
     }
 
@@ -638,7 +646,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var response = await client.PostAsJsonAsync("/api/groups/-2004/listening", new { });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2004).Listening);
+        Assert.True(_factory.Store.Snapshot.Groups.Single(g => g.Id == -2004).EventId is not null);
     }
 
     [Fact]
@@ -651,7 +659,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains(-2005, _factory.Telegram.Left);
-        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2005);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Groups, g => g.Id == -2005);
     }
 
     [Fact]
@@ -665,7 +673,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
             var response = await client.PostAsync("/api/groups/-2006/leave", null);
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
-            Assert.Contains(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2006);
+            Assert.Contains(_factory.Store.Snapshot.Groups, g => g.Id == -2006);
         }
         finally
         {

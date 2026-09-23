@@ -42,22 +42,15 @@ public class UpdateHandlerTests
         public StateStore Store { get; private set; } = null!;
         public UpdateHandler Handler { get; private set; } = null!;
 
-        private static AppConfig Config() => new()
-        {
-            BucketName = "bucket", BotToken = "token",
-            WebhookSecret = "secret", WebhookPath = "abc123", AdminPassword = "hunter2",
-            CookieSigningKey = "0123456789abcdef0123456789abcdef", JoinCode = JoinCode,
-        };
-
-        public static async Task<Harness> CreateAsync(Action<Settings>? configure = null)
+        public static async Task<Harness> CreateAsync(Action<EventState>? configure = null)
         {
             var harness = new Harness();
-            harness.Store = new StateStore(harness.Objects);
+            harness.Store = new StateStore(harness.Objects, seed: new StateSeed(JoinCode));
             await harness.Store.LoadAsync();
             if (configure is not null)
-                await harness.Store.MutateAsync(s => configure(s.Settings));
+                await harness.Store.MutateAsync(s => configure(s));
             harness.Handler = new UpdateHandler(
-                harness.Store, harness.Objects, harness.Telegram, Config(),
+                harness.Store, harness.Objects, harness.Telegram,
                 NullLogger<UpdateHandler>.Instance);
             return harness;
         }
@@ -96,8 +89,12 @@ public class UpdateHandlerTests
     private static bool IsImageObject(string path) =>
         path.StartsWith("originals/") || path.StartsWith("display/") || path.StartsWith("thumbs/");
 
-    private static Sender Roster(long id, SenderStatus status) =>
-        new() { Id = id, Name = "Guest", Status = status, FirstSeen = DateTimeOffset.UtcNow };
+    private static Sender Roster(long id, bool autoApprove = false, bool banned = false) => new()
+    {
+        Id = id, Name = "Guest", Banned = banned, FirstSeen = DateTimeOffset.UtcNow,
+        CurrentEventId = StateMigration.DefaultEventId,
+        Memberships = [new Membership { EventId = StateMigration.DefaultEventId, AutoApprove = autoApprove }],
+    };
 
     private static void StockFile(Harness harness, string fileId) =>
         harness.Telegram.Files[$"path/{fileId}"] = SamplePhoto();
@@ -105,7 +102,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_known_sender_gets_their_photo_queued()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest));
@@ -119,7 +116,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task An_auto_approve_sender_skips_the_queue()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, autoApprove: true)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest));
@@ -132,7 +129,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_banned_sender_gets_no_reply_and_nothing_is_stored()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, SenderStatus.Banned)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, banned: true)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Stranger));
@@ -154,7 +151,7 @@ public class UpdateHandlerTests
 
         Assert.Empty(harness.Store.Snapshot.Images);
         Assert.DoesNotContain(harness.Objects.Paths, IsImageObject);
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
         var (_, text) = Assert.Single(harness.Telegram.Sent);
         Assert.Contains("QR", text);
     }
@@ -166,9 +163,10 @@ public class UpdateHandlerTests
 
         await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {Harness.JoinCode}"));
 
-        var sender = Assert.Single(harness.Store.Snapshot.Settings.Senders);
+        var sender = Assert.Single(harness.Store.Snapshot.Senders);
         Assert.Equal(Stranger, sender.Id);
-        Assert.Equal(SenderStatus.Known, sender.Status);
+        Assert.False(sender.Banned);
+        Assert.False(sender.MembershipIn(StateMigration.DefaultEventId)!.AutoApprove);
         Assert.Single(harness.Telegram.Sent);
     }
 
@@ -179,7 +177,7 @@ public class UpdateHandlerTests
 
         await harness.Handler.HandleAsync(TextFrom(Stranger, "/start wrongcode"));
 
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
         var (_, text) = Assert.Single(harness.Telegram.Sent);
         Assert.Contains("QR", text);
     }
@@ -191,29 +189,27 @@ public class UpdateHandlerTests
 
         await harness.Handler.HandleAsync(TextFrom(Stranger, "/start"));
 
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
     }
 
     [Fact]
     public async Task Redeeming_the_code_again_does_not_demote_an_auto_approve_sender()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, autoApprove: true)));
 
         await harness.Handler.HandleAsync(TextFrom(Guest, $"/start {Harness.JoinCode}"));
 
-        Assert.Equal(SenderStatus.AutoApprove,
-            Assert.Single(harness.Store.Snapshot.Settings.Senders).Status);
+        Assert.True(Assert.Single(harness.Store.Snapshot.Senders).MembershipIn(StateMigration.DefaultEventId)!.AutoApprove);
     }
 
     [Fact]
     public async Task A_banned_sender_cannot_readmit_themselves_with_the_code()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, SenderStatus.Banned)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, banned: true)));
 
         await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {Harness.JoinCode}"));
 
-        Assert.Equal(SenderStatus.Banned,
-            Assert.Single(harness.Store.Snapshot.Settings.Senders).Status);
+        Assert.True(Assert.Single(harness.Store.Snapshot.Senders).Banned);
         Assert.Empty(harness.Telegram.Sent);
     }
 
@@ -226,15 +222,14 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(PhotoFrom(Stranger));          // declined, starts the cooldown
         await harness.Handler.HandleAsync(TextFrom(Stranger, $"/start {Harness.JoinCode}"));
 
-        Assert.Equal(SenderStatus.Known,
-            Assert.Single(harness.Store.Snapshot.Settings.Senders).Status);
+        Assert.NotNull(Assert.Single(harness.Store.Snapshot.Senders).MembershipIn(StateMigration.DefaultEventId));
         Assert.Equal(2, harness.Telegram.Sent.Count);
     }
 
     [Fact]
     public async Task Start_tells_a_known_sender_what_happens_to_their_photos()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
 
         await harness.Handler.HandleAsync(TextFrom(Guest, "/start"));
 
@@ -245,7 +240,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task The_largest_photo_size_is_the_one_downloaded()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
         // "small" is deliberately not stocked: using it would throw.
 
@@ -257,7 +252,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task All_three_objects_are_written_before_the_state_entry_exists()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest));
@@ -271,7 +266,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_duplicate_file_unique_id_is_rejected_without_a_second_copy()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "same"));
@@ -284,7 +279,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task An_identical_image_sent_with_a_different_file_id_is_caught_by_the_hash()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest, fileUniqueId: "first"));
@@ -296,7 +291,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task An_album_gets_one_acknowledgement_rather_than_one_per_photo()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
 
         // Five genuinely distinct images, the way a real five-photo album is: the
         // content-hash duplicate guard applies here too, so five copies of the same
@@ -316,7 +311,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_caption_is_stored_with_the_image()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest, caption: "Cake time"));
@@ -327,7 +322,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_non_photo_message_is_declined()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
 
         await harness.Handler.HandleAsync(new TgUpdate
         {
@@ -346,7 +341,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_heic_document_is_declined_with_a_clear_message()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
 
         await harness.Handler.HandleAsync(new TgUpdate
         {
@@ -369,7 +364,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_file_over_the_twenty_megabyte_bot_limit_is_declined()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
 
         var update = PhotoFrom(Guest);
         update.Message!.Photo![1].FileSize = 25 * 1024 * 1024;
@@ -383,7 +378,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_download_failure_apologises_and_stores_nothing()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest, SenderStatus.Known)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Guest)));
         // No file stocked, so DownloadAsync throws.
 
         await harness.Handler.HandleAsync(PhotoFrom(Guest));
@@ -439,8 +434,8 @@ public class UpdateHandlerTests
         },
     };
 
-    private static BotGroup Listening(long id = Group) =>
-        new() { Id = id, Title = "Festkomiteen", Listening = true, FirstSeen = DateTimeOffset.UtcNow };
+    private static BotGroup Routed(long id = Group) => new()
+        { Id = id, Title = "Festkomiteen", EventId = StateMigration.DefaultEventId, FirstSeen = DateTimeOffset.UtcNow };
 
     [Fact]
     public async Task Being_added_to_a_group_records_it_without_listening()
@@ -449,21 +444,21 @@ public class UpdateHandlerTests
 
         await harness.Handler.HandleAsync(BotMembership(Group, "member"));
 
-        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
+        var group = Assert.Single(harness.Store.Snapshot.Groups);
         Assert.Equal(Group, group.Id);
         Assert.Equal("Festkomiteen", group.Title);
-        Assert.False(group.Listening);
+        Assert.Null(group.EventId);
         Assert.Empty(harness.Telegram.Sent);
     }
 
     [Fact]
     public async Task Being_removed_from_a_group_forgets_it_listening_included()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
 
         await harness.Handler.HandleAsync(BotMembership(Group, "kicked"));
 
-        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Store.Snapshot.Groups);
     }
 
     [Fact]
@@ -487,13 +482,13 @@ public class UpdateHandlerTests
     [Fact]
     public async Task Groups_the_bot_does_not_listen_to_are_capped_and_the_oldest_go_first()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening(-1)));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed(-1)));
 
         for (var i = 0; i < Groups.MaxNotListening + 5; i++)
             await harness.Handler.HandleAsync(BotMembership(-100 - i, "member"));
 
-        var groups = harness.Store.Snapshot.Settings.Groups;
-        Assert.Equal(Groups.MaxNotListening, groups.Count(g => !g.Listening));
+        var groups = harness.Store.Snapshot.Groups;
+        Assert.Equal(Groups.MaxNotListening, groups.Count(g => g.EventId is null));
         Assert.Contains(groups, g => g.Id == -1);                        // listening, never evicted
         Assert.DoesNotContain(groups, g => g.Id == -100);                // the oldest idle one
         Assert.Contains(groups, g => g.Id == -100 - (Groups.MaxNotListening + 4));
@@ -504,7 +499,7 @@ public class UpdateHandlerTests
     {
         var harness = await Harness.CreateAsync(s =>
         {
-            s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove));
+            s.Senders.Add(Roster(Guest, autoApprove: true));
             s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen" });
         });
         StockFile(harness, "large");
@@ -529,7 +524,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, "hei")));
 
         Assert.Empty(harness.Telegram.Sent);
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
         Assert.Equal(generation, harness.Store.Generation);
     }
 
@@ -544,14 +539,14 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
 
-        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
-        Assert.True(group.Listening);
+        var group = Assert.Single(harness.Store.Snapshot.Groups);
+        Assert.Equal(StateMigration.DefaultEventId, group.EventId);
         Assert.Equal("Festkomiteen", group.Title);
         var (chatId, notice) = Assert.Single(harness.Telegram.Sent);
         Assert.Equal(Group, chatId);
         Assert.Equal(Groups.ListeningNotice, notice);
         // Posting the code opens the group; it does not put the poster on the roster.
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
     }
 
     [Theory]
@@ -565,25 +560,25 @@ public class UpdateHandlerTests
 
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
 
-        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Store.Snapshot.Groups);
         Assert.Empty(harness.Telegram.Sent);
     }
 
     [Fact]
     public async Task A_banned_member_cannot_open_a_group_with_the_code()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, SenderStatus.Banned)));
+        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, banned: true)));
 
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, $"/start {Harness.JoinCode}")));
 
-        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Store.Snapshot.Groups);
         Assert.Empty(harness.Telegram.Sent);
     }
 
     [Fact]
     public async Task A_new_members_first_photo_is_queued_and_adds_them_as_known()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
         StockFile(harness, "large");
 
         var update = InGroup(PhotoFrom(Stranger));
@@ -593,10 +588,11 @@ public class UpdateHandlerTests
         var image = Assert.Single(harness.Store.Snapshot.Images.Values);
         Assert.Equal(ImageStatus.Pending, image.Status);
         Assert.Equal(Stranger, image.SenderId);
-        var sender = Assert.Single(harness.Store.Snapshot.Settings.Senders);
+        var sender = Assert.Single(harness.Store.Snapshot.Senders);
         Assert.Equal(Stranger, sender.Id);
         Assert.Equal("Kari", sender.Name);
-        Assert.Equal(SenderStatus.Known, sender.Status);
+        Assert.False(sender.Banned);
+        Assert.False(sender.MembershipIn(StateMigration.DefaultEventId)!.AutoApprove);
 
         Assert.Empty(harness.Telegram.Sent);
         Assert.Equal((Group, 77L, "👀"), Assert.Single(harness.Telegram.Reactions));
@@ -607,8 +603,8 @@ public class UpdateHandlerTests
     {
         var harness = await Harness.CreateAsync(s =>
         {
-            s.Senders.Add(Roster(Guest, SenderStatus.AutoApprove));
-            s.Groups.Add(Listening());
+            s.Senders.Add(Roster(Guest, autoApprove: true));
+            s.Groups.Add(Routed());
         });
         StockFile(harness, "large");
 
@@ -624,8 +620,8 @@ public class UpdateHandlerTests
     {
         var harness = await Harness.CreateAsync(s =>
         {
-            s.Senders.Add(Roster(Stranger, SenderStatus.Banned));
-            s.Groups.Add(Listening());
+            s.Senders.Add(Roster(Stranger, banned: true));
+            s.Groups.Add(Routed());
         });
         StockFile(harness, "large");
 
@@ -640,7 +636,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task A_duplicate_in_a_group_is_dropped_silently()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest, fileUniqueId: "same")));
@@ -654,7 +650,7 @@ public class UpdateHandlerTests
     [Fact]
     public async Task Chat_declines_and_failures_in_a_group_get_no_reply()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
 
         var tooLarge = InGroup(PhotoFrom(Guest));
         tooLarge.Message!.Photo![1].FileSize = 25 * 1024 * 1024;
@@ -672,13 +668,13 @@ public class UpdateHandlerTests
         Assert.Empty(harness.Telegram.Sent);
         Assert.Empty(harness.Telegram.Reactions);
         // Nobody was added for posting nothing usable.
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
     }
 
     [Fact]
     public async Task Posts_made_as_a_chat_or_by_a_bot_are_ignored()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
         StockFile(harness, "large");
 
         var anonymous = InGroup(PhotoFrom(1087968824, fileUniqueId: "a"));
@@ -690,25 +686,25 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(bot);
 
         Assert.Empty(harness.Store.Snapshot.Images);
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
+        Assert.Empty(harness.Store.Snapshot.Senders);
     }
 
     [Fact]
     public async Task A_renamed_group_gets_its_new_title_with_the_next_photo()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
         StockFile(harness, "large");
 
         await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest), title: "Festkomiteen 2026"));
 
-        Assert.Equal("Festkomiteen 2026", Assert.Single(harness.Store.Snapshot.Settings.Groups).Title);
+        Assert.Equal("Festkomiteen 2026", Assert.Single(harness.Store.Snapshot.Groups).Title);
     }
 
     [Fact]
     public async Task An_upgrade_to_a_supergroup_carries_listening_over_to_the_new_id()
     {
         const long OldId = -4321, NewId = -1004321;
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening(OldId)));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed(OldId)));
 
         var to = InGroup(TextFrom(Guest, "x"), groupId: OldId);
         to.Message!.Text = null;
@@ -721,16 +717,16 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(to);
         await harness.Handler.HandleAsync(from);
 
-        var group = Assert.Single(harness.Store.Snapshot.Settings.Groups);
+        var group = Assert.Single(harness.Store.Snapshot.Groups);
         Assert.Equal(NewId, group.Id);
-        Assert.True(group.Listening);
+        Assert.Equal(StateMigration.DefaultEventId, group.EventId);
         Assert.Empty(harness.Telegram.Sent);
     }
 
     [Fact]
     public async Task A_private_chat_with_an_explicit_type_behaves_as_before()
     {
-        var harness = await Harness.CreateAsync(s => s.Groups.Add(Listening()));
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(Routed()));
         StockFile(harness, "large");
 
         var update = PhotoFrom(Stranger);
@@ -753,7 +749,7 @@ public class UpdateHandlerTests
         await harness.Handler.HandleAsync(update);
 
         Assert.Empty(harness.Telegram.Sent);
-        Assert.Empty(harness.Store.Snapshot.Settings.Senders);
-        Assert.Empty(harness.Store.Snapshot.Settings.Groups);
+        Assert.Empty(harness.Store.Snapshot.Senders);
+        Assert.Empty(harness.Store.Snapshot.Groups);
     }
 }

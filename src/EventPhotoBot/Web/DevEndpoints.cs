@@ -1,3 +1,4 @@
+using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
 
 namespace EventPhotoBot.Web;
@@ -16,9 +17,9 @@ public static class DevEndpoints
         app.MapGet("/dev", () => Results.File(
             Path.Combine(app.Environment.ContentRootPath, "DevTools", "dev.html"), "text/html"));
 
-        app.MapPost("/dev/join", async (DevGuest guest, UpdateHandler handler, AppConfig config) =>
+        app.MapPost("/dev/join", async (DevGuest guest, UpdateHandler handler, StateStore store) =>
         {
-            await handler.HandleAsync(Update(guest, message => message.Text = $"/start {config.JoinCode}"));
+            await handler.HandleAsync(Update(guest, message => message.Text = $"/start {store.Snapshot.Default().JoinCode}"));
             return Results.Ok();
         });
 

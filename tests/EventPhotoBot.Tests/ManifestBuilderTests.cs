@@ -1,4 +1,5 @@
 using EventPhotoBot.State;
+using EventPhotoBot.Tests.Fakes;
 using EventPhotoBot.Web;
 
 namespace EventPhotoBot.Tests;
@@ -7,11 +8,13 @@ public class ManifestBuilderTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 20, 20, 0, 0, TimeSpan.Zero);
 
+    private static Manifest Build(EventState state, long generation, string? joinUrl = null) =>
+        ManifestBuilder.Build(state, state.Default(), generation, Now, joinUrl);
+
     [Fact]
     public void The_manifest_carries_the_join_url()
     {
-        var manifest = ManifestBuilder.Build(
-            new EventState(), generation: 1, Now, "https://t.me/bot?start=code");
+        var manifest = Build(TestState.New(), generation: 1, "https://t.me/bot?start=code");
 
         Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
     }
@@ -19,7 +22,7 @@ public class ManifestBuilderTests
     [Fact]
     public void The_join_url_is_null_when_the_bot_username_is_unknown()
     {
-        var manifest = ManifestBuilder.Build(new EventState(), generation: 1, Now);
+        var manifest = Build(TestState.New(), generation: 1);
 
         Assert.Null(manifest.Settings.JoinUrl);
     }
@@ -27,48 +30,48 @@ public class ManifestBuilderTests
     [Fact]
     public void The_manifest_carries_the_ken_burns_setting()
     {
-        var state = new EventState();
-        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.KenBurns);
+        var state = TestState.New();
+        Assert.True(Build(state, 1).Settings.KenBurns);
 
-        state.Settings.KenBurns = false;
+        state.Default().Settings.KenBurns = false;
 
-        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.KenBurns);
+        Assert.False(Build(state, 2).Settings.KenBurns);
     }
 
     [Fact]
     public void The_manifest_carries_the_join_invite_setting()
     {
-        var state = new EventState();
-        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.ShowJoinInvite);
+        var state = TestState.New();
+        Assert.True(Build(state, 1).Settings.ShowJoinInvite);
 
-        state.Settings.ShowJoinInvite = false;
+        state.Default().Settings.ShowJoinInvite = false;
 
-        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.ShowJoinInvite);
+        Assert.False(Build(state, 2).Settings.ShowJoinInvite);
     }
 
     [Fact]
     public void The_manifest_carries_the_event_name_setting()
     {
-        var state = new EventState();
-        Assert.True(ManifestBuilder.Build(state, 1, Now).Settings.ShowEventName);
+        var state = TestState.New();
+        Assert.True(Build(state, 1).Settings.ShowEventName);
 
-        state.Settings.ShowEventName = false;
+        state.Default().Settings.ShowEventName = false;
 
-        Assert.False(ManifestBuilder.Build(state, 2, Now).Settings.ShowEventName);
+        Assert.False(Build(state, 2).Settings.ShowEventName);
     }
 
     [Fact]
     public void The_manifest_carries_the_layout_as_a_lowercase_name()
     {
-        var state = new EventState();
+        var state = TestState.New();
 
         // The screen it was written for, and what an event that has never touched
         // the setting gets.
-        Assert.Equal("single", ManifestBuilder.Build(state, 1, Now).Settings.Layout);
+        Assert.Equal("single", Build(state, 1).Settings.Layout);
 
-        state.Settings.Layout = SlideLayout.Filmstrip;
+        state.Default().Settings.Layout = SlideLayout.Filmstrip;
 
-        Assert.Equal("filmstrip", ManifestBuilder.Build(state, 2, Now).Settings.Layout);
+        Assert.Equal("filmstrip", Build(state, 2).Settings.Layout);
     }
 
     [Theory]
@@ -84,9 +87,10 @@ public class ManifestBuilderTests
         // single layout on anything it does not recognise, so a mismatch here would
         // not fail loudly - it would quietly ignore the organiser's choice. The
         // spellings are asserted one by one for that reason.
-        var state = new EventState { Settings = { Layout = layout } };
+        var state = TestState.New();
+        state.Default().Settings.Layout = layout;
 
-        Assert.Equal(expected, ManifestBuilder.Build(state, 1, Now).Settings.Layout);
+        Assert.Equal(expected, Build(state, 1).Settings.Layout);
     }
 
     [Fact]
@@ -95,22 +99,24 @@ public class ManifestBuilderTests
         // The setting is a screen-side choice, not a change to who may join: the
         // link keeps working for anyone who already has it, so the manifest still
         // carries it and only the slideshow's rendering changes.
-        var state = new EventState { Settings = { ShowJoinInvite = false } };
+        var state = TestState.New();
+        state.Default().Settings.ShowJoinInvite = false;
 
-        var manifest = ManifestBuilder.Build(state, 1, Now, "https://t.me/bot?start=code");
+        var manifest = Build(state, 1, "https://t.me/bot?start=code");
 
         Assert.Equal("https://t.me/bot?start=code", manifest.Settings.JoinUrl);
     }
 
     private static EventState StateWith(params (string Id, ImageStatus Status, PinKind Pin)[] images)
     {
-        var state = new EventState();
+        var state = TestState.New();
         var n = 0;
         foreach (var (id, status, pin) in images)
         {
             state.Images[id] = new ImageRecord
             {
                 Id = id,
+                EventId = StateMigration.DefaultEventId,
                 Status = status,
                 Pin = pin,
                 Sha256 = id,
@@ -134,7 +140,7 @@ public class ManifestBuilderTests
             ("c", ImageStatus.Hidden, PinKind.None),
             ("d", ImageStatus.Rejected, PinKind.None));
 
-        var manifest = ManifestBuilder.Build(state, 7, Now);
+        var manifest = Build(state, 7);
 
         Assert.Equal(["a"], manifest.Images.Select(i => i.Id));
     }
@@ -148,13 +154,13 @@ public class ManifestBuilderTests
             ("c", ImageStatus.Pending, PinKind.None),
             ("d", ImageStatus.Rejected, PinKind.None));
 
-        Assert.Equal(2, ManifestBuilder.Build(state, 1, Now).PendingCount);
+        Assert.Equal(2, Build(state, 1).PendingCount);
     }
 
     [Fact]
     public void Version_is_the_generation_it_was_given()
     {
-        Assert.Equal(42, ManifestBuilder.Build(new EventState(), 42, Now).Version);
+        Assert.Equal(42, Build(TestState.New(), 42).Version);
     }
 
     [Fact]
@@ -164,9 +170,9 @@ public class ManifestBuilderTests
             ("a", ImageStatus.Approved, PinKind.None),
             ("b", ImageStatus.Approved, PinKind.None),
             ("c", ImageStatus.Approved, PinKind.None));
-        state.Settings.Order = SlideOrder.NewestFirst;
+        state.Default().Settings.Order = SlideOrder.NewestFirst;
 
-        var manifest = ManifestBuilder.Build(state, 1, Now);
+        var manifest = Build(state, 1);
 
         Assert.Equal(["c", "b", "a"], manifest.Images.Select(i => i.Id));
     }
@@ -176,11 +182,11 @@ public class ManifestBuilderTests
     {
         var state = StateWith(Enumerable.Range(0, 20)
             .Select(i => ($"img{i}", ImageStatus.Approved, PinKind.None)).ToArray());
-        state.Settings.Order = SlideOrder.Shuffle;
+        state.Default().Settings.Order = SlideOrder.Shuffle;
 
-        var first = ManifestBuilder.Build(state, 5, Now).Images.Select(i => i.Id).ToArray();
-        var again = ManifestBuilder.Build(state, 5, Now).Images.Select(i => i.Id).ToArray();
-        var later = ManifestBuilder.Build(state, 6, Now).Images.Select(i => i.Id).ToArray();
+        var first = Build(state, 5).Images.Select(i => i.Id).ToArray();
+        var again = Build(state, 5).Images.Select(i => i.Id).ToArray();
+        var later = Build(state, 6).Images.Select(i => i.Id).ToArray();
 
         Assert.Equal(first, again);
         Assert.NotEqual(first, later);
@@ -195,16 +201,16 @@ public class ManifestBuilderTests
             .Append(("menu", ImageStatus.Approved, PinKind.Recurring))
             .ToArray();
         var state = StateWith(images);
-        state.Settings.Order = SlideOrder.NewestFirst;
-        state.Settings.RecurringEvery = 3;
+        state.Default().Settings.Order = SlideOrder.NewestFirst;
+        state.Default().Settings.RecurringEvery = 3;
 
-        var ids = ManifestBuilder.Build(state, 1, Now).Images.Select(i => i.Id).ToArray();
+        var ids = Build(state, 1).Images.Select(i => i.Id).ToArray();
 
         // The menu appears after every third ordinary image, and is flagged.
         Assert.Equal("menu", ids[3]);
         Assert.Equal("menu", ids[7]);
         Assert.DoesNotContain("menu", ids.Take(3));
-        Assert.True(ManifestBuilder.Build(state, 1, Now)
+        Assert.True(Build(state, 1)
             .Images.First(i => i.Id == "menu").Recurring);
     }
 
@@ -217,10 +223,10 @@ public class ManifestBuilderTests
                      ("programme", ImageStatus.Approved, PinKind.Recurring)])
             .ToArray();
         var state = StateWith(images);
-        state.Settings.Order = SlideOrder.NewestFirst;
-        state.Settings.RecurringEvery = 2;
+        state.Default().Settings.Order = SlideOrder.NewestFirst;
+        state.Default().Settings.RecurringEvery = 2;
 
-        var ids = ManifestBuilder.Build(state, 1, Now).Images.Select(i => i.Id).ToArray();
+        var ids = Build(state, 1).Images.Select(i => i.Id).ToArray();
         var pinned = ids.Where(id => id is "menu" or "programme").ToArray();
 
         Assert.True(pinned.Length >= 2);
@@ -239,9 +245,9 @@ public class ManifestBuilderTests
             ("b", ImageStatus.Approved, PinKind.None),
             ("menu", ImageStatus.Approved, PinKind.Recurring),
             ("programme", ImageStatus.Approved, PinKind.Recurring));
-        state.Settings.RecurringEvery = 10;
+        state.Default().Settings.RecurringEvery = 10;
 
-        var ids = ManifestBuilder.Build(state, 1, Now).Images.Select(i => i.Id).ToArray();
+        var ids = Build(state, 1).Images.Select(i => i.Id).ToArray();
 
         Assert.Contains("menu", ids);
         Assert.Contains("programme", ids);
@@ -253,9 +259,9 @@ public class ManifestBuilderTests
         var state = StateWith(
             ("a", ImageStatus.Approved, PinKind.None),
             ("menu", ImageStatus.Approved, PinKind.Recurring));
-        state.Settings.RecurringEvery = 10;
+        state.Default().Settings.RecurringEvery = 10;
 
-        var ids = ManifestBuilder.Build(state, 1, Now).Images.Select(i => i.Id).ToArray();
+        var ids = Build(state, 1).Images.Select(i => i.Id).ToArray();
 
         Assert.Single(ids, id => id == "menu");
     }
@@ -264,10 +270,10 @@ public class ManifestBuilderTests
     public void An_active_takeover_is_reported_with_its_expiry()
     {
         var state = StateWith(("a", ImageStatus.Approved, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
-        state.Settings.TakeoverUntil = Now.AddMinutes(15);
+        state.Default().Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverUntil = Now.AddMinutes(15);
 
-        var manifest = ManifestBuilder.Build(state, 1, Now);
+        var manifest = Build(state, 1);
 
         Assert.NotNull(manifest.Takeover);
         Assert.Equal("a", manifest.Takeover!.Id);
@@ -278,10 +284,10 @@ public class ManifestBuilderTests
     public void A_takeover_with_no_expiry_runs_until_cleared()
     {
         var state = StateWith(("a", ImageStatus.Approved, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
-        state.Settings.TakeoverUntil = null;
+        state.Default().Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverUntil = null;
 
-        var manifest = ManifestBuilder.Build(state, 1, Now);
+        var manifest = Build(state, 1);
 
         Assert.NotNull(manifest.Takeover);
         Assert.Null(manifest.Takeover!.Until);
@@ -291,37 +297,37 @@ public class ManifestBuilderTests
     public void An_expired_takeover_is_not_reported()
     {
         var state = StateWith(("a", ImageStatus.Approved, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
-        state.Settings.TakeoverUntil = Now.AddMinutes(-1);
+        state.Default().Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverUntil = Now.AddMinutes(-1);
 
-        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+        Assert.Null(Build(state, 1).Takeover);
     }
 
     [Fact]
     public void A_takeover_pointing_at_a_missing_image_is_not_reported()
     {
         var state = StateWith(("a", ImageStatus.Approved, PinKind.None));
-        state.Settings.TakeoverImageId = "gone";
+        state.Default().Settings.TakeoverImageId = "gone";
 
-        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+        Assert.Null(Build(state, 1).Takeover);
     }
 
     [Fact]
     public void A_takeover_pointing_at_a_hidden_image_is_not_reported()
     {
         var state = StateWith(("a", ImageStatus.Hidden, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverImageId = "a";
 
-        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+        Assert.Null(Build(state, 1).Takeover);
     }
 
     [Fact]
     public void A_takeover_pointing_at_a_pending_image_is_not_reported()
     {
         var state = StateWith(("a", ImageStatus.Pending, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverImageId = "a";
 
-        Assert.Null(ManifestBuilder.Build(state, 1, Now).Takeover);
+        Assert.Null(Build(state, 1).Takeover);
     }
 
     [Fact]
@@ -330,9 +336,9 @@ public class ManifestBuilderTests
         var state = StateWith(
             ("a", ImageStatus.Approved, PinKind.None),
             ("b", ImageStatus.Approved, PinKind.None));
-        state.Settings.TakeoverImageId = "a";
+        state.Default().Settings.TakeoverImageId = "a";
 
-        var manifest = ManifestBuilder.Build(state, 1, Now);
+        var manifest = Build(state, 1);
 
         Assert.Equal(2, manifest.Images.Count);
     }
@@ -340,7 +346,7 @@ public class ManifestBuilderTests
     [Fact]
     public void An_empty_event_produces_an_empty_playlist_rather_than_throwing()
     {
-        var manifest = ManifestBuilder.Build(new EventState(), 0, Now);
+        var manifest = Build(TestState.New(), 0);
 
         Assert.Empty(manifest.Images);
         Assert.Null(manifest.Takeover);
@@ -350,10 +356,10 @@ public class ManifestBuilderTests
     [Fact]
     public void The_event_name_in_settings_is_carried_onto_the_settings_view()
     {
-        var state = new EventState();
-        state.Settings.EventName = "Summer Party";
+        var state = TestState.New();
+        state.Default().Name = "Summer Party";
 
-        var manifest = ManifestBuilder.Build(state, 0, Now);
+        var manifest = Build(state, 0);
 
         Assert.Equal("Summer Party", manifest.Settings.EventName);
     }
@@ -364,7 +370,10 @@ public class ManifestBuilderTests
         // The screen's empty state hides the heading on an empty string, so a
         // freshly deployed event with nobody in admin yet shows no name rather
         // than the word "null".
-        var manifest = ManifestBuilder.Build(new EventState(), 0, Now);
+        var state = TestState.New();
+        state.Default().Name = "";
+
+        var manifest = Build(state, 0);
 
         Assert.Equal("", manifest.Settings.EventName);
     }

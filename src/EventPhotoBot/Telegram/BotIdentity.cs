@@ -9,12 +9,13 @@ namespace EventPhotoBot.Telegram;
 /// refusing to start costs the event its screen. This is the opposite of the
 /// missing-secret case, where the service genuinely cannot work.
 /// </summary>
-public sealed class BotIdentity(AppConfig config)
+public sealed class BotIdentity
 {
     public string? Username { get; private set; }
 
-    public string? JoinUrl =>
-        Username is null ? null : $"https://t.me/{Username}?start={config.JoinCode}";
+    /// <summary>The deep link for one event's code; null while the username is unknown.</summary>
+    public string? JoinUrlFor(string joinCode) =>
+        Username is null ? null : $"https://t.me/{Username}?start={joinCode}";
 
     public async Task ResolveAsync(ITelegramClient telegram, ILogger<BotIdentity> logger)
     {

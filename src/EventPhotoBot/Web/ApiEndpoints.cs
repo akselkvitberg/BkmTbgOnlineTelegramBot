@@ -45,6 +45,9 @@ public static class ApiEndpoints
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
 
+    /// <summary>Exists only until Task 8 replaces the sender status route.</summary>
+    private enum SenderStatusInput { Known, AutoApprove, Banned }
+
     /// <summary>
     /// Parses one of an enum's declared names, case-insensitively. The only way an
     /// enum should be read off the wire in this app.
@@ -113,10 +116,12 @@ public static class ApiEndpoints
 
         app.MapGet("/api/settings", (StateStore store) =>
         {
-            var s = store.Snapshot.Settings;
+            var state = store.Snapshot;
+            var ev = state.Default();
+            var s = ev.Settings;
             return Results.Ok(new
             {
-                s.EventName,
+                EventName = ev.Name,
                 s.SlideSeconds,
                 s.TransitionMs,
                 Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
@@ -128,22 +133,19 @@ public static class ApiEndpoints
                 Layout = s.Layout.ToString().ToLowerInvariant(),
                 s.TakeoverImageId,
                 s.TakeoverUntil,
-                // Projected by hand, like the image status above: responses go through
-                // ASP.NET's own serializer options, not StateJson.Options, so a raw enum
-                // would leave here as a number. CamelCase keeps one spelling of these
-                // values across the state file, this payload and the admin pages.
-                Senders = s.Senders.Select(sender => new
+                Senders = state.Senders.Select(sender => new
                 {
                     sender.Id,
                     sender.Name,
                     sender.FirstSeen,
-                    Status = JsonNamingPolicy.CamelCase.ConvertName(sender.Status.ToString()),
+                    Status = sender.Banned ? "banned"
+                        : sender.MembershipIn(ev.Id)?.AutoApprove == true ? "autoApprove" : "known",
                 }),
-                Groups = s.Groups.Select(group => new
+                Groups = state.Groups.Select(group => new
                 {
                     group.Id,
                     group.Title,
-                    group.Listening,
+                    Listening = group.EventId is not null,
                     group.FirstSeen,
                 }),
             });
@@ -180,14 +182,14 @@ public static class ApiEndpoints
                 // let the list claim a group the bot cannot hear.
                 var started = await store.MutateAsync(state =>
                 {
-                    var group = state.Settings.Groups.FirstOrDefault(g => g.Id == id);
+                    var group = state.Groups.FirstOrDefault(g => g.Id == id);
                     if (group is null) return (bool?)null;
                     if (!listening)
                     {
-                        group.Listening = false;
+                        group.EventId = null;
                         return false;
                     }
-                    return Groups.Listen(state, id, null, DateTimeOffset.UtcNow);
+                    return Groups.Route(state, id, null, DateTimeOffset.UtcNow, state.Default().Id);
                 }, ct);
 
                 if (started is null) return Results.NotFound();
@@ -201,7 +203,7 @@ public static class ApiEndpoints
         app.MapPost("/api/groups/{id:long}/leave",
             async (long id, StateStore store, ITelegramClient telegram, CancellationToken ct) =>
             {
-                if (store.Snapshot.Settings.Groups.All(g => g.Id != id)) return Results.NotFound();
+                if (store.Snapshot.Groups.All(g => g.Id != id)) return Results.NotFound();
 
                 // Telegram first: if it refuses, the bot is still in the group and the
                 // row has to stay so the page keeps saying so.
@@ -211,7 +213,7 @@ public static class ApiEndpoints
 
                 // The my_chat_member update that follows would remove it too; doing it
                 // here as well means the page is right the moment this returns.
-                await store.MutateAsync(state => state.Settings.Groups.RemoveAll(g => g.Id == id), ct);
+                await store.MutateAsync(state => state.Groups.RemoveAll(g => g.Id == id), ct);
                 return Results.Ok();
             });
 
@@ -228,12 +230,13 @@ public static class ApiEndpoints
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
 
-            // identity.JoinUrl is fixed for the life of the instance, so it cannot
-            // change between two polls of the same generation — the ETag above still
-            // keys off store.Generation alone, and the no-object-store-IO guarantee
-            // this path is tested for is unaffected.
+            // The join URL depends only on the event's code, which changes only with
+            // a state write — the ETag above still keys off store.Generation alone,
+            // and the no-object-store-IO guarantee this path is tested for is unaffected.
+            var state = store.Snapshot;
+            var ev = state.Default();
             return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrl));
+                state, ev, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrlFor(ev.JoinCode)));
         });
 
         app.MapPost("/api/images/{id}/status",
@@ -296,8 +299,9 @@ public static class ApiEndpoints
                     image.DecidedAt = DateTimeOffset.UtcNow;
                 }
 
-                state.Settings.TakeoverImageId = request.ImageId;
-                state.Settings.TakeoverUntil = request.Minutes is { } minutes
+                var settings = state.EventOf(image).Settings;
+                settings.TakeoverImageId = request.ImageId;
+                settings.TakeoverUntil = request.Minutes is { } minutes
                     ? DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(minutes, 1, MaxTakeoverMinutes))
                     : null;
 
@@ -317,12 +321,13 @@ public static class ApiEndpoints
             // in this codebase: not authoritative by itself, but MutateAsync's own
             // clone-and-check inside the lock would just no-op harmlessly on the rare
             // race where a takeover appears between this check and the call.
-            if (store.Snapshot.Settings.TakeoverImageId is null) return Results.Ok();
+            if (store.Snapshot.Default().Settings.TakeoverImageId is null) return Results.Ok();
 
             await store.MutateAsync(state =>
             {
-                state.Settings.TakeoverImageId = null;
-                state.Settings.TakeoverUntil = null;
+                var settings = state.Default().Settings;
+                settings.TakeoverImageId = null;
+                settings.TakeoverUntil = null;
             });
             return Results.Ok();
         });
@@ -355,14 +360,16 @@ public static class ApiEndpoints
         app.MapDelete("/api/images",
             async (StateStore store, IObjectStore objects, CancellationToken ct) =>
             {
-                if (store.Snapshot.Images.Count == 0) return Results.Ok(new { deleted = 0 });
+                var eventId = store.Snapshot.Default().Id;
+                if (!store.Snapshot.Images.Values.Any(i => i.EventId == eventId)) return Results.Ok(new { deleted = 0 });
 
                 var removed = await store.MutateAsync(state =>
                 {
-                    var images = state.Images.Values.ToList();
-                    state.Images.Clear();
-                    state.Settings.TakeoverImageId = null;
-                    state.Settings.TakeoverUntil = null;
+                    var images = state.Images.Values.Where(i => i.EventId == eventId).ToList();
+                    foreach (var image in images) state.Images.Remove(image.Id);
+                    var settings = state.Default().Settings;
+                    settings.TakeoverImageId = null;
+                    settings.TakeoverUntil = null;
                     return images;
                 });
 
@@ -433,6 +440,7 @@ public static class ApiEndpoints
                 await store.MutateAsync(state => state.Images[id] = new ImageRecord
                 {
                     Id = id,
+                    EventId = state.Default().Id,
                     Source = ImageSource.Admin,
                     SenderId = null,
                     SenderName = null,
@@ -475,11 +483,12 @@ public static class ApiEndpoints
 
             await store.MutateAsync(state =>
             {
-                var s = state.Settings;
+                var ev = state.Default();
+                var s = ev.Settings;
                 if (patch.EventName is { } eventName)
                 {
                     var trimmed = eventName.Trim();
-                    s.EventName = trimmed.Length > MaxEventNameLength
+                    ev.Name = trimmed.Length > MaxEventNameLength
                         ? trimmed[..MaxEventNameLength]
                         : trimmed;
                 }
@@ -500,28 +509,39 @@ public static class ApiEndpoints
         app.MapPost("/api/senders/{id:long}/status",
             async (long id, SenderStatusRequest request, StateStore store) =>
             {
-                if (!TryParseName<SenderStatus>(request.Status, out var status))
+                if (!TryParseName<SenderStatusInput>(request.Status, out var status))
                     return Results.BadRequest(
                         new { error = "status må være known, autoApprove eller banned." });
 
                 return await store.MutateAsync(state =>
                 {
-                    var sender = state.Settings.Senders.FirstOrDefault(s => s.Id == id);
+                    var eventId = state.Default().Id;
+                    var sender = state.Senders.FirstOrDefault(s => s.Id == id);
                     if (sender is null)
                     {
                         // Creating on write is how an organiser pre-approves a
                         // photographer, or pre-bans a nuisance, before that person has
                         // ever messaged the bot.
                         sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
-                        state.Settings.Senders.Add(sender);
+                        state.Senders.Add(sender);
                     }
 
-                    sender.Status = status;
+                    sender.Banned = status == SenderStatusInput.Banned;
+                    if (!sender.Banned)
+                    {
+                        var membership = sender.MembershipIn(eventId);
+                        if (membership is null)
+                        {
+                            membership = new Membership { EventId = eventId };
+                            sender.Memberships.Add(membership);
+                        }
+                        membership.AutoApprove = status == SenderStatusInput.AutoApprove;
+                    }
 
                     // A ban revokes what they already sent, in this same write, so the
                     // screen can never be showing a banned sender's photo between two
                     // state generations.
-                    if (status == SenderStatus.Banned)
+                    if (sender.Banned)
                     {
                         var now = DateTimeOffset.UtcNow;
                         foreach (var image in state.Images.Values.Where(i => i.SenderId == id))
@@ -539,8 +559,11 @@ public static class ApiEndpoints
 
     private static void ClearTakeoverIfHeldBy(EventState state, string id)
     {
-        if (state.Settings.TakeoverImageId != id) return;
-        state.Settings.TakeoverImageId = null;
-        state.Settings.TakeoverUntil = null;
+        foreach (var ev in state.Events)
+        {
+            if (ev.Settings.TakeoverImageId != id) continue;
+            ev.Settings.TakeoverImageId = null;
+            ev.Settings.TakeoverUntil = null;
+        }
     }
 }

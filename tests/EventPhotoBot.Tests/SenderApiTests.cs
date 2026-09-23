@@ -15,7 +15,7 @@ public class SenderApiTests : IClassFixture<AppFactory>
         var id = Guid.NewGuid().ToString("N");
         await _factory.Store.MutateAsync(s => s.Images[id] = new ImageRecord
         {
-            Id = id, Sha256 = id, SortKey = id, Status = status, SenderId = senderId,
+            Id = id, EventId = StateMigration.DefaultEventId, Sha256 = id, SortKey = id, Status = status, SenderId = senderId,
             Width = 10, Height = 10, OriginalExtension = "jpg",
             ReceivedAt = DateTimeOffset.UtcNow,
         });
@@ -30,8 +30,8 @@ public class SenderApiTests : IClassFixture<AppFactory>
         var response = await client.PostAsJsonAsync("/api/senders/5001/status", new { status = "autoApprove" });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var sender = Assert.Single(_factory.Store.Snapshot.Settings.Senders, s => s.Id == 5001);
-        Assert.Equal(SenderStatus.AutoApprove, sender.Status);
+        var sender = Assert.Single(_factory.Store.Snapshot.Senders, s => s.Id == 5001);
+        Assert.True(sender.MembershipIn(StateMigration.DefaultEventId)!.AutoApprove);
     }
 
     [Fact]
@@ -52,11 +52,11 @@ public class SenderApiTests : IClassFixture<AppFactory>
     {
         var client = _factory.CreateAuthenticatedClient();
         var id = await SeedImageAsync(5003, ImageStatus.Approved);
-        await _factory.Store.MutateAsync(s => s.Settings.TakeoverImageId = id);
+        await _factory.Store.MutateAsync(s => s.Default().Settings.TakeoverImageId = id);
 
         await client.PostAsJsonAsync("/api/senders/5003/status", new { status = "banned" });
 
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
     }
 
     [Fact]
@@ -103,8 +103,9 @@ public class SenderApiTests : IClassFixture<AppFactory>
         var response = await client.PostAsJsonAsync($"/api/senders/{id}/status", new { status });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var sender = Assert.Single(_factory.Store.Snapshot.Settings.Senders, s => s.Id == id);
-        Assert.Equal(SenderStatus.Known, sender.Status);
+        var sender = Assert.Single(_factory.Store.Snapshot.Senders, s => s.Id == id);
+        Assert.False(sender.Banned);
+        Assert.False(sender.MembershipIn(StateMigration.DefaultEventId)!.AutoApprove);
     }
 
     [Fact]
@@ -125,7 +126,7 @@ public class SenderApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { senders = Array.Empty<object>() });
 
-        Assert.Contains(_factory.Store.Snapshot.Settings.Senders, s => s.Id == 5007);
+        Assert.Contains(_factory.Store.Snapshot.Senders, s => s.Id == 5007);
     }
 
     [Fact]
