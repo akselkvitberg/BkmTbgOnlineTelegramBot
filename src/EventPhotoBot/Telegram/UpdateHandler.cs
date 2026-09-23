@@ -144,8 +144,8 @@ public sealed class UpdateHandler(
             return;
         }
 
-        // Removed or left. The row goes, listening included: a bot that is re-added
-        // later has to be given the code again, and the notice goes out again with it.
+        // Removed or left. The row goes, routing included: a group the bot is re-added
+        // to is unrouted until an organiser routes it again, and the notice goes out then.
         if (store.Snapshot.Groups.All(g => g.Id != chat.Id)) return;
         await store.MutateAsync(state => state.Groups.RemoveAll(g => g.Id == chat.Id), ct);
     }
