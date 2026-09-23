@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -25,7 +26,7 @@
     </header>
 
     <section class="card">
-      <h2>Arrangement</h2>
+      <h2>Navn og visning</h2>
       <label for="eventName">Navn på arrangementet</label>
       <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
       <p class="muted">Vises stort på skjermen før det har kommet inn bilder.</p>
@@ -155,7 +156,7 @@
     }
 
     async function load() {
-      const response = await fetch('/api/settings', { cache: 'no-store' });
+      const response = await fetch(Admin.withEvent('/api/settings'), { cache: 'no-store' });
       if (!response.ok) return;
       settings = await response.json();
 
@@ -192,7 +193,7 @@
     }
 
     document.getElementById('saveEvent').onclick = async () => {
-      if (await Admin.api('PATCH', '/api/settings', {
+      if (await Admin.api('PATCH', Admin.withEvent('/api/settings'), {
         eventName: document.getElementById('eventName').value,
         showEventName: document.getElementById('showEventName').checked,
       })) {
@@ -204,7 +205,7 @@
     };
 
     document.getElementById('saveSlideshow').onclick = async () => {
-      if (await Admin.api('PATCH', '/api/settings', {
+      if (await Admin.api('PATCH', Admin.withEvent('/api/settings'), {
         slideSeconds: Number(document.getElementById('slideSeconds').value),
         transitionMs: Number(document.getElementById('transitionMs').value),
         order: document.getElementById('order').value,

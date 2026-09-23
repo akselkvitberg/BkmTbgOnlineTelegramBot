@@ -26,6 +26,7 @@ public class EndpointAuthTests : IClassFixture<AppFactory>
     [InlineData("/admin/images")]
     [InlineData("/admin/settings")]
     [InlineData("/admin/telegram")]
+    [InlineData("/admin/events")]
     [InlineData("/upload")]
     public async Task Pages_redirect_to_login_without_a_session(string path)
     {

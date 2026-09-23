@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -29,6 +30,8 @@
       <span class="muted" id="queue-count"></span>
     </header>
 
+    <select id="event-filter" aria-label="Arrangement" hidden></select>
+
     <div id="queue"></div>
   </main>
 
@@ -42,14 +45,34 @@
     // behind a stream of newer ones; picking a thumbnail from "Neste" jumps to it.
     let currentId = null;
 
+    let events = [];
+    let filter = '';   // '' = every open event
+
     const current = () => pending.find(image => image.id === currentId) ?? pending[0];
 
     async function loadPending() {
+      events = await Admin.events(true);
+      const open = new Set(events.filter(e => e.phase === 'open').map(e => e.id));
       const response = await fetch('/api/images?status=pending', { cache: 'no-store' });
       if (!response.ok) return;
       // The API lists newest first.
-      pending = (await response.json()).reverse();
+      pending = (await response.json())
+        .filter(image => open.has(image.eventId) && (!filter || image.eventId === filter))
+        .reverse();
+      renderFilter(open);
       render();
+    }
+
+    const eventName = id => events.find(e => e.id === id)?.name ?? id;
+
+    function renderFilter(open) {
+      const host = document.getElementById('event-filter');
+      host.hidden = open.size < 2;
+      host.innerHTML = `<option value="">Alle åpne arrangementer</option>` +
+        events.filter(e => open.has(e.id))
+          .map(e => `<option value="${Admin.escapeHtml(e.id)}" ${e.id === filter ? 'selected' : ''}>${Admin.escapeHtml(e.name)}</option>`)
+          .join('');
+      host.onchange = () => { filter = host.value; currentId = null; loadPending(); };
     }
 
     function render() {
@@ -82,6 +105,7 @@
           </div>
           <div class="review-side">
             <span class="review-sender">${sender}</span>
+            <span class="event-label">${Admin.escapeHtml(eventName(image.eventId))}</span>
             <span class="muted">Sendt ${Admin.timeAgo(image.receivedAt)}</span>
             ${image.caption ? `<p class="review-caption">${Admin.escapeHtml(image.caption)}</p>` : ''}
             <p class="muted shortcut-hint"><kbd>Enter</kbd> godkjenn · <kbd>Esc</kbd> avvis</p>

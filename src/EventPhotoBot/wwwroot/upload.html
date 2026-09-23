@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload" class="active">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -29,6 +30,8 @@
         <p class="muted">Bilder du laster opp her går rett på skjermen, uten å gå via køen.</p>
       </div>
     </header>
+
+    <p class="muted" id="target"></p>
 
     <input type="file" id="picker" accept="image/*" multiple hidden>
     <label class="pick" for="picker">Velg bilder</label>
@@ -128,7 +131,7 @@
 
       let response;
       try {
-        response = await fetch('/api/images', { method: 'POST', body: form });
+        response = await fetch(Admin.withEvent('/api/images'), { method: 'POST', body: form });
       } catch {
         // fetch only rejects on a transport failure — on a phone that is the walk
         // out of wifi range, not anything wrong with the photo.
@@ -238,6 +241,10 @@
     }
 
     render();
+
+    Admin.currentEvent().then(ev => {
+      if (ev) document.getElementById('target').textContent = `Bildene går til ${ev.name}.`;
+    });
   </script>
 </body>
 </html>
