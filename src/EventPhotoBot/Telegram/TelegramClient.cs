@@ -32,6 +32,37 @@ public sealed class TelegramClient(HttpClient http, AppConfig config, ILogger<Te
             logger.LogWarning("sendMessage failed: {StatusCode}", (int)response.StatusCode);
     }
 
+    public async Task SendMessageAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons,
+        CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"{Api}/sendMessage",
+            new { chat_id = chatId, text, reply_markup = Keyboard(buttons) }, ct);
+        if (!response.IsSuccessStatusCode)
+            logger.LogWarning("sendMessage failed: {StatusCode}", (int)response.StatusCode);
+    }
+
+    public async Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"{Api}/answerCallbackQuery",
+            new { callback_query_id = callbackQueryId, text }, ct);
+        if (!response.IsSuccessStatusCode)
+            logger.LogWarning("answerCallbackQuery failed: {StatusCode}", (int)response.StatusCode);
+    }
+
+    public async Task EditMessageTextAsync(long chatId, long messageId, string text,
+        IReadOnlyList<InlineButton> buttons, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"{Api}/editMessageText",
+            new { chat_id = chatId, message_id = messageId, text, reply_markup = Keyboard(buttons) }, ct);
+        if (!response.IsSuccessStatusCode)
+            logger.LogWarning("editMessageText failed: {StatusCode}", (int)response.StatusCode);
+    }
+
+    private static object Keyboard(IReadOnlyList<InlineButton> buttons) => new
+    {
+        inline_keyboard = buttons.Select(b => new[] { new { text = b.Text, callback_data = b.CallbackData } }),
+    };
+
     public async Task SetMessageReactionAsync(
         long chatId, long messageId, string emoji, CancellationToken ct = default)
     {

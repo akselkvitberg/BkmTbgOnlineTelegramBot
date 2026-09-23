@@ -6,6 +6,15 @@ public interface ITelegramClient
     Task<byte[]> DownloadAsync(string filePath, CancellationToken ct = default);
     Task SendMessageAsync(long chatId, string text, CancellationToken ct = default);
 
+    /// <summary>A message with one inline button per row under it.</summary>
+    Task SendMessageAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons, CancellationToken ct = default);
+
+    /// <summary>Stops the tapped button's spinner, optionally with a short toast.</summary>
+    Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken ct = default);
+
+    Task EditMessageTextAsync(long chatId, long messageId, string text,
+        IReadOnlyList<InlineButton> buttons, CancellationToken ct = default);
+
     /// <summary>
     /// Puts one emoji reaction on a message. How the bot acknowledges a photo in a
     /// group, where a text reply per photo would be noise in everybody's chat.

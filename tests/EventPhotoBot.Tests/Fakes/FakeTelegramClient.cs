@@ -32,6 +32,30 @@ public sealed class FakeTelegramClient : ITelegramClient
         return Task.CompletedTask;
     }
 
+    public List<(long ChatId, string Text, IReadOnlyList<InlineButton> Buttons)> SentButtons { get; } = [];
+    public List<(string Id, string? Text)> Answers { get; } = [];
+    public List<(long ChatId, long MessageId, string Text, IReadOnlyList<InlineButton> Buttons)> Edits { get; } = [];
+
+    public Task SendMessageAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons, CancellationToken ct = default)
+    {
+        Sent.Add((chatId, text));   // so tests that only read Sent still see the text
+        SentButtons.Add((chatId, text, buttons));
+        return Task.CompletedTask;
+    }
+
+    public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken ct = default)
+    {
+        Answers.Add((callbackQueryId, text));
+        return Task.CompletedTask;
+    }
+
+    public Task EditMessageTextAsync(long chatId, long messageId, string text,
+        IReadOnlyList<InlineButton> buttons, CancellationToken ct = default)
+    {
+        Edits.Add((chatId, messageId, text, buttons));
+        return Task.CompletedTask;
+    }
+
     public List<(long ChatId, long MessageId, string Emoji)> Reactions { get; } = [];
     public List<long> Left { get; } = [];
     public bool LeaveFails { get; set; }

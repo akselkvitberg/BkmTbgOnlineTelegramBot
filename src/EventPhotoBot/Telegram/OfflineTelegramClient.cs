@@ -14,6 +14,7 @@ public sealed class OfflineTelegramClient(ILogger<OfflineTelegramClient> logger)
 
     private readonly ConcurrentDictionary<string, byte[]> _staged = new();
     private readonly ConcurrentQueue<BotReply> _replies = new();
+    private long _nextMessageId;
 
     /// <summary>Holds bytes under a file id, the way Telegram holds an upload.</summary>
     public string Stage(byte[] bytes)
@@ -38,7 +39,31 @@ public sealed class OfflineTelegramClient(ILogger<OfflineTelegramClient> logger)
     public Task SendMessageAsync(long chatId, string text, CancellationToken ct = default)
     {
         logger.LogInformation("Bot → {ChatId}: {Text}", chatId, text);
-        Record(new BotReply(chatId, text, DateTimeOffset.UtcNow));
+        Record(new BotReply(chatId, text, DateTimeOffset.UtcNow, MessageId: Interlocked.Increment(ref _nextMessageId)));
+        return Task.CompletedTask;
+    }
+
+    public Task SendMessageAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons,
+        CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot → {ChatId}: {Text}", chatId, text);
+        Record(new BotReply(chatId, text, DateTimeOffset.UtcNow,
+            MessageId: Interlocked.Increment(ref _nextMessageId), Buttons: buttons));
+        return Task.CompletedTask;
+    }
+
+    public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot answers callback {CallbackQueryId}: {Text}", callbackQueryId, text);
+        if (text is not null) Record(new BotReply(0, text, DateTimeOffset.UtcNow));
+        return Task.CompletedTask;
+    }
+
+    public Task EditMessageTextAsync(long chatId, long messageId, string text,
+        IReadOnlyList<InlineButton> buttons, CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot edits message {MessageId} in {ChatId}: {Text}", messageId, chatId, text);
+        Record(new BotReply(chatId, text, DateTimeOffset.UtcNow, MessageId: messageId, Buttons: buttons, Edited: true));
         return Task.CompletedTask;
     }
 
@@ -71,4 +96,5 @@ public sealed class OfflineTelegramClient(ILogger<OfflineTelegramClient> logger)
 }
 
 /// <summary>A message the bot sent, or, with <see cref="Reaction"/>, an emoji it reacted with.</summary>
-public sealed record BotReply(long ChatId, string Text, DateTimeOffset At, bool Reaction = false);
+public sealed record BotReply(long ChatId, string Text, DateTimeOffset At, bool Reaction = false,
+    long MessageId = 0, IReadOnlyList<InlineButton>? Buttons = null, bool Edited = false);

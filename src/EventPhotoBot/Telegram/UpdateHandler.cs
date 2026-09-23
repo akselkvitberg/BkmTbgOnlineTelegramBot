@@ -49,6 +49,12 @@ public sealed class UpdateHandler(
 
     public async Task HandleAsync(TgUpdate update, CancellationToken ct = default)
     {
+        if (update.CallbackQuery is { } callback)
+        {
+            await HandleCallbackAsync(callback, ct);
+            return;
+        }
+
         if (update.MyChatMember is { } membership)
         {
             await HandleMembershipAsync(membership, ct);
@@ -310,19 +316,77 @@ public sealed class UpdateHandler(
         }, ct);
         if (!outcome.Joined) return;
 
-        await telegram.SendMessageAsync(chat.Id, outcome.IsNew
+        var buttons = Routing.SwitchButtons(store.Snapshot,
+            store.Snapshot.Senders.First(s => s.Id == sender.Id), eventId, now);
+        await SendAsync(chat.Id, outcome.IsNew
             ? $"Du er inne. Du sender nå bilder til {match.Name}. En arrangør godkjenner bildene før de vises på skjermen."
-            : $"Du sender nå bilder til {match.Name}.", ct);
+            : $"Du sender nå bilder til {match.Name}.", buttons, ct);
     }
 
     /// <summary>A bare /start from someone already in: where their photos go now.</summary>
     private async Task SendCurrentEventAsync(TgChat chat, Sender entry, CancellationToken ct)
     {
-        var target = Routing.ResolvePrivateTarget(store.Snapshot, entry, DateTimeOffset.UtcNow);
-        await telegram.SendMessageAsync(chat.Id, target is null
-            ? $"{ClosedName(entry)} er avsluttet."
-            : $"Du sender bilder til {target.Name}. Send meg bilder, så kommer de opp på skjermen når en arrangør har godkjent dem.",
-            ct);
+        var now = DateTimeOffset.UtcNow;
+        var target = Routing.ResolvePrivateTarget(store.Snapshot, entry, now);
+        if (target is null)
+        {
+            await telegram.SendMessageAsync(chat.Id, $"{ClosedName(entry)} er avsluttet.", ct);
+            return;
+        }
+
+        await SendAsync(chat.Id,
+            $"Du sender bilder til {target.Name}. Send meg bilder, så kommer de opp på skjermen når en arrangør har godkjent dem.",
+            Routing.SwitchButtons(store.Snapshot, entry, target.Id, now), ct);
+    }
+
+    /// <summary>Sends with an inline keyboard only when there is one to attach.</summary>
+    private Task SendAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons, CancellationToken ct) =>
+        buttons.Count == 0
+            ? telegram.SendMessageAsync(chatId, text, ct)
+            : telegram.SendMessageAsync(chatId, text, buttons, ct);
+
+    /// <summary>
+    /// A tap on one of the switch buttons. Always answered, so the button's spinner
+    /// stops; only a member tapping an open event changes anything.
+    /// </summary>
+    private async Task HandleCallbackAsync(TgCallbackQuery callback, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var entry = callback.From is { } from ? store.Snapshot.Senders.FirstOrDefault(s => s.Id == from.Id) : null;
+        var data = callback.Data ?? "";
+
+        if (entry is null or { Banned: true } || !data.StartsWith(Routing.CallbackPrefix, StringComparison.Ordinal))
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, null, ct);
+            return;
+        }
+
+        var ev = store.Snapshot.Find(data[Routing.CallbackPrefix.Length..]);
+        if (ev is null || entry.MembershipIn(ev.Id) is null)
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, "Det arrangementet er ikke tilgjengelig.", ct);
+            return;
+        }
+        if (!ev.IsOpen(now))
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, $"{ev.Name} er avsluttet.", ct);
+            return;
+        }
+
+        var switched = await store.MutateAsync(state =>
+        {
+            var row = state.Senders.FirstOrDefault(s => s.Id == entry.Id);
+            if (row is null || row.Banned || row.MembershipIn(ev.Id) is null) return null;
+            row.CurrentEventId = ev.Id;
+            return row;
+        }, ct);
+
+        await telegram.AnswerCallbackQueryAsync(callback.Id, null, ct);
+        if (switched is null || callback.Message?.Chat is not { } chat) return;
+
+        await telegram.EditMessageTextAsync(chat.Id, callback.Message.MessageId,
+            $"Du sender nå bilder til {ev.Name}.",
+            Routing.SwitchButtons(store.Snapshot, switched, ev.Id, now), ct);
     }
 
     /// <summary>"/start CODE" — the payload Telegram appends from a deep link.</summary>
