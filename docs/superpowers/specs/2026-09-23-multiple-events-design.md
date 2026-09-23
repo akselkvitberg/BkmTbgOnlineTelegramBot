@@ -268,7 +268,7 @@ The church's privacy contact should review the final wording before release.
 - Close now, reopen. Neither for the default event.
 - Join code: deep link, QR, rotate.
 - Export ZIP: approved originals of the event, named
-  `{ReceivedAt:yyyyMMdd-HHmmss}-{id}.{ext}`, streamed. No sender names in file
+  `{ReceivedAt:yyyyMMdd-HHmmss}Z-{id}.{ext}`, streamed. No sender names in file
   names.
 - Delete: requires typing the event's name. Not for the default event. In one
   state write: removes the event, its images, memberships in it, and clears
@@ -286,8 +286,11 @@ The church's privacy contact should review the final wording before release.
 
 | Endpoint | Change |
 |---|---|
-| `GET/POST /api/events`, `PATCH/DELETE /api/events/{id}` | New |
+| `GET/POST /api/events`, `PATCH/DELETE /api/events/{id}` | New. `PATCH /api/events/{id}` sets the name only |
 | `POST /api/events/{id}/close`, `/reopen`, `/rotate-code` | New |
+| `PUT /api/events/{id}/schedule` | New: replaces `OpensAt`/`ClosesAt` |
+| `PUT /api/events/{id}/retention` | New: replaces `MaxAgeDays`/`KeepNewest` |
+| `POST /api/events/{id}/retention/run` | New: runs the retention sweep for one event now |
 | `GET /api/events/{id}/export.zip` | New |
 | `POST /api/groups/{id}/event` | Replaces `/api/groups/{id}/listening` |
 | `POST /api/senders/{id}/ban` (`{ banned: bool }`) | Replaces `/api/senders/{id}/status` |
@@ -368,3 +371,47 @@ In `tests/EventPhotoBot.Tests`:
 
 - The Bot API's allowed reaction emoji for bots, and that 👀 and 🔥 are in it.
 - Whether a reaction change notifies the photo's author, and how.
+
+## Changes made while planning
+
+Decided after the design above was drafted, during the planning pass that split
+it into tasks:
+
+- **The bucket's 30-day lifecycle rule is removed** (`infra/main.tf`). It
+  deleted image bytes on age alone, which contradicted "kept until an admin
+  deletes the event" and would have left the default event's `KeepNewest` pool
+  pointing at deleted files.
+- **Reactions are not changed on bulk deletes** (delete-all, deleting an
+  event, the retention sweep). They are changed on single decisions, single
+  deletes, takeover approval and the ban cascade. Hundreds of
+  `setMessageReaction` calls inside one request risk Telegram's rate limit and
+  the request timeout.
+- **Event endpoints are split by what they replace:** `PATCH /api/events/{id}`
+  sets the name only; `PUT /api/events/{id}/schedule` and
+  `PUT /api/events/{id}/retention` replace those groups of fields, so "clear
+  this date" needs no sentinel values.
+- **Group routing body:** `{"eventId": "<id>"}` routes, `{"eventId": ""}`
+  un-routes, and a missing or null `eventId` is a 400, so a malformed body can
+  never un-route a group.
+- **A code for a scheduled event** gets the reply "{navn} har ikke startet
+  ennå." The design above only covered closed events.
+- **The QR for a scheduled event is served,** so it can be printed in advance.
+  It is refused only once the event is closed.
+- **An event name cannot be empty,** because the bot says it in every
+  acknowledgement. The "event name can be cleared" behaviour from before this
+  release goes away.
+- **Cloud Run's request timeout rises from 120 s to 900 s,** so a ZIP export
+  of a large event can finish. Firebase Hosting cuts a request at 60 s, so a
+  large export must use the `run.app` URL instead. Documented in the runbook.
+- **Export file names use UTC:** `{ReceivedAt:yyyyMMdd-HHmmss}Z-{id}.{ext}`.
+  The container may not carry timezone data for Europe/Oslo.
+
+## Changes made during implementation
+
+- **The retention sweep's Cloud Scheduler job is created by both deploy
+  paths** — `infra/deploy.ps1` and the GitHub Actions `deploy` workflow, not
+  just one of them. The GitHub Actions path needed a role neither deploy path
+  required before: `roles/cloudscheduler.admin`, added to the WIF deploy
+  service account in `infra/wif/main.tf`. `infra/wif` needs to be re-applied
+  once before the first Actions deploy of this release, on any project where
+  it was applied before this role existed.

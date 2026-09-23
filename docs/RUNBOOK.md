@@ -18,20 +18,34 @@ resource name appears.
       one less thing to debug:
       `printf '%s' 'YOUR_TOKEN' | gcloud secrets versions add eventphoto-bot-token --data-file=- --project PROJECT_ID`,
       `/setuserpic` and description set so it looks deliberate
-- [ ] Join code chosen and stored:
+- [ ] `RETENTION_SECRET` stored (required — Cloud Run refuses to start the
+      revision if this secret has no version at all):
+      `openssl rand -hex 32 | gcloud secrets versions add eventphoto-retention-secret --data-file=- --project PROJECT_ID`.
+      See **Events and retention** below for what it's for.
+- [ ] Join code chosen and stored — the secret still needs a version for
+      Cloud Run to start even if you don't care what it is:
       `printf '%s' 'YOUR_CODE' | gcloud secrets versions add eventphoto-join-code --data-file=- --project PROJECT_ID`
       — letters, digits, `_` and `-` only, at most 64 characters. Anything else
       fails startup, on purpose: Telegram silently drops a deep-link payload
       outside that set, so a code with a space would ship a QR nobody can use.
-- [ ] Event name typed into admin settings under "Arrangement". It is only
+      Its *value* is optional: `JOIN_CODE` only seeds the default event's
+      ("Daglig") join code on the very first start after a fresh deploy; leave
+      it blank (an empty version) and Daglig gets a generated code instead. A
+      fresh event created later in `/admin/events` always gets a generated
+      code regardless of `JOIN_CODE`.
+- [ ] Event name typed into admin settings under "Navn og visning". It is only
       shown on the slideshow while no photos have arrived yet, and it is a
       setting rather than a deploy value, so fixing a typo mid-event costs
-      nothing and needs no deploy
+      nothing and needs no deploy. This sets the name of the currently
+      selected event; a wedding or another special event alongside the daily
+      screen is created separately in `/admin/events` (see **Events and
+      retention** below)
 - [ ] Pre-approved photographers added by Telegram id and set to Auto-approve
       (see "Who can send" below)
 - [ ] If photos should be collected from a Telegram group: privacy mode turned
       off in BotFather **before** the bot is added to the group, then the group
-      turned on under Telegram in admin (see "Collecting from a group" below)
+      routed to the event under Telegram → Grupper in admin (see "Collecting
+      from a group" below)
 - [ ] QR on the slideshow checked from the back of the room, on the actual
       display machine — a QR nobody can scan makes the whole join flow useless.
       A screen the wrong public can see — a foyer, a street-facing window —
@@ -69,34 +83,41 @@ resource name appears.
 
 ### Who can send
 
-Every person the bot knows about has one of three statuses, set from the
-Telegram page in admin or from the approval queue:
+Every person the bot knows about can be **Banned** — globally, across every
+event — from the Telegram page in admin or from the approval queue. Banning
+drops their messages silently, and **rejects every photo they already sent in
+the same action**, including any already on screen. This cannot be undone
+from the UI: un-banning restores their ability to send but does not bring the
+photos back.
 
-- **Review first** — the default for anyone who joins by scanning the QR. Their
-  photos land in the approval queue.
-- **Auto-approve** — pre-approved photographers. Their photos go straight to the
-  screen with no queue step. Set this before the event by adding their Telegram
-  id by hand, or promote them once they have scanned.
-- **Banned** — messages are dropped silently, and **every photo they already
-  sent is rejected in the same action**, including any already on screen. This
-  cannot be undone from the UI: un-banning restores their ability to send but
-  does not bring the photos back.
+Anyone not banned has, for each event they are a member of, one of two
+statuses, set per event on the Telegram page:
 
-Anyone not on the list at all has not scanned the QR. Their photos are declined
-with a message pointing at the screen, at most one reply per minute, and nothing
-is downloaded or stored. Status changes take effect on that person's very next
-message — no redeploy needed.
+- **Review first** — the default for anyone who joins that event by scanning
+  its QR. Their photos to that event land in the approval queue.
+- **Auto-approve** — pre-approved photographers for that event. Their photos
+  to that event go straight to the screen with no queue step. Set this before
+  the event by adding their Telegram id under that event, or promote them
+  once they have scanned.
 
-People join by scanning the QR shown on the slideshow. It encodes
-`https://t.me/<bot>?start=<join code>`; scanning opens the bot chat with a Start
-button, and tapping it sends the code. That is the whole flow — one scan, one
-tap.
+Someone who has never scanned any QR is not on the list at all. Their photos
+are declined with a message pointing at the screen, at most one reply per
+minute, and nothing is downloaded or stored. Status changes take effect on
+that person's very next message — no redeploy needed.
 
-The join code is the `eventphoto-join-code` secret, chosen at deploy time.
-Changing it means a redeploy, so treat it as fixed once the event starts. It is
-not a password: everyone in the room can see the QR, and so can anyone shown a
-photo of the screen. It stops someone who merely guesses the bot handle, nothing
-more. The banlist is what handles a person you actually want out.
+People join an event by scanning its QR, shown on that event's slideshow or
+printed from `/admin/events`. It encodes `https://t.me/<bot>?start=<join
+code>`; scanning opens the bot chat with a Start button, and tapping it sends
+the code. That is the whole flow — one scan, one tap.
+
+Each event's join code is generated by the app (or, for Daglig only, seeded
+from the `JOIN_CODE` secret on first start — see **Before the event**).
+Rotating a code — "Ny QR-kode" in `/admin/events` — is an admin action, not a
+deploy: the old code and printed QR stop working immediately, and anyone
+already a member keeps sending. A join code is not a password: everyone in
+the room can see the QR, and so can anyone shown a photo of the screen. It
+stops someone who merely guesses the bot handle, nothing more. The banlist is
+what handles a person you actually want out.
 
 ### Collecting from a group
 
@@ -109,42 +130,88 @@ own group chat, say — alongside the private chats above.
    Telegram applies this only to groups the bot joins *afterwards*, so if the bot
    is already in the group, remove it and add it again. Making the bot an admin of
    the group also lets it see everything, if you would rather not change the
-   setting. The Telegram page in admin shows a red warning while privacy mode is
+   setting. Telegram → Grupper in admin shows a red warning while privacy mode is
    still on; "Sjekk igjen" re-asks Telegram after you change it.
 2. **Add the bot to the group** from the group's member list. It then appears
-   under Grupper on the Telegram page, with "Hent bilder" off. While it is off,
+   under Grupper on the Telegram page, routed to "Ikke koblet". While unrouted,
    the bot ignores the group completely: no replies, nothing stored.
-3. **Turn "Hent bilder" on**, either on that page or by posting `/start <join code>`
-   (or just the code) in the group. The bot then posts one message in the group
-   saying that photos posted there from now on may be shown on the screen with
-   the poster's name, after an organiser approves them. That message is the only
-   text the bot ever writes in a group.
+3. **Route the group to an event**, in the dropdown next to the group on
+   Telegram → Grupper — Daglig or any other open or scheduled event. The bot then
+   posts one message in the group saying that photos posted there from now on
+   may be shown on the screen for that event, with the poster's name, after an
+   organiser approves them. That message is the only text the bot ever writes in
+   a group. Posting a join code in the group does nothing; routing only happens
+   from admin.
 
 From then on, each photo a member posts goes through the same path as a private
-send — duplicates dropped, banned members ignored, Review first or Auto-approve
-by the member's status. A member who is not on the list yet is added as Review
-first on their first photo. There are no text replies in the group; instead the
-bot reacts to each photo it took: 👀 queued, 🔥 straight on screen. Anything it
-could not use (a video, a HEIC file, a download that failed) gets no reaction
-and no reply, so a member who needs a photo shown should send it to the bot
-privately instead.
+send to that event — duplicates dropped, banned members ignored, Review first or
+Auto-approve by the member's status for that event. A member who is not on the
+list yet is added as Review first on their first photo. There are no text
+replies in the group; instead the bot reacts to each photo it took: 👀 queued,
+🔥 straight on screen. Anything it could not use (a video, a HEIC file, a
+download that failed) gets no reaction and no reply, so a member who needs a
+photo shown should send it to the bot privately instead.
 
 Photos posted as the group (anonymous admins) or by other bots are ignored —
 they carry no person to approve or ban.
 
-To stop collecting, turn "Hent bilder" off, which keeps the bot in the group, or
-use "Forlat gruppen", which makes the bot leave. Photos already taken stay where
-they are either way; ban a member or reject photos in the queue to remove them.
-Turning a group off is not sticky: anyone in it who posts the join code turns it
-back on. If a group must stay closed, make the bot leave it.
+To stop collecting, route the group to "Ikke koblet", which keeps the bot in the
+group, or use "Forlat gruppen", which makes the bot leave. Photos already taken
+stay where they are either way; ban a member or reject photos in the queue to
+remove them. If the event a group was routed to gets deleted, the group falls
+back to "Ikke koblet" with no notice posted. If a group must stay closed, make
+the bot leave it.
 
 The bot keeps its own list of groups because Telegram offers no way to ask which
 groups a bot is in, or which people have started it. The list is filled from the
 notifications Telegram sends when the bot is added or removed, so a group the bot
-joined before this version was deployed only appears once someone posts the code
-there. At most 20 groups that are not turned on are remembered; the oldest drop
-off first, so a stranger adding the bot to many groups cannot grow the state file
-without bound.
+joined before this version was deployed does not appear until it is removed and
+added again — there is no other way to register it, since posting a join code in
+a group no longer does anything. At most 20 groups that are not routed to an
+event are remembered; the oldest drop off first, so a stranger adding the bot to
+many groups cannot grow the state file without bound.
+
+### Events and retention
+
+One event runs by default: Daglig, the church's daily screen, always open and
+never deleted. A special event — a wedding, a concert — is created alongside
+it in `/admin/events`: name, a short id for its `/show?event=<id>` URL, and an
+optional opens/closes time. It gets its own generated join code, QR and
+screen, kept apart from Daglig's photos. Closing it (by its end time or
+manually) stops it taking photos and hides its invite; its photos stay until
+an admin deletes the event, which is the only way to remove them in bulk. A
+group is routed to whichever event it should feed from Telegram → Grupper —
+see **Collecting from a group** above.
+
+**No bucket lifecycle rule.** Photos are kept until an organiser deletes them,
+or an event's own retention setting does. There is nothing left in
+`infra/main.tf` that deletes an object by age alone.
+
+**Retention** is per event, set on the Innstillinger page for that event:
+delete images older than N days, always keeping the newest K approved ones
+(pinned images and the one holding takeover are never deleted). It is off by
+default for every event, including Daglig after an upgrade — turn it on
+deliberately. "Rydd nå" on that page runs the sweep for the selected event
+immediately, without waiting for the schedule.
+
+The scheduled sweep is a Cloud Scheduler job, `<name>-retention`, created by
+both deploy paths and run daily at 03:15 Europe/Oslo against every event with
+retention turned on. Its region is `-SchedulerRegion` for `deploy.ps1` or the
+`SCHEDULER_REGION` repository variable for the Actions path (both default to
+`europe-west1`, independent of `GCP_REGION`/`-Region`, since Cloud Scheduler
+is not offered in every Cloud Run region). See **One-time setup** and
+**Upgrading an existing deployment to this release** below for what has to
+exist before this job can be created.
+
+**Export.** Each event's approved originals can be downloaded as a ZIP from
+`/admin/events` ("Last ned alle (ZIP)"). A large event's ZIP can take minutes to
+stream — download it from the `run.app` URL, not the `.web.app` one: Firebase
+Hosting cuts a request at 60 seconds, well under what a big export needs.
+
+**Replacing a printed QR.** The join code baked into `JOIN_CODE` at first
+deploy only ever seeded Daglig's code. Once a newly printed QR is up and
+nobody needs the old one, rotate Daglig's code from `/admin/events` ("Ny
+QR-kode") so the old code — and the old printed QR — stops working.
 
 ## During the event
 
@@ -201,6 +268,10 @@ opening `/show` on a different machine.
       buckets (or run `gcloud logging buckets list --project PROJECT_ID` and
       delete each one), rather than assuming project deletion alone clears
       them on your timeline
+- [ ] Delete the retention Cloud Scheduler job. Like the webhook
+      registration, it is created with `gcloud`, not Terraform, so
+      `terraform destroy` leaves it behind:
+      `gcloud scheduler jobs delete eventphoto-retention --location <scheduler region> --project PROJECT_ID`
 
 If the event repeats (a second party, a second Sunday), destroying and
 redeploying from scratch is the intended pattern — there is no state that
@@ -232,15 +303,28 @@ several depend on state left by the one before.
       second phone, message the bot directly without scanning. Pass: the reply
       points at the QR, and `gcloud storage ls -r gs://BUCKET_NAME/originals`
       (before and after, compared) shows no new object.
-- [ ] **A group is ignored until it is turned on.** With privacy mode off,
-      add the bot to a test group and post a photo there. Pass: the group
-      appears under Grupper on the Telegram page with "Hent bilder" off, the
-      bot says nothing in the group, and no new object appears in `originals/`.
-- [ ] **Turning a group on posts one notice and collects photos.** Post
-      `/start <join code>` in the test group. Pass: the bot posts the notice
-      once; a photo posted afterwards by a member who has never messaged the
-      bot gets a 👀 reaction, lands in the queue, and that member appears under
-      Personer as "Review first". The bot writes no other text in the group.
+- [ ] **A special event's photos stay off the daily screen.** Create an event
+      in `/admin/events`, scan its QR from a phone and send a photo, then
+      approve it. Pass: the photo appears on `/show?event=<id>` for that
+      event, and not on `/show` (Daglig).
+- [ ] **Closing an event falls a daily member back to Daglig.** Close that
+      event, then from a phone that is also a Daglig member (or has only ever
+      scanned Daglig's QR) send a photo. Pass: it is accepted, and the bot's
+      acknowledgement reads "Mottatt til Daglig — …", not the closed event's
+      name.
+- [ ] **A group is ignored until it is routed.** With privacy mode off, add
+      the bot to a test group and post a photo there. Pass: the group appears
+      under Grupper on the Telegram page routed to "Ikke koblet", the bot says
+      nothing in the group, and no new object appears in `originals/`.
+- [ ] **Routing a group posts one notice and collects photos.** On the
+      Telegram page, route the test group to an event. Pass: the bot posts the
+      notice once; a photo posted afterwards by a member who has never
+      messaged the bot gets a 👀 reaction, lands in the queue, and that member
+      appears under Personer as "Review first". The bot writes no other text
+      in the group.
+- [ ] **Approving a group photo turns 👀 into 🔥.** Approve that photo from
+      the queue. Pass: the bot's reaction on the original group message
+      changes from 👀 to 🔥, within a couple of seconds.
 - [ ] **Leaving a group works from admin.** Press "Forlat gruppen" for the
       test group. Pass: the bot is gone from the group's member list and the
       row disappears from the Telegram page.
@@ -328,7 +412,7 @@ several depend on state left by the one before.
       **One-time setup** above), then `terraform -chdir=infra destroy` (in a
       scratch project first if you want to check this without touching the
       real event's data). Pass: the
-      bucket, all six secrets, and the Cloud Run service are all gone
+      bucket, all seven secrets, and the Cloud Run service are all gone
       afterwards — check with `gcloud storage buckets list`, `gcloud secrets
       list`, and `gcloud run services list`, all scoped `--project
       PROJECT_ID`.
@@ -436,6 +520,7 @@ Under **Settings → Secrets and variables → Actions → Variables**, set:
 | `GCP_REGION` | Optional — defaults to `europe-north1` if unset |
 | `APP_NAME` | Optional — defaults to `eventphoto` if unset |
 | `HOSTING_SITE` | Optional — the Firebase Hosting site id, e.g. `tbg-event-photos` for `https://tbg-event-photos.web.app`. Unset means no Hosting and the `run.app` URL as the only way in. See **The friendly URL** below |
+| `SCHEDULER_REGION` | Optional — defaults to `europe-west1` if unset. Where the retention sweep's Cloud Scheduler job runs from; see **Events and retention** above |
 
 None of these are secret — they're project ids, resource names and a bucket
 name. No bot token, admin password or signing key is ever configured as a
@@ -451,7 +536,7 @@ targeted apply, or the `deploy` workflow's "Terraform bootstrap apply" step).
 expected, not a misconfiguration. Terraform creates the secret *resources*;
 a secret resource with no version is not something Cloud Run can mount, and
 the webhook step has no token to read. So the first `deploy` run gets as far
-as creating the registry and the six secrets, builds and pushes the image,
+as creating the registry and the seven secrets, builds and pushes the image,
 and then fails at "Terraform apply" or "Register the Telegram webhook".
 Add the versions at that point, from a workstation authenticated against the
 project:
@@ -462,7 +547,15 @@ printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-w
 printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-webhook-path   --data-file=- --project PROJECT_ID
 printf '%s' 'A_PASSWORD_YOU_CHOOSE' | gcloud secrets versions add eventphoto-admin-password --data-file=- --project PROJECT_ID
 printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-cookie-key     --data-file=- --project PROJECT_ID
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-retention-secret --data-file=- --project PROJECT_ID
 ```
+
+`retention-secret` is required the same way the six above are — Cloud Run
+refuses to start the revision if any referenced secret has no version at
+all, whether or not any event ever turns retention on. `join-code` is the
+one whose *value* barely matters: give it any version, even an empty one
+(see **Before the event**), since `JOIN_CODE` only seeds Daglig's join code
+on first start and an empty value just means Daglig gets a generated one.
 
 `printf '%s'` rather than `echo`, and never an interactive `--data-file=-`
 prompt: both of those store a trailing newline in the secret. AppConfig trims
@@ -497,13 +590,54 @@ steps above are what actually worked, including the two corrections this
 paragraph sits between (step 0, and the PowerShell form of the secret
 commands). The failure points are the documented ones: the first `deploy`
 run stops at "Terraform apply" with `Secret .../versions/latest was not
-found` listing all six secrets. Cloud Run's startup probe hits `/healthz`
+found` listing all seven secrets. Cloud Run's startup probe hits `/healthz`
 from inside the service; do not be alarmed if that same path answers 404
 through an outbound proxy while the revision reports healthy.
 
 Note that `workflow_dispatch` workflows only appear in the Actions tab once
 the workflow file is on the repository's **default branch** — a first deploy
 from a feature branch has nothing to click until that branch is merged.
+
+## Upgrading an existing deployment to this release
+
+This section is for a project that was already running the app before events
+existed, not for a brand new one — a new project just follows **One-time
+setup** and **Before the event** above, which already cover everything here.
+
+**Before the first deploy of this release:**
+
+- **Add a version to the `<name>-retention-secret` secret**, the same as any
+  other required secret in step 5 above — Cloud Run mounts it and the
+  revision fails to start without one, whether or not retention is ever
+  turned on for any event:
+  `openssl rand -hex 32 | gcloud secrets versions add eventphoto-retention-secret --data-file=- --project PROJECT_ID`.
+  `JOIN_CODE` needs no new action; it already has a version from the original
+  deploy, and this release still reads it, just once, differently (below).
+- **If deploying through GitHub Actions, re-apply `infra/wif` once.** This
+  release's retention sweep is scheduled by both deploy paths, and the
+  Actions path needs a role the deploy service account did not need before:
+  `roles/cloudscheduler.admin`, now listed in `infra/wif/main.tf`. Re-running
+  `terraform apply` there (see **One-time setup**, step 2) grants it. Skip
+  this if you only ever deploy with `deploy.ps1` — the workstation path acts
+  as your own `gcloud` identity, not the WIF service account.
+- Optionally set `SCHEDULER_REGION` (a GitHub repository variable) or pass
+  `-SchedulerRegion` to `deploy.ps1` if `europe-west1` is not a good place
+  for the retention job to run from — see **Events and retention** above.
+
+**What the first start after upgrading does, automatically, no action
+needed:** it rewrites `state.json` into the events shape — a `Daglig` event
+is created from the old settings, every image gets `EventId = "daglig"`,
+every sender becomes a Daglig member with their old status carried over, and
+`JOIN_CODE` seeds Daglig's join code if it was set. The pre-upgrade file is
+kept at `state/state-prev.json`, for as long as nothing else writes to
+`state.json` afterwards — which in practice means as long as nobody
+approves, deletes or otherwise changes anything.
+
+**To roll back** before anything has been written since the upgrade: redeploy
+the previous image, then copy `state-prev.json` over `state.json` *before*
+that previous version starts and writes anything of its own. Once something
+has written to `state.json` post-upgrade, `state-prev.json` is stale and a
+rollback means accepting whatever has changed since, not a clean revert.
 
 ## Deploying
 
@@ -669,10 +803,13 @@ needing an operator to find the live release id and `terraform import` it.
 ### Teardown — what `terraform destroy` (or the `destroy` workflow) does not remove
 
 `terraform destroy` in `infra/` removes the Cloud Run service, the images
-bucket, the six secrets, the runtime service account and the Artifact
+bucket, the seven secrets, the runtime service account and the Artifact
 Registry repository — the same set `deploy.ps1`'s counterpart apply created.
 It does **not** touch:
 
+- **The `<name>-retention` Cloud Scheduler job** — created with `gcloud`, not
+  Terraform, the same way the webhook registration is. See the "Delete the
+  retention Cloud Scheduler job" step under **After the event** above.
 - **The Terraform state bucket** (`infra/backend/`) — destroying it would
   delete the record of what to destroy, so it's deliberately outside this
   module's own blast radius.
