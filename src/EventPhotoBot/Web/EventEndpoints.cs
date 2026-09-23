@@ -1,6 +1,8 @@
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace EventPhotoBot.Web;
 
@@ -140,6 +142,48 @@ public static class EventEndpoints
                 if (removed is null) return EventScope.UnknownEvent();
                 foreach (var image in removed) await ImageObjects.DeleteAsync(objects, image, ct);
                 return Results.Ok(new { deleted = removed.Count });
+            });
+
+        // Streamed straight into the response, entry by entry: an event's originals
+        // can run to gigabytes, and the instance has 1 GiB of memory, /tmp included.
+        app.MapGet("/api/events/{id}/export.zip",
+            async (string id, HttpContext http, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            {
+                var state = store.Snapshot;
+                if (state.Find(id) is not { } ev) return EventScope.UnknownEvent();
+                var images = state.Images.Values
+                    .Where(i => i.EventId == ev.Id && i.Status == ImageStatus.Approved)
+                    .OrderBy(i => i.ReceivedAt)
+                    .ToList();
+
+                http.Response.ContentType = "application/zip";
+                http.Response.Headers.ContentDisposition = $"attachment; filename=\"{ev.Id}.zip\"";
+
+                // ZipArchiveEntry still closes each entry with a synchronous Write of its
+                // data descriptor when the target stream can't seek (the response body
+                // can't) — true even through the *Async API. Without this the write throws
+                // "Synchronous operations are disallowed" on Kestrel and on the test host.
+                http.Features.Get<IHttpBodyControlFeature>()!.AllowSynchronousIO = true;
+
+                await using (var zip = await ZipArchive.CreateAsync(http.Response.Body, ZipArchiveMode.Create,
+                                 leaveOpen: true, entryNameEncoding: null, ct))
+                {
+                    foreach (var image in images)
+                    {
+                        await using var source = await objects.OpenReadAsync(
+                            ObjectPaths.Original(image.Id, image.OriginalExtension), ct);
+                        if (source is null) continue;   // bytes already gone; the rest are still worth having
+
+                        // UTC, marked as such: the container may carry no time-zone data.
+                        var name = $"{image.ReceivedAt.UtcDateTime:yyyyMMdd-HHmmss}Z-{image.Id}.{image.OriginalExtension}";
+                        // Photos are already compressed; deflating them again costs CPU for nothing.
+                        var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+                        await using var target = await entry.OpenAsync(ct);
+                        await source.CopyToAsync(target, ct);
+                    }
+                }
+
+                return Results.Empty;
             });
     }
 
