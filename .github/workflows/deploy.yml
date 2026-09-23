@@ -36,6 +36,10 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       APP_NAME: ${{ vars.APP_NAME }}
+      # Cloud Scheduler is not offered in every region; check with
+      # `gcloud scheduler locations list`. Same default as infra/deploy.ps1's
+      # -SchedulerRegion.
+      SCHEDULER_REGION: ${{ vars.SCHEDULER_REGION }}
       # Optional. Unset means no Firebase Hosting site and the run.app URL as
       # the only way in — an empty string is exactly infra/variables.tf's
       # default here, so unlike GCP_REGION/APP_NAME this one needs no
@@ -85,9 +89,11 @@ jobs:
           # of falling back to variables.tf's default.
           region="${GCP_REGION:-europe-north1}"
           name="${APP_NAME:-eventphoto}"
+          scheduler_region="${SCHEDULER_REGION:-europe-west1}"
           echo "region=$region" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "registry=$region-docker.pkg.dev/$GCP_PROJECT_ID/$name" >> "$GITHUB_OUTPUT"
+          echo "scheduler_region=$scheduler_region" >> "$GITHUB_OUTPUT"
 
       - name: Terraform init
         working-directory: infra
@@ -248,6 +254,41 @@ jobs:
             exit 1
           fi
           rm -f response.json
+
+      - name: Schedule the daily retention sweep
+        env:
+          NAME: ${{ steps.cfg.outputs.name }}
+          SCHEDULER_REGION: ${{ steps.cfg.outputs.scheduler_region }}
+          SERVICE_URL: ${{ steps.url.outputs.service_url }}
+        run: |
+          set -euo pipefail
+
+          retention_secret=$(gcloud secrets versions access latest --secret "$NAME-retention-secret" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-retention-secret'. Add one with 'gcloud secrets versions add $NAME-retention-secret --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+
+          # Mask immediately, same as the webhook step above - this value is
+          # never registered as a GitHub secret, so nothing masks it for free.
+          echo "::add-mask::$retention_secret"
+
+          # attempt-deadline: Cloud Scheduler's own default for an HTTP target is
+          # 3 minutes, well under the sweep's 900s Cloud Run request timeout - a
+          # job dropped mid-sweep cancels the rest of RetentionSweep's delete loop
+          # and orphans object bytes whose state record is already gone.
+          # --format=none: `jobs create/update` otherwise print the resulting Job
+          # resource, headers and all, putting X-Retention-Secret in the log;
+          # `describe` below is already redirected to /dev/null for the same
+          # reason.
+          job="$NAME-retention"
+          job_args=(--location "$SCHEDULER_REGION" --project "$GCP_PROJECT_ID" \
+            --schedule "15 3 * * *" --time-zone "Europe/Oslo" \
+            --uri "$SERVICE_URL/internal/retention" --http-method POST \
+            --attempt-deadline 900s --format=none)
+
+          if gcloud scheduler jobs describe "$job" --location "$SCHEDULER_REGION" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$job" "${job_args[@]}" --update-headers "X-Retention-Secret=$retention_secret"
+          else
+            gcloud scheduler jobs create http "$job" "${job_args[@]}" --headers "X-Retention-Secret=$retention_secret"
+          fi
 
       - name: Summary
         env:

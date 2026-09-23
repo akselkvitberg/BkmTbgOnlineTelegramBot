@@ -20,6 +20,7 @@ public class StateStoreTests
 
         Assert.Empty(store.Snapshot.Images);
         Assert.Equal(0, store.Generation);
+        Assert.Equal(StateMigration.DefaultEventId, store.Snapshot.Default().Id);
     }
 
     [Fact]
@@ -28,9 +29,9 @@ public class StateStoreTests
         var (store, objects) = NewStore();
         await store.LoadAsync();
 
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 12);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 12);
 
-        Assert.Equal(12, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(12, store.Snapshot.Default().Settings.SlideSeconds);
         Assert.True(store.Generation > 0);
         Assert.Contains(StateStore.StatePath, objects.Paths);
     }
@@ -41,13 +42,13 @@ public class StateStoreTests
         var (store, objects) = NewStore();
         await store.LoadAsync();
 
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 11);
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 22);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 11);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 22);
 
         var prev = await objects.ReadAsync(StateStore.PrevPath);
         Assert.NotNull(prev);
         var recovered = JsonSerializer.Deserialize<EventState>(prev!.Bytes, StateJson.Options)!;
-        Assert.Equal(11, recovered.Settings.SlideSeconds);
+        Assert.Equal(11, recovered.Default().Settings.SlideSeconds);
     }
 
     [Fact]
@@ -56,12 +57,12 @@ public class StateStoreTests
         var objects = new InMemoryObjectStore();
         var first = new StateStore(objects);
         await first.LoadAsync();
-        await first.MutateAsync(s => s.Settings.RecurringEvery = 5);
+        await first.MutateAsync(s => s.Default().Settings.RecurringEvery = 5);
 
         var second = new StateStore(objects);
         await second.LoadAsync();
 
-        Assert.Equal(5, second.Snapshot.Settings.RecurringEvery);
+        Assert.Equal(5, second.Snapshot.Default().Settings.RecurringEvery);
         Assert.Equal(first.Generation, second.Generation);
     }
 
@@ -70,19 +71,19 @@ public class StateStoreTests
     {
         var (store, objects) = NewStore();
         await store.LoadAsync();
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 8);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 8);
 
         // Someone else rewrites state.json behind our back, bumping the generation.
-        var theirs = new EventState();
-        theirs.Settings.RecurringEvery = 99;
+        var theirs = TestState.New();
+        theirs.Default().Settings.RecurringEvery = 99;
         objects.ForceWrite(StateStore.StatePath,
             JsonSerializer.SerializeToUtf8Bytes(theirs, StateJson.Options));
 
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 15);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 15);
 
         // Our change landed, and theirs was not silently discarded.
-        Assert.Equal(15, store.Snapshot.Settings.SlideSeconds);
-        Assert.Equal(99, store.Snapshot.Settings.RecurringEvery);
+        Assert.Equal(15, store.Snapshot.Default().Settings.SlideSeconds);
+        Assert.Equal(99, store.Snapshot.Default().Settings.RecurringEvery);
     }
 
     [Fact]
@@ -95,6 +96,7 @@ public class StateStoreTests
             store.MutateAsync(s => s.Images[$"img{i}"] = new ImageRecord
             {
                 Id = $"img{i}",
+                EventId = StateMigration.DefaultEventId,
                 Sha256 = $"hash{i}",
                 SortKey = $"{i:D4}",
                 OriginalExtension = "jpg",
@@ -111,8 +113,8 @@ public class StateStoreTests
 
         var count = await store.MutateAsync(s =>
         {
-            s.Settings.SlideSeconds = 9;
-            return s.Settings.SlideSeconds;
+            s.Default().Settings.SlideSeconds = 9;
+            return s.Default().Settings.SlideSeconds;
         });
 
         Assert.Equal(9, count);
@@ -124,7 +126,7 @@ public class StateStoreTests
         var inner = new InMemoryObjectStore();
         var seed = new StateStore(inner);
         await seed.LoadAsync();
-        await seed.MutateAsync(s => s.Settings.SlideSeconds = 3);
+        await seed.MutateAsync(s => s.Default().Settings.SlideSeconds = 3);
 
         // Every write to state.json loses the race, no matter how many times it
         // retries, so retries are eventually exhausted.
@@ -133,11 +135,11 @@ public class StateStoreTests
         var generationBefore = store.Generation;
 
         await Assert.ThrowsAsync<PreconditionFailedException>(() =>
-            store.MutateAsync(s => s.Settings.SlideSeconds = 777));
+            store.MutateAsync(s => s.Default().Settings.SlideSeconds = 777));
 
         // The attempted change is gone; Snapshot and Generation still agree with
         // each other and with what was actually last persisted.
-        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(3, store.Snapshot.Default().Settings.SlideSeconds);
         Assert.Equal(generationBefore, store.Generation);
     }
 
@@ -147,7 +149,7 @@ public class StateStoreTests
         var inner = new InMemoryObjectStore();
         var seed = new StateStore(inner);
         await seed.LoadAsync();
-        await seed.MutateAsync(s => s.Settings.SlideSeconds = 42);
+        await seed.MutateAsync(s => s.Default().Settings.SlideSeconds = 42);
 
         // The bucket read fails twice — a permission-propagation lag, a passing
         // GCS 5xx — before succeeding on the third attempt.
@@ -156,7 +158,7 @@ public class StateStoreTests
 
         await store.LoadAsync();
 
-        Assert.Equal(42, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(42, store.Snapshot.Default().Settings.SlideSeconds);
         Assert.Equal(2, flaky.FailedReads);
     }
 
@@ -176,17 +178,17 @@ public class StateStoreTests
     {
         var (store, _) = NewStore();
         await store.LoadAsync();
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 3);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 3);
         var generationBefore = store.Generation;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             store.MutateAsync(s =>
             {
-                s.Settings.SlideSeconds = 777;
+                s.Default().Settings.SlideSeconds = 777;
                 throw new InvalidOperationException("boom");
             }));
 
-        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(3, store.Snapshot.Default().Settings.SlideSeconds);
         Assert.Equal(generationBefore, store.Generation);
     }
 
@@ -196,7 +198,7 @@ public class StateStoreTests
         var inner = new InMemoryObjectStore();
         var store = new StateStore(new CancellationCheckingObjectStore(inner));
         await store.LoadAsync();
-        await store.MutateAsync(s => s.Settings.SlideSeconds = 3);
+        await store.MutateAsync(s => s.Default().Settings.SlideSeconds = 3);
         var generationBefore = store.Generation;
 
         using var cts = new CancellationTokenSource();
@@ -204,14 +206,44 @@ public class StateStoreTests
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             store.MutateAsync(s =>
             {
-                s.Settings.SlideSeconds = 777;
+                s.Default().Settings.SlideSeconds = 777;
                 // Cancel once the mutation has been computed but before the write
                 // that would confirm it is allowed to complete.
                 cts.Cancel();
             }, cts.Token));
 
-        Assert.Equal(3, store.Snapshot.Settings.SlideSeconds);
+        Assert.Equal(3, store.Snapshot.Default().Settings.SlideSeconds);
         Assert.Equal(generationBefore, store.Generation);
+    }
+
+    [Fact]
+    public async Task Initialize_persists_a_migration_of_a_pre_events_file()
+    {
+        var objects = new InMemoryObjectStore();
+        objects.ForceWrite(StateStore.StatePath,
+            """{"images":{},"settings":{"eventName":"Sommerfest","senders":[{"id":1,"name":"Ada","status":"known"}]}}"""u8.ToArray());
+        var store = new StateStore(objects, seed: new StateSeed("party2026"));
+
+        await store.InitializeAsync();
+
+        var written = (await objects.ReadAsync(StateStore.StatePath))!.Bytes;
+        using var document = JsonDocument.Parse(written);
+        Assert.True(document.RootElement.TryGetProperty("events", out _));
+        Assert.False(document.RootElement.TryGetProperty("settings", out _));
+        Assert.Equal("party2026", store.Snapshot.Default().JoinCode);
+    }
+
+    [Fact]
+    public async Task Initialize_does_not_write_an_already_migrated_file()
+    {
+        var (store, objects) = NewStore();
+        await store.InitializeAsync();            // fresh bucket: migrates and writes once
+        var writes = objects.WriteCount;
+
+        var again = new StateStore(objects);
+        await again.InitializeAsync();
+
+        Assert.Equal(writes, objects.WriteCount);
     }
 
     /// <summary>Test double: every write to StatePath fails the precondition, no

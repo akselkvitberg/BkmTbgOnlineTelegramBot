@@ -49,12 +49,25 @@ Telegram is waiting on.
 
 ### 3. Events as a first-class thing
 
-An event today is the deployment. Its name is the one per-event setting; its
-join code is a deploy secret; its images are the bucket. Making events data
-rather than infrastructure means an event id, a lifecycle (draft, open,
-closed, archived), per-event settings, per-event senders, a bucket prefix, and
-a join code that can be rotated without a redeploy — useful within a single
-event too, when a code leaks to the wrong group chat.
+Done in part (2026-09-23): events, per-event settings, per-event
+auto-approve, rotatable join codes, retention and export. See
+[docs/superpowers/specs/2026-09-23-multiple-events-design.md](superpowers/specs/2026-09-23-multiple-events-design.md).
+Accounts, roles and a database are still ahead.
+
+The paragraph below is what this item looked like before the work above: an
+event was the deployment, its name the one per-event setting, its join code a
+deploy secret, its images the whole bucket. It is kept for context on what
+changed and what did not.
+
+> Making events data rather than infrastructure means an event id, a
+> lifecycle (draft, open, closed, archived), per-event settings, per-event
+> senders, a bucket prefix, and a join code that can be rotated without a
+> redeploy — useful within a single event too, when a code leaks to the wrong
+> group chat.
+
+Still true after 2026-09-23: there is no bucket prefix — every event's images
+sit in the same `originals/` path, distinguished only by the `EventId` on
+each image's state record.
 
 ### 4. Identity beyond one shared password
 

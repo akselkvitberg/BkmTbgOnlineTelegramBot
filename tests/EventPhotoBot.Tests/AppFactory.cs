@@ -16,9 +16,21 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     public const string WebhookPath = "hook-abc";
     public const string WebhookSecret = "tg-secret";
     public const string JoinCode = "party2026";
+    public const string DefaultRetentionSecret = "retention-secret";
+
+    /// <summary>Set before the first client is created; null leaves RETENTION_SECRET unset.</summary>
+    public string? RetentionSecret { get; init; } = DefaultRetentionSecret;
 
     public InMemoryObjectStore Objects { get; } = new();
     public FakeTelegramClient Telegram { get; } = new();
+
+    /// <summary>
+    /// Wraps Objects for the registered IObjectStore, for a test that needs one that
+    /// fails in a specific way — e.g. simulating one failing GCS delete during a bulk
+    /// delete. Assertions still read back through Objects itself, which the wrapper
+    /// (when set) is expected to delegate to. Defaults to Objects unwrapped.
+    /// </summary>
+    public Func<InMemoryObjectStore, IObjectStore>? ObjectStoreOverride { get; init; }
 
     public StateStore Store => Services.GetRequiredService<StateStore>();
 
@@ -31,11 +43,12 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         builder.UseSetting("ADMIN_PASSWORD", Password);
         builder.UseSetting("COOKIE_SIGNING_KEY", SigningKey);
         builder.UseSetting("JOIN_CODE", JoinCode);
+        if (RetentionSecret is not null) builder.UseSetting("RETENTION_SECRET", RetentionSecret);
 
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IObjectStore>();
-            services.AddSingleton<IObjectStore>(Objects);
+            services.AddSingleton<IObjectStore>(ObjectStoreOverride?.Invoke(Objects) ?? Objects);
             services.RemoveAll<ITelegramClient>();
             services.AddSingleton<ITelegramClient>(Telegram);
         });

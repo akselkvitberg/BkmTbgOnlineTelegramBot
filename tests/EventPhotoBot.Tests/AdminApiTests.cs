@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
+using EventPhotoBot.Tests.Fakes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -24,7 +25,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await _factory.Objects.WriteAsync(ObjectPaths.Original(id, "jpg"), [1], "image/jpeg", null);
         await _factory.Store.MutateAsync(s => s.Images[id] = new ImageRecord
         {
-            Id = id, Sha256 = id, SortKey = id, Status = status,
+            Id = id, EventId = StateMigration.DefaultEventId, Sha256 = id, SortKey = id, Status = status,
             Width = 10, Height = 10, OriginalExtension = "jpg",
             ReceivedAt = DateTimeOffset.UtcNow,
         });
@@ -254,7 +255,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 12 });
         await client.PatchAsJsonAsync("/api/settings", new { order = "newest-first" });
 
-        var settings = _factory.Store.Snapshot.Settings;
+        var settings = _factory.Store.Snapshot.Default().Settings;
         Assert.Equal(12, settings.SlideSeconds);
         Assert.Equal(SlideOrder.NewestFirst, settings.Order);
         Assert.Equal(800, settings.TransitionMs); // untouched fields survive
@@ -264,42 +265,42 @@ public class AdminApiTests : IClassFixture<AppFactory>
     public async Task Ken_burns_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.KenBurns); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.KenBurns); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { kenBurns = false });
-        Assert.False(_factory.Store.Snapshot.Settings.KenBurns);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.KenBurns);
 
         await client.PatchAsJsonAsync("/api/settings", new { kenBurns = true });
-        Assert.True(_factory.Store.Snapshot.Settings.KenBurns);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.KenBurns);
     }
 
     [Fact]
     public async Task The_join_invite_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = false });
-        Assert.False(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite);
 
         await client.PatchAsJsonAsync("/api/settings", new { showJoinInvite = true });
-        Assert.True(_factory.Store.Snapshot.Settings.ShowJoinInvite);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowJoinInvite);
     }
 
     [Fact]
     public async Task The_event_name_on_screen_can_be_turned_off_and_back_on()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName); // on unless asked otherwise
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowEventName); // on unless asked otherwise
 
         await client.PatchAsJsonAsync("/api/settings", new { showEventName = false });
-        Assert.False(_factory.Store.Snapshot.Settings.ShowEventName);
+        Assert.False(_factory.Store.Snapshot.Default().Settings.ShowEventName);
 
         var settings = await client.GetFromJsonAsync<JsonElement>("/api/settings");
         Assert.False(settings.GetProperty("showEventName").GetBoolean());
 
         await client.PatchAsJsonAsync("/api/settings", new { showEventName = true });
-        Assert.True(_factory.Store.Snapshot.Settings.ShowEventName);
+        Assert.True(_factory.Store.Snapshot.Default().Settings.ShowEventName);
     }
 
     // The store is shared across this class, so these set the layout they start from
@@ -314,10 +315,10 @@ public class AdminApiTests : IClassFixture<AppFactory>
         await client.PatchAsJsonAsync("/api/settings", new { layout = "single" });
 
         await client.PatchAsJsonAsync("/api/settings", new { layout = "mosaic" });
-        Assert.Equal(SlideLayout.Mosaic, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Mosaic, _factory.Store.Snapshot.Default().Settings.Layout);
 
         await client.PatchAsJsonAsync("/api/settings", new { layout = "split" });
-        Assert.Equal(SlideLayout.Split, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Split, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Theory]
@@ -335,7 +336,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var response = await client.PatchAsJsonAsync("/api/settings", new { layout });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(SlideLayout.Polaroid, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Polaroid, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Fact]
@@ -346,7 +347,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 6 });
 
-        Assert.Equal(SlideLayout.Collage, _factory.Store.Snapshot.Settings.Layout);
+        Assert.Equal(SlideLayout.Collage, _factory.Store.Snapshot.Default().Settings.Layout);
     }
 
     [Fact]
@@ -358,7 +359,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         // Trimmed: the field is typed into a web form, and a stray space would
         // show up centred on the projector.
-        Assert.Equal("Sommerfest 2026", _factory.Store.Snapshot.Settings.EventName);
+        Assert.Equal("Sommerfest 2026", _factory.Store.Snapshot.Default().Name);
     }
 
     [Fact]
@@ -368,18 +369,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
         await client.PatchAsJsonAsync("/api/settings", new { eventName = new string('a', 300) });
 
-        Assert.Equal(100, _factory.Store.Snapshot.Settings.EventName.Length);
-    }
-
-    [Fact]
-    public async Task The_event_name_can_be_cleared()
-    {
-        var client = _factory.CreateAuthenticatedClient();
-        await client.PatchAsJsonAsync("/api/settings", new { eventName = "Sommerfest" });
-
-        await client.PatchAsJsonAsync("/api/settings", new { eventName = "" });
-
-        Assert.Equal("", _factory.Store.Snapshot.Settings.EventName);
+        Assert.Equal(100, _factory.Store.Snapshot.Default().Name.Length);
     }
 
     [Fact]
@@ -487,12 +477,18 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var client = _factory.CreateAuthenticatedClient();
         await _factory.Store.MutateAsync(s =>
         {
-            s.Settings.SlideSeconds = 42;
-            s.Settings.Order = SlideOrder.NewestFirst;
-            s.Settings.EventName = "Sommerfest";
-            s.Settings.Layout = SlideLayout.Mosaic;
-            s.Settings.Senders =
-                [new Sender { Id = 42, Name = "Guest", Status = SenderStatus.AutoApprove }];
+            s.Default().Settings.SlideSeconds = 42;
+            s.Default().Settings.Order = SlideOrder.NewestFirst;
+            s.Default().Name = "Sommerfest";
+            s.Default().Settings.Layout = SlideLayout.Mosaic;
+            s.Senders =
+            [
+                new Sender
+                {
+                    Id = 42, Name = "Guest",
+                    Memberships = [new Membership { EventId = StateMigration.DefaultEventId, AutoApprove = true }],
+                },
+            ];
         });
 
         var response = await client.GetAsync("/api/settings");
@@ -521,7 +517,11 @@ public class AdminApiTests : IClassFixture<AppFactory>
         var sender = Assert.Single(root.GetProperty("senders").EnumerateArray());
         Assert.Equal(42, sender.GetProperty("id").GetInt64());
         Assert.Equal("Guest", sender.GetProperty("name").GetString());
-        Assert.Equal("autoApprove", sender.GetProperty("status").GetString());
+        Assert.False(sender.GetProperty("banned").GetBoolean());
+        var membership = Assert.Single(sender.GetProperty("memberships").EnumerateArray());
+        Assert.Equal("daglig", membership.GetProperty("eventId").GetString());
+        Assert.True(membership.GetProperty("autoApprove").GetBoolean());
+        Assert.False(sender.TryGetProperty("status", out _));
     }
 
     [Fact]
@@ -553,7 +553,7 @@ public class AdminApiTests : IClassFixture<AppFactory>
             await client.DeleteAsync("/api/images"),
             await client.PostAsync("/api/images", new MultipartFormDataContent()),
             await client.PatchAsJsonAsync("/api/settings", new { slideSeconds = 10 }),
-            await client.PostAsJsonAsync("/api/groups/-100/listening", new { listening = true }),
+            await client.PostAsJsonAsync("/api/groups/-100/event", new { eventId = "daglig" }),
             await client.PostAsync("/api/groups/-100/leave", null),
             await client.GetAsync("/api/telegram/bot"),
         };
@@ -563,109 +563,135 @@ public class AdminApiTests : IClassFixture<AppFactory>
 
     // ---- Telegram groups ----
 
-    private async Task SeedGroupAsync(long id, bool listening)
+    private async Task SeedGroupAsync(long id, string? eventId)
     {
         await _factory.Store.MutateAsync(s =>
         {
-            s.Settings.Groups.RemoveAll(g => g.Id == id);
-            s.Settings.Groups.Add(new BotGroup
+            s.Groups.RemoveAll(g => g.Id == id);
+            s.Groups.Add(new BotGroup
             {
-                Id = id, Title = "<b>Festkomiteen</b>", Listening = listening, FirstSeen = DateTimeOffset.UtcNow,
+                Id = id, Title = "<b>Festkomiteen</b>",
+                EventId = eventId,
+                FirstSeen = DateTimeOffset.UtcNow,
             });
         });
     }
 
     [Fact]
-    public async Task Settings_list_the_groups_the_bot_is_in()
+    public async Task Settings_list_the_groups_with_their_event()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2001, listening: true);
+        await SeedGroupAsync(-2001, StateMigration.DefaultEventId);
 
         using var document = JsonDocument.Parse(await client.GetStringAsync("/api/settings"));
-
         var group = Assert.Single(document.RootElement.GetProperty("groups").EnumerateArray(),
             g => g.GetProperty("id").GetInt64() == -2001);
+
+        Assert.Equal("daglig", group.GetProperty("eventId").GetString());
         Assert.Equal("<b>Festkomiteen</b>", group.GetProperty("title").GetString());
-        Assert.True(group.GetProperty("listening").GetBoolean());
     }
 
     [Fact]
-    public async Task Turning_listening_on_posts_the_notice_in_the_group_once()
+    public async Task Routing_a_group_posts_a_notice_naming_the_event_once_per_change()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2002, listening: false);
+        await SeedGroupAsync(-2002, null);
+        await _factory.Store.MutateAsync(s => { if (s.Find("r-bryllup") is null) s.AddEvent("r-bryllup", "Bryllup"); });
+        var before = _factory.Telegram.Sent.Count;
+        // AdminApiTestFactory shares one factory across this class's tests, and sibling
+        // tests rename the default event, so its current name is read rather than assumed.
+        var dailyName = _factory.Store.Snapshot.Default().Name;
 
-        var first = await client.PostAsJsonAsync("/api/groups/-2002/listening", new { listening = true });
-        var second = await client.PostAsJsonAsync("/api/groups/-2002/listening", new { listening = true });
+        await client.PostAsJsonAsync("/api/groups/-2002/event", new { eventId = "daglig" });
+        await client.PostAsJsonAsync("/api/groups/-2002/event", new { eventId = "daglig" });
+        await client.PostAsJsonAsync("/api/groups/-2002/event", new { eventId = "r-bryllup" });
 
-        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
-        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2002).Listening);
-        Assert.Single(_factory.Telegram.Sent, m => m.ChatId == -2002 && m.Text == Groups.ListeningNotice);
+        var notices = _factory.Telegram.Sent.Skip(before).Where(m => m.ChatId == -2002).ToList();
+        Assert.Equal(2, notices.Count);
+        Assert.Contains(dailyName, notices[0].Text);
+        Assert.Contains("Bryllup", notices[1].Text);
+        Assert.Equal("r-bryllup", _factory.Store.Snapshot.Groups.Single(g => g.Id == -2002).EventId);
     }
 
     [Fact]
-    public async Task Turning_listening_off_posts_nothing()
+    public async Task Unrouting_a_group_posts_nothing()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2003, listening: true);
+        await SeedGroupAsync(-2003, StateMigration.DefaultEventId);
+        var before = _factory.Telegram.Sent.Count;
 
-        var response = await client.PostAsJsonAsync("/api/groups/-2003/listening", new { listening = false });
+        var response = await client.PostAsJsonAsync("/api/groups/-2003/event", new { eventId = "" });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.False(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2003).Listening);
-        Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2003);
+        Assert.Equal(before, _factory.Telegram.Sent.Count);
+        Assert.Null(_factory.Store.Snapshot.Groups.Single(g => g.Id == -2003).EventId);
     }
 
     [Fact]
-    public async Task Listening_cannot_be_turned_on_for_a_group_the_bot_is_not_in()
+    public async Task Routing_a_group_to_a_closed_event_is_rejected_and_the_route_is_unchanged()
     {
         var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2010, StateMigration.DefaultEventId);
+        await _factory.Store.MutateAsync(s => { if (s.Find("r-closed") is null) s.AddEvent("r-closed", "Ferdig", closed: true); });
+        var before = _factory.Telegram.Sent.Count;
 
-        var response = await client.PostAsJsonAsync("/api/groups/-2999/listening", new { listening = true });
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2999);
-        Assert.DoesNotContain(_factory.Telegram.Sent, m => m.ChatId == -2999);
-    }
-
-    [Fact]
-    public async Task A_listening_request_without_a_value_is_rejected()
-    {
-        var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2004, listening: true);
-
-        var response = await client.PostAsJsonAsync("/api/groups/-2004/listening", new { });
+        var response = await client.PostAsJsonAsync("/api/groups/-2010/event", new { eventId = "r-closed" });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.True(_factory.Store.Snapshot.Settings.Groups.Single(g => g.Id == -2004).Listening);
+        Assert.Equal(StateMigration.DefaultEventId, _factory.Store.Snapshot.Groups.Single(g => g.Id == -2010).EventId);
+        Assert.Equal(before, _factory.Telegram.Sent.Count);
+    }
+
+    [Fact]
+    public async Task Routing_an_unknown_group_or_to_an_unknown_event_is_404()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2004, null);
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.PostAsJsonAsync("/api/groups/-2999/event", new { eventId = "daglig" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.PostAsJsonAsync("/api/groups/-2004/event", new { eventId = "nope" })).StatusCode);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Groups, g => g.Id == -2999);
+    }
+
+    [Fact]
+    public async Task A_routing_request_without_an_event_id_is_rejected()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+        await SeedGroupAsync(-2005, StateMigration.DefaultEventId);
+
+        var response = await client.PostAsJsonAsync("/api/groups/-2005/event", new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("daglig", _factory.Store.Snapshot.Groups.Single(g => g.Id == -2005).EventId);
     }
 
     [Fact]
     public async Task Leaving_a_group_leaves_it_on_telegram_and_forgets_it()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2005, listening: true);
+        await SeedGroupAsync(-2005, StateMigration.DefaultEventId);
 
         var response = await client.PostAsync("/api/groups/-2005/leave", null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains(-2005, _factory.Telegram.Left);
-        Assert.DoesNotContain(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2005);
+        Assert.DoesNotContain(_factory.Store.Snapshot.Groups, g => g.Id == -2005);
     }
 
     [Fact]
     public async Task A_refused_leave_keeps_the_group_listed()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await SeedGroupAsync(-2006, listening: true);
+        await SeedGroupAsync(-2006, StateMigration.DefaultEventId);
         _factory.Telegram.LeaveFails = true;
         try
         {
             var response = await client.PostAsync("/api/groups/-2006/leave", null);
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
-            Assert.Contains(_factory.Store.Snapshot.Settings.Groups, g => g.Id == -2006);
+            Assert.Contains(_factory.Store.Snapshot.Groups, g => g.Id == -2006);
         }
         finally
         {

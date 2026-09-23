@@ -23,7 +23,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         await _factory.Objects.WriteAsync(ObjectPaths.Original(id, "jpg"), [1], "image/jpeg", null);
         await _factory.Store.MutateAsync(s => s.Images[id] = new ImageRecord
         {
-            Id = id, Sha256 = id, SortKey = id, Status = status,
+            Id = id, EventId = StateMigration.DefaultEventId, Sha256 = id, SortKey = id, Status = status,
             Width = 10, Height = 10, OriginalExtension = "jpg",
             ReceivedAt = DateTimeOffset.UtcNow,
         });
@@ -45,7 +45,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         await client.PutAsJsonAsync("/api/takeover", new { imageId = second, minutes = (int?)null });
 
         Assert.Equal(generationBeforeReplace + 1, _factory.Store.Generation);
-        Assert.Equal(second, _factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Equal(second, _factory.Store.Snapshot.Default().Settings.TakeoverImageId);
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
 
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = 5 });
 
-        Assert.Equal(id, _factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Equal(id, _factory.Store.Snapshot.Default().Settings.TakeoverImageId);
         Assert.Equal(ImageStatus.Approved, _factory.Store.Snapshot.Images[id].Status);
     }
 
@@ -73,8 +73,8 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         await client.DeleteAsync($"/api/images/{id}");
 
         Assert.Equal(generationBeforeDelete + 1, _factory.Store.Generation);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverUntil);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverUntil);
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         await client.PostAsJsonAsync($"/api/images/{id}/status", new { status = "hidden" });
 
         Assert.Equal(generationBeforeHide + 1, _factory.Store.Generation);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         await client.PostAsJsonAsync($"/api/images/{id}/status", new { status = "rejected" });
 
         Assert.Equal(generationBeforeReject + 1, _factory.Store.Generation);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
     }
 
     [Fact]
@@ -117,8 +117,8 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
 
         await client.DeleteAsync("/api/takeover");
 
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverUntil);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverUntil);
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var client = _factory.CreateAuthenticatedClient();
         var timed = await SeedImageAsync();
         await client.PutAsJsonAsync("/api/takeover", new { imageId = timed, minutes = 15 });
-        var until = _factory.Store.Snapshot.Settings.TakeoverUntil;
+        var until = _factory.Store.Snapshot.Default().Settings.TakeoverUntil;
 
         Assert.NotNull(until);
         Assert.InRange(until!.Value,
@@ -136,7 +136,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
         var openEnded = await SeedImageAsync();
         await client.PutAsJsonAsync("/api/takeover", new { imageId = openEnded, minutes = (int?)null });
 
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverUntil);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverUntil);
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
 
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = 100_000 });
 
-        var until = _factory.Store.Snapshot.Settings.TakeoverUntil;
+        var until = _factory.Store.Snapshot.Default().Settings.TakeoverUntil;
         Assert.NotNull(until);
         Assert.InRange(until!.Value,
             DateTimeOffset.UtcNow.AddHours(23), DateTimeOffset.UtcNow.AddHours(25));
@@ -183,7 +183,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
 
         await client.PutAsJsonAsync("/api/takeover", new { imageId = id, minutes = 0 });
 
-        var until = _factory.Store.Snapshot.Settings.TakeoverUntil;
+        var until = _factory.Store.Snapshot.Default().Settings.TakeoverUntil;
         Assert.NotNull(until);
         Assert.True(until!.Value > DateTimeOffset.UtcNow);
     }
@@ -192,7 +192,7 @@ public class TakeoverInvariantTests : IClassFixture<AppFactory>
     public async Task Clearing_an_already_clear_takeover_does_not_bump_the_generation()
     {
         var client = _factory.CreateAuthenticatedClient();
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
 
         var generationBefore = _factory.Store.Generation;
         var response = await client.DeleteAsync("/api/takeover");

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Arrangementer</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin/queue">Kø<span class="badge"></span></a>
+    <a href="/admin/images">Bilder</a>
+    <a href="/upload">Last opp</a>
+    <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
+    <a href="/admin/settings">Innstillinger</a>
+    <a href="/show">Skjerm</a>
+    <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
+  </nav>
+
+  <main class="narrow">
+    <header class="page-head">
+      <h1>Arrangementer</h1>
+      <p class="muted">
+        «Daglig» er kirkens faste skjerm. Et bryllup eller en konsert får sitt eget
+        arrangement, med egen QR-kode, egen skjerm og egne bilder.
+      </p>
+    </header>
+
+    <section class="card">
+      <h2>Nytt arrangement</h2>
+      <label for="newName">Navn</label>
+      <input id="newName" type="text" maxlength="100" placeholder="Bryllup Kari og Ola">
+      <label for="newId">Kort id (i lenken til skjermen)</label>
+      <input id="newId" type="text" maxlength="32" pattern="[a-z0-9-]{1,32}" placeholder="bryllup-kari-ola">
+      <div class="number-fields">
+        <div><label for="newOpens">Åpner (valgfritt)</label><input id="newOpens" type="datetime-local"></div>
+        <div><label for="newCloses">Stenger (valgfritt)</label><input id="newCloses" type="datetime-local"></div>
+      </div>
+      <div class="save-row"><button class="primary" id="create">Opprett</button></div>
+    </section>
+
+    <div id="lists"></div>
+  </main>
+
+  <script src="/admin/admin.js"></script>
+  <script>
+    'use strict';
+
+    const GROUPS = [['open', 'Åpne'], ['scheduled', 'Planlagte'], ['closed', 'Avsluttede']];
+
+    // datetime-local has no zone: the browser reads it as local time, which for this
+    // app's organisers is Europe/Oslo, and toISOString() turns that into UTC.
+    const toIso = value => value ? new Date(value).toISOString() : null;
+    const toLocalInput = iso => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const when = iso => iso ? new Date(iso).toLocaleString('nb-NO', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+
+    // Suggest an id from the name until the organiser types one of their own.
+    let idTouched = false;
+    document.getElementById('newId').addEventListener('input', () => { idTouched = true; });
+    document.getElementById('newName').addEventListener('input', event => {
+      if (idTouched) return;
+      document.getElementById('newId').value = event.target.value.toLowerCase()
+        .replace(/æ/g, 'ae').replace(/ø/g, 'o').replace(/å/g, 'a')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+    });
+
+    document.getElementById('create').onclick = async () => {
+      const body = {
+        id: document.getElementById('newId').value.trim(),
+        name: document.getElementById('newName').value,
+        opensAt: toIso(document.getElementById('newOpens').value),
+        closesAt: toIso(document.getElementById('newCloses').value),
+      };
+      if (await Admin.api('POST', '/api/events', body)) {
+        Admin.toast(`${body.name.trim()} er opprettet.`);
+        for (const id of ['newName', 'newId', 'newOpens', 'newCloses']) document.getElementById(id).value = '';
+        idTouched = false;
+      }
+      load();
+    };
+
+    async function load() {
+      const list = await Admin.events(true);
+      const host = document.getElementById('lists');
+      host.replaceChildren(...GROUPS.map(([phase, title]) => {
+        const items = list.filter(e => e.phase === phase);
+        const section = document.createElement('section');
+        section.className = 'card';
+        section.innerHTML = `<h2>${title}</h2>` + (items.length === 0
+          ? '<p class="muted">Ingen.</p>'
+          : items.map(render).join(''));
+        return section;
+      }));
+      for (const button of host.querySelectorAll('[data-act]'))
+        button.onclick = () => ACTIONS[button.dataset.act](list.find(e => e.id === button.dataset.id));
+    }
+
+    // Only ids (slugs) go into attributes; names are escaped into text.
+    function render(ev) {
+      const id = Admin.escapeHtml(ev.id);
+      const schedule = [ev.opensAt && `åpner ${when(ev.opensAt)}`, ev.closesAt && `stenger ${when(ev.closesAt)}`]
+        .filter(Boolean).join(', ');
+      return `
+        <article class="event-row">
+          <h3>${Admin.escapeHtml(ev.name)}${ev.isDefault ? ' <span class="event-label">fast</span>' : ''}</h3>
+          <p class="muted">
+            ${ev.counts.approved} på skjermen · ${ev.counts.pending} venter
+            ${schedule ? ' · ' + Admin.escapeHtml(schedule) : ''}
+          </p>
+          ${ev.phase !== 'closed' && ev.joinUrl ? `
+            <img class="event-qr" src="/api/join-qr.svg?event=${encodeURIComponent(ev.id)}" alt="QR-kode for ${Admin.escapeHtml(ev.name)}">
+            <p><code>${Admin.escapeHtml(ev.joinUrl)}</code></p>` : ''}
+          <div class="row">
+            <a class="link-button" href="/show${ev.isDefault ? '' : '?event=' + encodeURIComponent(ev.id)}">Skjerm</a>
+            <a class="link-button" href="/admin/images${ev.isDefault ? '' : '?event=' + encodeURIComponent(ev.id)}">Bilder</a>
+            <a class="link-button" href="/api/events/${encodeURIComponent(ev.id)}/export.zip">Last ned alle (ZIP)</a>
+            ${ev.isDefault ? '' : `<button class="small" data-act="schedule" data-id="${id}">Tidsplan</button>`}
+            ${ev.isDefault ? '' : ev.phase === 'closed'
+              ? `<button class="small" data-act="reopen" data-id="${id}">Åpne igjen</button>`
+              : `<button class="small" data-act="close" data-id="${id}">Steng nå</button>`}
+            <button class="small" data-act="rotate" data-id="${id}">Ny QR-kode</button>
+            ${ev.isDefault ? '' : `<button class="small quiet-danger" data-act="remove" data-id="${id}">Slett…</button>`}
+          </div>
+          <p class="muted">
+            Stor nedlasting? Bruk run.app-adressen i stedet for .web.app — den siste
+            avbryter nedlastingen etter ca. ett minutt.
+          </p>
+        </article>`;
+    }
+
+    const ACTIONS = {
+      async close(ev) {
+        const sure = await Admin.confirm({
+          title: `Stenge ${ev.name}?`,
+          body: 'Boten tar ikke lenger imot bilder til arrangementet, og skjermen slutter å invitere. '
+              + 'Bildene blir liggende til du sletter arrangementet.',
+          confirmLabel: 'Steng',
+        });
+        if (sure && await Admin.api('POST', `/api/events/${encodeURIComponent(ev.id)}/close`)) Admin.toast(`${ev.name} er stengt.`);
+        load();
+      },
+      async reopen(ev) {
+        if (await Admin.api('POST', `/api/events/${encodeURIComponent(ev.id)}/reopen`)) Admin.toast(`${ev.name} er åpent igjen.`);
+        load();
+      },
+      async rotate(ev) {
+        const sure = await Admin.confirm({
+          title: `Lage ny QR-kode for ${ev.name}?`,
+          body: 'Den gamle koden og lenken slutter å virke med en gang. De som allerede er med, '
+              + 'kan fortsatt sende bilder.',
+          confirmLabel: 'Lag ny kode',
+          danger: true,
+        });
+        if (sure && await Admin.api('POST', `/api/events/${encodeURIComponent(ev.id)}/rotate-code`)) Admin.toast('Ny kode er laget.');
+        load();
+      },
+      schedule: editSchedule,
+      remove: confirmDelete,
+    };
+
+    /** A dialog of its own: Admin.dialog has no input fields. */
+    function form(title, fields, confirmLabel, danger = false) {
+      return new Promise(resolve => {
+        const dialog = document.createElement('dialog');
+        dialog.className = 'admin-dialog';
+        dialog.innerHTML = `<h2></h2>${fields}<div class="dialog-actions">
+          <button type="button" value="cancel">Avbryt</button>
+          <button type="button" value="ok" class="${danger ? 'danger' : 'primary'}"></button></div>`;
+        dialog.querySelector('h2').textContent = title;
+        dialog.querySelector('[value="ok"]').textContent = confirmLabel;
+        dialog.querySelector('[value="cancel"]').onclick = () => { dialog.close(); resolve(null); };
+        dialog.querySelector('[value="ok"]').onclick = () => { dialog.close(); resolve(dialog); };
+        dialog.addEventListener('cancel', () => resolve(null));
+        dialog.addEventListener('close', () => setTimeout(() => dialog.remove(), 0));
+        document.body.appendChild(dialog);
+        dialog.showModal();
+      });
+    }
+
+    async function editSchedule(ev) {
+      const dialog = await form(`Tidsplan for ${ev.name}`, `
+        <label for="opens">Åpner</label><input id="opens" type="datetime-local" value="${toLocalInput(ev.opensAt)}">
+        <label for="closes">Stenger</label><input id="closes" type="datetime-local" value="${toLocalInput(ev.closesAt)}">
+        <p class="muted">La et felt stå tomt for ingen grense.</p>`, 'Lagre');
+      if (!dialog) return;
+      if (await Admin.api('PUT', `/api/events/${encodeURIComponent(ev.id)}/schedule`, {
+        opensAt: toIso(dialog.querySelector('#opens').value),
+        closesAt: toIso(dialog.querySelector('#closes').value),
+      })) Admin.toast('Tidsplanen er lagret.');
+      load();
+    }
+
+    async function confirmDelete(ev) {
+      const dialog = await form(`Slette ${ev.name}?`, `
+        <p>Alle ${ev.counts.total} bildene i arrangementet slettes fra lagringen. Last dem ned først
+           hvis noen vil ha dem. Dette kan ikke angres.</p>
+        <label for="confirmName">Skriv navnet på arrangementet for å bekrefte</label>
+        <input id="confirmName" type="text" autocomplete="off">`, 'Slett arrangementet', true);
+      if (!dialog) return;
+      if (dialog.querySelector('#confirmName').value.trim() !== ev.name) {
+        Admin.toast('Navnet stemte ikke. Ingenting ble slettet.', 'error');
+        return;
+      }
+      const response = await Admin.api('DELETE', `/api/events/${encodeURIComponent(ev.id)}`);
+      if (response) {
+        const { deleted } = await response.json();
+        Admin.toast(`${ev.name} er slettet, med ${deleted} bilder.`);
+      }
+      load();
+    }
+
+    Admin.onManifest(() => load());
+    load();
+  </script>
+</body>
+</html>

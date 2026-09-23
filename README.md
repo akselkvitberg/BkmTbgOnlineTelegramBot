@@ -7,6 +7,14 @@ outright, which also pulls everything they already sent. The whole web side
 sits behind one shared password. It is built to be deployed for one event and
 destroyed afterwards.
 
+One event runs by default: Daglig, always open and never deleted, for a
+church's day-to-day photos. A special event (a wedding, a concert) can run
+alongside it, with its own join QR, its own screen at `/show?event=<id>`, and
+photos kept apart from Daglig's. Telegram groups are routed to whichever
+event they should feed, in `/admin/telegram`. Old photos can be cleared out
+automatically after a set number of days, per event, always keeping the
+newest approved ones.
+
 - **What to do on the day, and how to tear it down:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - **Why it is built this way:** [telegram-online-bot-spec.md](telegram-online-bot-spec.md)
 - **What it would take to keep it:** [docs/BEYOND-ONE-EVENT.md](docs/BEYOND-ONE-EVENT.md)
@@ -56,8 +64,10 @@ profile sets `LOCAL_DEV=true`, which:
   join QR points at a bot that does not exist;
 - adds a guest simulator at http://localhost:5055/dev, which joins as a guest and
   sends photos through the same code path the webhook uses, and shows the bot's
-  replies. Tick "I en gruppe" to add the bot to a simulated Telegram group and
-  post there as a member instead.
+  replies. Pick which event to join with, and tap any button the bot sends back
+  (to switch events, say) the same way a real Telegram client would. Tick "I en
+  gruppe" to add the bot to a simulated Telegram group and post there as a
+  member instead.
 
 `LOCAL_DEV` refuses to start outside the Development environment.
 

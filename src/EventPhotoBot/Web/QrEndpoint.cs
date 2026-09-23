@@ -1,4 +1,6 @@
+using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
+using Microsoft.AspNetCore.Mvc;
 using QRCoder;
 
 namespace EventPhotoBot.Web;
@@ -7,9 +9,15 @@ public static class QrEndpoint
 {
     public static void MapJoinQr(this WebApplication app)
     {
-        app.MapGet("/api/join-qr.svg", (BotIdentity identity) =>
+        app.MapGet("/api/join-qr.svg",
+            ([FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
         {
-            if (identity.JoinUrl is not { } url) return Results.NotFound();
+            // Served for a scheduled event too, so its QR can be printed in advance;
+            // refused once it is over, when the code only earns a "that has ended".
+            if (EventScope.Resolve(store.Snapshot, eventId) is not { } ev
+                || ev.PhaseAt(DateTimeOffset.UtcNow) == EventPhase.Closed
+                || identity.JoinUrlFor(ev.JoinCode) is not { } url)
+                return Results.NotFound();
 
             // Error correction M: the QR hangs on a wall and may be photographed at an
             // angle or partly glared out. H would be more robust but makes a denser

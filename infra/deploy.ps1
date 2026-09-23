@@ -13,6 +13,8 @@ param(
     # Firebase Hosting site id -> https://<site>.web.app in front of the service.
     # Omit to skip Hosting entirely and use the run.app URL. See docs/RUNBOOK.md.
     [string] $HostingSite,
+    # Cloud Scheduler is not offered in every region; check with `gcloud scheduler locations list`.
+    [string] $SchedulerRegion = 'europe-west1',
     [switch] $SkipBuild
 )
 
@@ -66,8 +68,9 @@ Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webho
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-join-code     --data-file=- --project $ProjectId"
+Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-retention-secret --data-file=- --project $ProjectId"
 Write-Host ''
-Write-Host 'Generate the three random ones (webhook-secret, webhook-path, cookie-key) with:  openssl rand -hex 32'
+Write-Host 'Generate the random ones (webhook-secret, webhook-path, cookie-key, retention-secret) with:  openssl rand -hex 32'
 Write-Host 'join-code is yours to choose and goes in the QR on the screen: letters, digits,'
 Write-Host '_ and - only, at most 64 characters. Anything else fails startup, because Telegram'
 Write-Host 'silently drops a deep-link payload outside that set.'
@@ -144,6 +147,32 @@ $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$bo
 }
 
 if (-not $response.ok) { throw "setWebhook failed: $($response.description)" }
+
+Write-Host '==> Scheduling the daily retention sweep' -ForegroundColor Cyan
+$retentionSecret = (gcloud secrets versions access latest --secret "$Name-retention-secret" --project $ProjectId | Out-String).Trim()
+Assert-Success 'gcloud secrets versions access (retention-secret)'
+if ([string]::IsNullOrWhiteSpace($retentionSecret)) { throw 'retention-secret has no version yet. Add it (see above) and rerun.' }
+
+# Created with gcloud, not Terraform, for the same reason as every secret value here:
+# the header would otherwise sit in plaintext in Terraform state.
+$job = "$Name-retention"
+# attempt-deadline: Cloud Scheduler's own default for an HTTP target is 3 minutes,
+# well under the sweep's 900s Cloud Run request timeout - a job dropped mid-sweep
+# cancels the rest of RetentionSweep's delete loop and orphans object bytes whose
+# state record is already gone. --format=none: `jobs create/update` otherwise print
+# the resulting Job resource, headers and all, putting X-Retention-Secret in the
+# console output; `describe` above is already redirected to null for the same reason.
+$jobArgs = @('--location', $SchedulerRegion, '--project', $ProjectId,
+    '--schedule', '15 3 * * *', '--time-zone', 'Europe/Oslo',
+    '--uri', "$serviceUrl/internal/retention", '--http-method', 'POST',
+    '--attempt-deadline', '900s', '--format=none')
+gcloud scheduler jobs describe $job --location $SchedulerRegion --project $ProjectId *> $null
+if ($LASTEXITCODE -eq 0) {
+    gcloud scheduler jobs update http $job @jobArgs --update-headers "X-Retention-Secret=$retentionSecret"
+} else {
+    gcloud scheduler jobs create http $job @jobArgs --headers "X-Retention-Secret=$retentionSecret"
+}
+Assert-Success 'gcloud scheduler jobs create/update'
 
 Write-Host ''
 Write-Host "Slideshow: $publicUrl/show"    -ForegroundColor Green

@@ -33,6 +33,13 @@ public enum SlideLayout { Single, Mosaic, Polaroid, Filmstrip, Collage, Split }
 public sealed class ImageRecord
 {
     public required string Id { get; set; }
+
+    /// <summary>
+    /// The event the image belongs to — exactly one. Empty only in a state file from
+    /// before events existed; StateMigration fills it in on load.
+    /// </summary>
+    public string EventId { get; set; } = "";
+
     public ImageSource Source { get; set; }
     public long? SenderId { get; set; }
     public string? SenderName { get; set; }
@@ -47,31 +54,44 @@ public sealed class ImageRecord
     public DateTimeOffset? DecidedAt { get; set; }
     public required string SortKey { get; set; }
     public required string OriginalExtension { get; set; }
+
+    /// <summary>
+    /// Where a group photo was posted, kept so the bot can change its reaction when an
+    /// organiser decides on it. Null for private chats and admin uploads.
+    /// </summary>
+    public long? TelegramChatId { get; set; }
+    public long? TelegramMessageId { get; set; }
 }
 
 /// <summary>
-/// What the bot does with a person's photos. Absence from the roster is the
-/// fourth case and needs no member: that person has not redeemed the join code,
-/// nothing is stored for them, and their photos are declined.
+/// A person's place in one event. Having one is what "Known" was, for that event;
+/// <see cref="AutoApprove"/> is what the AutoApprove status was.
 /// </summary>
-public enum SenderStatus
+public sealed class Membership
 {
-    /// <summary>Redeemed the join code. Photos go to the approval queue.</summary>
-    Known,
+    public required string EventId { get; set; }
 
-    /// <summary>A pre-approved photographer. Photos go straight to the screen.</summary>
-    AutoApprove,
-
-    /// <summary>Blocked. Messages are dropped silently, nothing is downloaded.</summary>
-    Banned,
+    /// <summary>A pre-approved photographer for this event: photos skip the queue.</summary>
+    public bool AutoApprove { get; set; }
 }
 
+/// <summary>
+/// One person the bot has heard from, across every event. Absence from the roster
+/// still means nothing is stored for them and their photos are declined.
+/// </summary>
 public sealed class Sender
 {
     public long Id { get; set; }
     public string Name { get; set; } = "";
-    public SenderStatus Status { get; set; }
     public DateTimeOffset FirstSeen { get; set; }
+
+    /// <summary>Global. Messages are dropped silently, nothing is downloaded.</summary>
+    public bool Banned { get; set; }
+
+    /// <summary>Where this person's private-chat photos go while that event is open.</summary>
+    public string? CurrentEventId { get; set; }
+
+    public List<Membership> Memberships { get; set; } = [];
 }
 
 /// <summary>
@@ -79,11 +99,9 @@ public sealed class Sender
 /// bot's groups, so this is the bot's own record, kept from the membership updates
 /// Telegram sends when the bot is added or removed (my_chat_member).
 ///
-/// Being in a group is not the same as listening to it: anyone can add a bot to a
-/// group of their own, and a bot that collected from every group it landed in would
-/// be a way to feed the approval queue from outside the event. A group is listened
-/// to only once somebody posts the join code in it, or an admin turns it on.
-/// Messages from any other group are dropped without a reply.
+/// Being in a group is not the same as collecting from it: anyone can add a bot to a
+/// group of their own. Photos are collected only once an organiser routes the group
+/// to an event. Messages from any other group are dropped without a reply.
 /// </summary>
 public sealed class BotGroup
 {
@@ -93,23 +111,15 @@ public sealed class BotGroup
     /// <summary>The group's name as last seen. Set by the group's owner, so untrusted.</summary>
     public string Title { get; set; } = "";
 
-    /// <summary>Whether members' photos are collected from this group.</summary>
-    public bool Listening { get; set; }
+    /// <summary>The event members' photos go to. Null: nothing is collected.</summary>
+    public string? EventId { get; set; }
 
     public DateTimeOffset FirstSeen { get; set; }
 }
 
-public sealed class Settings
+/// <summary>How one event's screen looks and behaves.</summary>
+public sealed class EventSettings
 {
-    /// <summary>
-    /// Shown on the slideshow's empty state. Lives here rather than in deploy
-    /// configuration because it is the one thing about an event an organiser is
-    /// likely to want to fix — a typo, a renamed party — after the screen is
-    /// already up, and a redeploy mid-event drops whatever Telegram is holding.
-    /// Empty until someone types it in admin; the screen then shows no name.
-    /// </summary>
-    public string EventName { get; set; } = "";
-
     public int SlideSeconds { get; set; } = 8;
     public int TransitionMs { get; set; } = 800;
     public SlideOrder Order { get; set; } = SlideOrder.Shuffle;
@@ -145,26 +155,62 @@ public sealed class Settings
 
     /// <summary>
     /// Whether the event's name sits small in a corner of the screen while photos
-    /// are showing. On by default; it does nothing while EventName is empty, and the
-    /// holding card shows the name regardless.
+    /// are showing. On by default; the holding card shows the name regardless.
     /// </summary>
     public bool ShowEventName { get; set; } = true;
     public string? TakeoverImageId { get; set; }
     public DateTimeOffset? TakeoverUntil { get; set; }
-    public List<Sender> Senders { get; set; } = [];
+}
 
-    /// <summary>
-    /// Empty by default, and for a state.json written before groups existed: the
-    /// property is simply absent there, so the initializer stands and no group is
-    /// listened to until someone posts the join code in it.
-    /// </summary>
-    public List<BotGroup> Groups { get; set; } = [];
+/// <summary>Automatic deletion of an event's old photos. Off unless MaxAgeDays is set.</summary>
+public sealed class Retention
+{
+    public int? MaxAgeDays { get; set; }
+
+    /// <summary>Approved photos kept regardless of age, so the screen always has a pool.</summary>
+    public int KeepNewest { get; set; }
+}
+
+/// <summary>
+/// Something photos are collected for: the church's standing daily screen (the one
+/// default event), or a wedding or concert that runs alongside it.
+/// </summary>
+public sealed class Event
+{
+    /// <summary>A slug, [a-z0-9-]{1,32}. Screens bookmark it (/show?event=), so it never changes.</summary>
+    public required string Id { get; set; }
+
+    /// <summary>Shown on the screen and named in every bot acknowledgement.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>Exactly one event has this: it never closes and is never deleted.</summary>
+    public bool IsDefault { get; set; }
+
+    public required string JoinCode { get; set; }
+    public DateTimeOffset? OpensAt { get; set; }
+    public DateTimeOffset? ClosesAt { get; set; }
+
+    /// <summary>Set by an organiser closing the event by hand.</summary>
+    public DateTimeOffset? ClosedAt { get; set; }
+
+    public EventSettings Settings { get; set; } = new();
+    public Retention Retention { get; set; } = new();
+    public DateTimeOffset CreatedAt { get; set; }
 }
 
 public sealed class EventState
 {
     public Dictionary<string, ImageRecord> Images { get; set; } = [];
-    public Settings Settings { get; set; } = new();
+    public List<Event> Events { get; set; } = [];
+    public List<Sender> Senders { get; set; } = [];
+    public List<BotGroup> Groups { get; set; } = [];
+
+    /// <summary>
+    /// The "settings" object of a state file from before events. Read by
+    /// StateMigration and set to null there, so it is never written back.
+    /// </summary>
+    [JsonPropertyName("settings")]
+    public LegacySettings? Legacy { get; set; }
 }
 
 public static class StateJson

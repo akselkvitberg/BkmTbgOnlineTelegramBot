@@ -9,7 +9,24 @@ public sealed class TgUpdate
 
     /// <summary>The bot itself was added to, or removed from, a chat.</summary>
     [JsonPropertyName("my_chat_member")] public TgChatMemberUpdated? MyChatMember { get; set; }
+
+    /// <summary>Someone tapped one of the bot's inline buttons.</summary>
+    [JsonPropertyName("callback_query")] public TgCallbackQuery? CallbackQuery { get; set; }
 }
+
+public sealed class TgCallbackQuery
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("from")] public TgUser? From { get; set; }
+
+    /// <summary>The bot's own message the button was on. Absent if it is too old for Telegram to say.</summary>
+    [JsonPropertyName("message")] public TgMessage? Message { get; set; }
+
+    [JsonPropertyName("data")] public string? Data { get; set; }
+}
+
+/// <summary>One inline button under a message. Telegram caps CallbackData at 64 bytes.</summary>
+public sealed record InlineButton(string Text, string CallbackData);
 
 public sealed class TgChatMemberUpdated
 {

@@ -16,7 +16,8 @@ public sealed record Manifest(
     IReadOnlyList<ManifestImage> Images,
     TakeoverView? Takeover,
     SettingsView Settings,
-    int PendingCount);
+    int PendingCount,
+    int PendingTotal);
 
 /// <summary>
 /// Pure function from state to what the screen should show. No I/O, no clock of
@@ -25,12 +26,13 @@ public sealed record Manifest(
 public static class ManifestBuilder
 {
     public static Manifest Build(
-        EventState state, long generation, DateTimeOffset now, string? joinUrl = null)
+        EventState state, Event ev, long generation, DateTimeOffset now, string? joinUrl = null)
     {
-        var settings = state.Settings;
+        var settings = ev.Settings;
+        var open = ev.IsOpen(now);
 
         var approved = state.Images.Values
-            .Where(i => i.Status == ImageStatus.Approved)
+            .Where(i => i.EventId == ev.Id && i.Status == ImageStatus.Approved)
             .ToList();
 
         var recurring = approved
@@ -45,14 +47,20 @@ public static class ManifestBuilder
 
         var playlist = Interleave(ordinary, recurring, Math.Max(1, settings.RecurringEvery));
 
+        var openEvents = state.Events.Where(e => e.IsOpen(now)).Select(e => e.Id).ToHashSet();
+        var pendingTotal = state.Images.Values.Count(i => i.Status == ImageStatus.Pending && openEvents.Contains(i.EventId));
+
         return new Manifest(
             Version: generation,
             Images: [.. playlist.Select(ToManifestImage)],
-            Takeover: ActiveTakeover(state, now),
+            Takeover: ActiveTakeover(state, ev, now),
             Settings: new SettingsView(
                 settings.SlideSeconds, settings.TransitionMs, settings.NewestFirstBoost,
                 settings.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
-                settings.EventName, joinUrl, settings.KenBurns, settings.ShowJoinInvite,
+                ev.Name,
+                // A closed event's screen keeps its photos but stops inviting anyone: the
+                // bot would only answer that the event is over.
+                open ? joinUrl : null, settings.KenBurns, settings.ShowJoinInvite && open,
                 // Every layout name is a single lowercase word, so unlike Order above
                 // there is no kebab form to spell out by hand. show.js looks the name up
                 // in its own layout table and falls back to "single" on anything it does
@@ -60,7 +68,8 @@ public static class ManifestBuilder
                 // original slideshow rather than to a black wall.
                 settings.Layout.ToString().ToLowerInvariant(),
                 settings.ShowEventName),
-            PendingCount: state.Images.Values.Count(i => i.Status == ImageStatus.Pending));
+            PendingCount: state.Images.Values.Count(i => i.EventId == ev.Id && i.Status == ImageStatus.Pending),
+            PendingTotal: pendingTotal);
     }
 
     private static ManifestImage ToManifestImage(ImageRecord i) =>
@@ -113,9 +122,9 @@ public static class ManifestBuilder
         return result;
     }
 
-    private static TakeoverView? ActiveTakeover(EventState state, DateTimeOffset now)
+    private static TakeoverView? ActiveTakeover(EventState state, Event ev, DateTimeOffset now)
     {
-        var settings = state.Settings;
+        var settings = ev.Settings;
         if (settings.TakeoverImageId is not { } id) return null;
         if (!state.Images.TryGetValue(id, out var image) || image.Status != ImageStatus.Approved)
             return null;

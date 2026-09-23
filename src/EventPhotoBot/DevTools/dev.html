@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <a href="/dev" class="active">Gjest (lokal)</a>
@@ -38,6 +39,10 @@
           <input id="guestId" type="number" value="1001">
         </div>
       </div>
+      <div class="field">
+        <label for="guestEvent">Skann QR-koden til</label>
+        <select id="guestEvent"></select>
+      </div>
       <div class="row">
         <button class="primary" id="join">Skann QR-koden (bli med)</button>
         <button id="newGuest">Ny gjest</button>
@@ -51,7 +56,7 @@
         <span class="muted">
           Av: en privat chat med boten. På: gjesten er medlem i gruppen under og legger ut
           der. Boten ser ingenting i gruppen før den er lagt til, og henter ikke bilder før
-          noen har skrevet koden der eller «Hent bilder» er slått på under Telegram.
+          gruppen er koblet til et arrangement under Telegram.
         </span></label>
       <div class="field-row">
         <div class="field">
@@ -100,8 +105,24 @@
     const guest = () => ({
       id: Number(document.getElementById('guestId').value),
       name: document.getElementById('guestName').value,
+      eventId: document.getElementById('guestEvent').value,
       ...(inGroup() ? { groupId: group().id, groupTitle: group().title } : {}),
     });
+
+    async function loadEvents() {
+      const response = await fetch('/api/events', { cache: 'no-store' });
+      if (!response.ok) return;
+      const events = await response.json();
+      const select = document.getElementById('guestEvent');
+      select.replaceChildren(...events
+        .filter(ev => ev.phase === 'open')
+        .map(ev => {
+          const option = document.createElement('option');
+          option.value = ev.id;
+          option.textContent = ev.name;
+          return option;
+        }));
+    }
 
     const setBotInGroup = async present => {
       await Admin.api('POST', '/dev/group', { ...group(), present });
@@ -109,12 +130,6 @@
     };
     document.getElementById('addBot').onclick = () => setBotInGroup(true);
     document.getElementById('removeBot').onclick = () => setBotInGroup(false);
-
-    // In a group the join button posts the code there, which is what opens the group.
-    document.getElementById('inGroup').onchange = () => {
-      document.getElementById('join').textContent =
-        inGroup() ? 'Skriv koden i gruppen' : 'Skann QR-koden (bli med)';
-    };
 
     const NAMES = ['Ola', 'Kari', 'Per', 'Ingrid', 'Lars', 'Sofie', 'Emil', 'Nora'];
     document.getElementById('newGuest').onclick = () => {
@@ -160,13 +175,32 @@
         const where = reply.chatId < 0 ? `gruppe ${reply.chatId}` : reply.chatId;
         meta.textContent = `Til ${where} · ${new Date(reply.at).toLocaleTimeString()}`;
         const text = document.createElement('p');
-        text.textContent = reply.reaction ? `Reagerte med ${reply.text} på bildet` : reply.text;
+        text.textContent = reply.reaction
+          ? (reply.text ? `Reagerte med ${reply.text} på bildet` : 'Fjernet reaksjonen på bildet')
+          : (reply.edited ? `(endret) ${reply.text}` : reply.text);
         item.append(meta, text);
+        if (reply.buttons?.length) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          for (const button of reply.buttons) {
+            const tap = document.createElement('button');
+            tap.className = 'small';
+            tap.textContent = button.text;
+            tap.onclick = async () => {
+              const { id, name } = guest();
+              await Admin.api('POST', '/dev/tap', { id, name, messageId: reply.messageId, data: button.callbackData });
+              loadReplies();
+            };
+            row.appendChild(tap);
+          }
+          item.appendChild(row);
+        }
         return item;
       }));
       if (replies.length === 0) list.innerHTML = '<li class="muted">Ingen svar ennå.</li>';
     }
 
+    loadEvents();
     loadReplies();
   </script>
 </body>

@@ -1,3 +1,4 @@
+using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
 
 namespace EventPhotoBot.Web;
@@ -16,9 +17,10 @@ public static class DevEndpoints
         app.MapGet("/dev", () => Results.File(
             Path.Combine(app.Environment.ContentRootPath, "DevTools", "dev.html"), "text/html"));
 
-        app.MapPost("/dev/join", async (DevGuest guest, UpdateHandler handler, AppConfig config) =>
+        app.MapPost("/dev/join", async (DevGuest guest, UpdateHandler handler, StateStore store) =>
         {
-            await handler.HandleAsync(Update(guest, message => message.Text = $"/start {config.JoinCode}"));
+            var joinCode = (store.Snapshot.Find(guest.EventId) ?? store.Snapshot.Default()).JoinCode;
+            await handler.HandleAsync(Update(guest, message => message.Text = $"/start {joinCode}"));
             return Results.Ok();
         });
 
@@ -79,6 +81,23 @@ public static class DevEndpoints
             }).DisableAntiforgery();
 
         app.MapGet("/dev/replies", (OfflineTelegramClient telegram) => Results.Ok(telegram.Replies));
+
+        // A guest tapping one of the bot's inline buttons, the way Telegram reports it.
+        app.MapPost("/dev/tap", async (DevTap tap, UpdateHandler handler) =>
+        {
+            await handler.HandleAsync(new TgUpdate
+            {
+                UpdateId = Interlocked.Increment(ref _nextUpdateId),
+                CallbackQuery = new TgCallbackQuery
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    From = new TgUser { Id = tap.Id, FirstName = string.IsNullOrWhiteSpace(tap.Name) ? null : tap.Name },
+                    Message = new TgMessage { MessageId = tap.MessageId, Chat = new TgChat { Id = tap.Id, Type = "private" } },
+                    Data = tap.Data,
+                },
+            });
+            return Results.Ok();
+        });
     }
 
     private static long _nextUpdateId;
@@ -104,6 +123,7 @@ public static class DevEndpoints
     };
 }
 
-public sealed record DevGuest(long Id, string? Name, long? GroupId = null, string? GroupTitle = null);
+public sealed record DevGuest(long Id, string? Name, long? GroupId = null, string? GroupTitle = null, string? EventId = null);
 public sealed record DevGuestText(long Id, string? Name, string Text, long? GroupId = null, string? GroupTitle = null);
 public sealed record DevGroup(long Id, string? Title, bool Present);
+public sealed record DevTap(long Id, string? Name, long MessageId, string Data);

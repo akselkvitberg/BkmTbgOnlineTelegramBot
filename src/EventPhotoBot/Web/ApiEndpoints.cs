@@ -1,22 +1,23 @@
-using System.Text.Json;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
+using Microsoft.AspNetCore.Mvc;
 
 namespace EventPhotoBot.Web;
 
 public sealed record StatusRequest(string Status);
 public sealed record PinRequest(string Pin);
 public sealed record TakeoverRequest(string ImageId, int? Minutes);
-public sealed record SenderStatusRequest(string Status);
+public sealed record BanRequest(bool? Banned);
+public sealed record MembershipRequest(bool? AutoApprove);
 
-/// <summary>Nullable so a body without the field is a 400, not a silent "off".</summary>
-public sealed record GroupListeningRequest(bool? Listening);
+/// <summary>An event id routes the group, "" un-routes it; null (or missing) is a 400, so a malformed body cannot un-route a group.</summary>
+public sealed record GroupEventRequest(string? EventId);
 
 /// <summary>
 /// The roster is deliberately absent here. An array replacement cannot carry the
 /// ban cascade, so allowing it would be a second write path that silently skips
-/// revoking a banned sender's photos — see POST /api/senders/{id}/status.
+/// revoking a banned sender's photos — see POST /api/senders/{id}/ban.
 /// </summary>
 public sealed record SettingsPatch(
     string? EventName,
@@ -36,11 +37,6 @@ public static class ApiEndpoints
     // takeover banner exists to catch after the fact; clamping up front means a typo
     // strands a photo for at most a day, not indefinitely.
     private const int MaxTakeoverMinutes = 24 * 60;
-
-    // Truncated rather than rejected: the name is display text on one screen, and
-    // losing the tail of an absurd paste beats handing the organiser a validation
-    // error in the middle of setting up.
-    private const int MaxEventNameLength = 100;
 
     private static readonly HashSet<string> AllowedUploadExtensions =
         new(StringComparer.OrdinalIgnoreCase) { "jpg", "jpeg", "png", "webp" };
@@ -89,7 +85,8 @@ public static class ApiEndpoints
 
     public static void MapApi(this WebApplication app)
     {
-        app.MapGet("/api/images", (string? status, StateStore store) =>
+        app.MapGet("/api/images",
+            (string? status, [FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
             var images = store.Snapshot.Images.Values.AsEnumerable();
 
@@ -100,23 +97,32 @@ public static class ApiEndpoints
                 images = images.Where(i => i.Status == wanted);
             }
 
+            if (!string.IsNullOrEmpty(eventId))
+            {
+                if (store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
+                images = images.Where(i => i.EventId == eventId);
+            }
+
             return Results.Ok(images
                 .OrderByDescending(i => i.SortKey, StringComparer.Ordinal)
                 .Select(i => new
                 {
-                    i.Id, i.SenderId, i.SenderName, i.Caption, i.Width, i.Height,
+                    i.Id, i.EventId, i.SenderId, i.SenderName, i.Caption, i.Width, i.Height,
                     Status = i.Status.ToString().ToLowerInvariant(),
                     Pin = i.Pin.ToString().ToLowerInvariant(),
                     i.ReceivedAt,
                 }));
         });
 
-        app.MapGet("/api/settings", (StateStore store) =>
+        app.MapGet("/api/settings", ([FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
-            var s = store.Snapshot.Settings;
+            var state = store.Snapshot;
+            if (EventScope.Resolve(state, eventId) is not { } ev) return EventScope.UnknownEvent();
+            var s = ev.Settings;
             return Results.Ok(new
             {
-                s.EventName,
+                EventId = ev.Id,
+                EventName = ev.Name,
                 s.SlideSeconds,
                 s.TransitionMs,
                 Order = s.Order == SlideOrder.NewestFirst ? "newest-first" : "shuffle",
@@ -128,22 +134,21 @@ public static class ApiEndpoints
                 Layout = s.Layout.ToString().ToLowerInvariant(),
                 s.TakeoverImageId,
                 s.TakeoverUntil,
-                // Projected by hand, like the image status above: responses go through
-                // ASP.NET's own serializer options, not StateJson.Options, so a raw enum
-                // would leave here as a number. CamelCase keeps one spelling of these
-                // values across the state file, this payload and the admin pages.
-                Senders = s.Senders.Select(sender => new
+                Retention = new { ev.Retention.MaxAgeDays, ev.Retention.KeepNewest },
+                Senders = state.Senders.Select(sender => new
                 {
                     sender.Id,
                     sender.Name,
                     sender.FirstSeen,
-                    Status = JsonNamingPolicy.CamelCase.ConvertName(sender.Status.ToString()),
+                    sender.Banned,
+                    sender.CurrentEventId,
+                    Memberships = sender.Memberships.Select(m => new { m.EventId, m.AutoApprove }),
                 }),
-                Groups = s.Groups.Select(group => new
+                Groups = state.Groups.Select(group => new
                 {
                     group.Id,
                     group.Title,
-                    group.Listening,
+                    group.EventId,
                     group.FirstSeen,
                 }),
             });
@@ -169,39 +174,57 @@ public static class ApiEndpoints
                 : Results.Ok(new { profile.Username, profile.CanReadAllGroupMessages });
         });
 
-        app.MapPost("/api/groups/{id:long}/listening",
-            async (long id, GroupListeningRequest request, StateStore store, ITelegramClient telegram,
-                CancellationToken ct) =>
+        app.MapPost("/api/groups/{id:long}/event",
+            async (long id, GroupEventRequest request, StateStore store, ITelegramClient telegram,
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
-                if (request.Listening is not { } listening)
-                    return Results.BadRequest(new { error = "listening må være true eller false." });
+                if (request.EventId is not { } eventId)
+                    return Results.BadRequest(new { error = "eventId må være en arrangement-id, eller tom for å koble fra." });
+                if (eventId != "" && store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
 
                 // Only a group the bot is actually in. Creating a row by id here would
                 // let the list claim a group the bot cannot hear.
-                var started = await store.MutateAsync(state =>
+                var (result, notice) = await store.MutateAsync(state =>
                 {
-                    var group = state.Settings.Groups.FirstOrDefault(g => g.Id == id);
-                    if (group is null) return (bool?)null;
-                    if (!listening)
+                    var group = state.Groups.FirstOrDefault(g => g.Id == id);
+                    if (group is null) return (Results.NotFound(), (string?)null);
+                    if (eventId == "")
                     {
-                        group.Listening = false;
-                        return false;
+                        group.EventId = null;
+                        return (Results.Ok(), null);
                     }
-                    return Groups.Listen(state, id, null, DateTimeOffset.UtcNow);
+                    if (state.Find(eventId) is not { } ev) return (EventScope.UnknownEvent(), null);
+                    // A closed event takes no more photos: routing a group to one would
+                    // send the notice and then ignore everything posted there from then on.
+                    if (ev.PhaseAt(DateTimeOffset.UtcNow) == EventPhase.Closed)
+                        return (EventEndpoints.BadRequest("Arrangementet er avsluttet."), null);
+                    return Groups.Route(state, id, null, DateTimeOffset.UtcNow, ev.Id)
+                        ? (Results.Ok(), Groups.NoticeFor(ev))
+                        : (Results.Ok(), null);
                 }, ct);
 
-                if (started is null) return Results.NotFound();
-
-                // The same notice as when a member posts the join code: the members
-                // did not choose this, and are told once, in the group itself.
-                if (started == true) await telegram.SendMessageAsync(id, Groups.ListeningNotice, ct);
-                return Results.Ok();
+                // Told in the group itself, once per change: its members did not choose
+                // this. Best effort, like the spec already commits to elsewhere — the
+                // route stays committed even when Telegram cannot be reached.
+                if (notice is not null)
+                {
+                    try
+                    {
+                        await telegram.SendMessageAsync(id, notice, ct);
+                    }
+                    catch (Exception e)
+                    {
+                        loggers.CreateLogger("ApiEndpoints")
+                            .LogWarning(e, "Failed to send the routing notice to group {GroupId}.", id);
+                    }
+                }
+                return result;
             });
 
         app.MapPost("/api/groups/{id:long}/leave",
             async (long id, StateStore store, ITelegramClient telegram, CancellationToken ct) =>
             {
-                if (store.Snapshot.Settings.Groups.All(g => g.Id != id)) return Results.NotFound();
+                if (store.Snapshot.Groups.All(g => g.Id != id)) return Results.NotFound();
 
                 // Telegram first: if it refuses, the bot is still in the group and the
                 // row has to stay so the page keeps saying so.
@@ -211,51 +234,58 @@ public static class ApiEndpoints
 
                 // The my_chat_member update that follows would remove it too; doing it
                 // here as well means the page is right the moment this returns.
-                await store.MutateAsync(state => state.Settings.Groups.RemoveAll(g => g.Id == id), ct);
+                await store.MutateAsync(state => state.Groups.RemoveAll(g => g.Id == id), ct);
                 return Results.Ok();
             });
 
         app.MapGet("/api/manifest",
-            (HttpContext http, StateStore store, BotIdentity identity) =>
+            (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
-            var etag = $"\"{store.Generation}\"";
+            var state = store.Snapshot;
+            if (EventScope.Resolve(state, eventId) is not { } ev) return EventScope.UnknownEvent();
+            var now = DateTimeOffset.UtcNow;
+
+            // The generation alone is not enough: which event this is, and whether it is
+            // open, change what the screen gets — and an event opens and closes on its
+            // own clock, with no write to move the generation.
+            var etag = $"\"{store.Generation}-{ev.Id}-{(ev.IsOpen(now) ? "open" : "closed")}\"";
 
             if (http.Request.Headers.IfNoneMatch.Any(v => v == etag))
                 return Results.StatusCode(StatusCodes.Status304NotModified);
 
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
-
-            // identity.JoinUrl is fixed for the life of the instance, so it cannot
-            // change between two polls of the same generation — the ETag above still
-            // keys off store.Generation alone, and the no-object-store-IO guarantee
-            // this path is tested for is unaffected.
-            return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrl));
+            return Results.Ok(ManifestBuilder.Build(state, ev, store.Generation, now, identity.JoinUrlFor(ev.JoinCode)));
         });
 
         app.MapPost("/api/images/{id}/status",
-            async (string id, StatusRequest request, StateStore store) =>
+            async (string id, StatusRequest request, StateStore store,
+                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (!TryParseName<ImageStatus>(request.Status, out var status)
                     || status == ImageStatus.Pending)
                     return Results.BadRequest(
                         new { error = "status må være approved, hidden eller rejected." });
 
-                return await store.MutateAsync(state =>
+                var (result, image) = await store.MutateAsync(state =>
                 {
-                    if (!state.Images.TryGetValue(id, out var image)) return Results.NotFound();
+                    if (!state.Images.TryGetValue(id, out var img)) return (Results.NotFound(), (ImageRecord?)null);
 
-                    image.Status = status;
-                    image.DecidedAt = DateTimeOffset.UtcNow;
+                    img.Status = status;
+                    img.DecidedAt = DateTimeOffset.UtcNow;
 
                     // An image that is no longer approved cannot be holding the screen.
                     if (status != ImageStatus.Approved) ClearTakeoverIfHeldBy(state, id);
 
-                    return Results.Ok();
+                    return (Results.Ok(), img);
                 });
+
+                if (image is not null)
+                    await Reactions.SyncAsync(telegram, image, loggers.CreateLogger("Reactions"), ct);
+
+                return result;
             });
 
         app.MapPost("/api/images/{id}/pin",
@@ -273,7 +303,8 @@ public static class ApiEndpoints
                 });
             });
 
-        app.MapPut("/api/takeover", async (TakeoverRequest request, StateStore store) =>
+        app.MapPut("/api/takeover", async (TakeoverRequest request, StateStore store,
+            ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
         {
             // Guard before the dictionary lookup: System.Text.Json happily deserializes
             // a missing or explicitly null "imageId" into ImageId = null (the record's
@@ -284,29 +315,38 @@ public static class ApiEndpoints
             if (string.IsNullOrEmpty(request.ImageId))
                 return Results.BadRequest(new { error = "imageId er påkrevd." });
 
-            return await store.MutateAsync(state =>
+            var (result, image) = await store.MutateAsync(state =>
             {
-                if (!state.Images.TryGetValue(request.ImageId, out var image))
-                    return Results.NotFound();
+                if (!state.Images.TryGetValue(request.ImageId, out var img))
+                    return (Results.NotFound(), (ImageRecord?)null);
 
                 // Takeover implies the image is on screen, so it is approved by definition.
-                if (image.Status != ImageStatus.Approved)
+                if (img.Status != ImageStatus.Approved)
                 {
-                    image.Status = ImageStatus.Approved;
-                    image.DecidedAt = DateTimeOffset.UtcNow;
+                    img.Status = ImageStatus.Approved;
+                    img.DecidedAt = DateTimeOffset.UtcNow;
                 }
 
-                state.Settings.TakeoverImageId = request.ImageId;
-                state.Settings.TakeoverUntil = request.Minutes is { } minutes
+                var settings = state.EventOf(img).Settings;
+                settings.TakeoverImageId = request.ImageId;
+                settings.TakeoverUntil = request.Minutes is { } minutes
                     ? DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(minutes, 1, MaxTakeoverMinutes))
                     : null;
 
-                return Results.Ok();
+                return (Results.Ok(), img);
             });
+
+            if (image is not null)
+                await Reactions.SyncAsync(telegram, image, loggers.CreateLogger("Reactions"), ct);
+
+            return result;
         });
 
-        app.MapDelete("/api/takeover", async (StateStore store) =>
+        app.MapDelete("/api/takeover",
+            async ([FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
+            if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
+
             // StateStore.MutateAsync always writes, even when the mutation callback
             // changes nothing - so guarding inside the callback would not have
             // avoided the write. Skipping the call outright when there is plainly
@@ -317,18 +357,20 @@ public static class ApiEndpoints
             // in this codebase: not authoritative by itself, but MutateAsync's own
             // clone-and-check inside the lock would just no-op harmlessly on the rare
             // race where a takeover appears between this check and the call.
-            if (store.Snapshot.Settings.TakeoverImageId is null) return Results.Ok();
+            if (target.Settings.TakeoverImageId is null) return Results.Ok();
 
             await store.MutateAsync(state =>
             {
-                state.Settings.TakeoverImageId = null;
-                state.Settings.TakeoverUntil = null;
+                if (state.Find(target.Id) is not { } ev) return;
+                ev.Settings.TakeoverImageId = null;
+                ev.Settings.TakeoverUntil = null;
             });
             return Results.Ok();
         });
 
         app.MapDelete("/api/images/{id}",
-            async (string id, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async (string id, StateStore store, IObjectStore objects,
+                ITelegramClient telegram, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 var removed = await store.MutateAsync(state =>
                 {
@@ -341,10 +383,10 @@ public static class ApiEndpoints
 
                 // State first here, unlike ingest: an entry pointing at deleted bytes
                 // would put a broken image on the projector, while orphaned bytes are
-                // invisible and the lifecycle rule sweeps them up.
-                await objects.DeleteAsync(ObjectPaths.Display(id), ct);
-                await objects.DeleteAsync(ObjectPaths.Thumb(id), ct);
-                await objects.DeleteAsync(ObjectPaths.Original(id, removed.OriginalExtension), ct);
+                // invisible. Best effort past this point — see DeleteAllAsync.
+                await ImageObjects.DeleteAllAsync(objects, [removed], loggers.CreateLogger("ImageObjects"));
+
+                await Reactions.ClearAsync(telegram, removed, loggers.CreateLogger("Reactions"), ct);
 
                 return Results.Ok();
             });
@@ -352,34 +394,43 @@ public static class ApiEndpoints
         // Clearing the slate between events. One state write for the lot, so the
         // screen goes from every photo to none in a single generation rather than
         // thinning out one delete at a time.
+        // Reactions are left alone on bulk deletes: hundreds of calls inside one
+        // request would meet Telegram's rate limit and the request timeout.
         app.MapDelete("/api/images",
-            async (StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async ([FromQuery(Name = "event")] string? eventId, StateStore store, IObjectStore objects,
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
-                if (store.Snapshot.Images.Count == 0) return Results.Ok(new { deleted = 0 });
+                if (EventScope.Resolve(store.Snapshot, eventId) is not { } ev) return EventScope.UnknownEvent();
+                var targetId = ev.Id;
+                if (!store.Snapshot.Images.Values.Any(i => i.EventId == targetId)) return Results.Ok(new { deleted = 0 });
 
                 var removed = await store.MutateAsync(state =>
                 {
-                    var images = state.Images.Values.ToList();
-                    state.Images.Clear();
-                    state.Settings.TakeoverImageId = null;
-                    state.Settings.TakeoverUntil = null;
+                    // Guarded, not `state.Find(targetId)!`: the event can be deleted
+                    // concurrently between the check above and this write, and that
+                    // must come back as the usual unknown-event result, not a 500.
+                    if (state.Find(targetId) is not { } target) return null;
+                    var images = state.Images.Values.Where(i => i.EventId == targetId).ToList();
+                    foreach (var image in images) state.Images.Remove(image.Id);
+                    target.Settings.TakeoverImageId = null;
+                    target.Settings.TakeoverUntil = null;
                     return images;
-                });
+                }, ct);
 
-                // State first, for the same reason as the single delete above.
-                foreach (var image in removed)
-                {
-                    await objects.DeleteAsync(ObjectPaths.Display(image.Id), ct);
-                    await objects.DeleteAsync(ObjectPaths.Thumb(image.Id), ct);
-                    await objects.DeleteAsync(ObjectPaths.Original(image.Id, image.OriginalExtension), ct);
-                }
+                if (removed is null) return EventScope.UnknownEvent();
+
+                // State first, for the same reason as the single delete above. Best
+                // effort past this point — see DeleteAllAsync.
+                await ImageObjects.DeleteAllAsync(objects, removed, loggers.CreateLogger("ImageObjects"));
 
                 return Results.Ok(new { deleted = removed.Count });
             });
 
         app.MapPost("/api/images",
-            async (HttpRequest http, StateStore store, IObjectStore objects, CancellationToken ct) =>
+            async (HttpRequest http, [FromQuery(Name = "event")] string? eventId, StateStore store,
+                IObjectStore objects, CancellationToken ct) =>
             {
+                if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
                 if (!http.HasFormContentType) return Results.BadRequest(new { error = "Forventet en filopplasting." });
 
                 var form = await http.ReadFormAsync(ct);
@@ -424,6 +475,7 @@ public static class ApiEndpoints
                 var extension = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
                 if (!AllowedUploadExtensions.Contains(extension)) extension = "jpg";
                 var now = DateTimeOffset.UtcNow;
+                var targetId = target.Id;
 
                 await objects.WriteAsync(ObjectPaths.Original(id, extension),
                     original, "application/octet-stream", null, ct);
@@ -433,6 +485,7 @@ public static class ApiEndpoints
                 await store.MutateAsync(state => state.Images[id] = new ImageRecord
                 {
                     Id = id,
+                    EventId = targetId,
                     Source = ImageSource.Admin,
                     SenderId = null,
                     SenderName = null,
@@ -452,8 +505,11 @@ public static class ApiEndpoints
                 return Results.Ok(new { id });
             }).DisableAntiforgery();
 
-        app.MapPatch("/api/settings", async (SettingsPatch patch, StateStore store) =>
+        app.MapPatch("/api/settings",
+            async (SettingsPatch patch, [FromQuery(Name = "event")] string? eventId, StateStore store) =>
         {
+            if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
+
             if (patch.Order is { } order
                 && order is not ("shuffle" or "newest-first"))
                 return Results.BadRequest(new { error = "order må være shuffle eller newest-first." });
@@ -473,16 +529,19 @@ public static class ApiEndpoints
                 layout = parsed;
             }
 
+            // Validated before the mutation, like the name check above: an empty name
+            // must be a 400 that leaves the existing name untouched, not a value the
+            // mutation callback has to reject after already committing other fields.
+            string? name = null;
+            if (patch.EventName is { } eventName && (name = EventEndpoints.CleanName(eventName)) is null)
+                return Results.BadRequest(new { error = "Navnet kan ikke være tomt." });
+            var targetId = target.Id;
+
             await store.MutateAsync(state =>
             {
-                var s = state.Settings;
-                if (patch.EventName is { } eventName)
-                {
-                    var trimmed = eventName.Trim();
-                    s.EventName = trimmed.Length > MaxEventNameLength
-                        ? trimmed[..MaxEventNameLength]
-                        : trimmed;
-                }
+                if (state.Find(targetId) is not { } ev) return;
+                var s = ev.Settings;
+                if (name is not null) ev.Name = name;
                 if (patch.SlideSeconds is { } slideSeconds) s.SlideSeconds = Math.Clamp(slideSeconds, 2, 120);
                 if (patch.TransitionMs is { } transitionMs) s.TransitionMs = Math.Clamp(transitionMs, 0, 5000);
                 if (patch.Order is { } o) s.Order = o == "newest-first" ? SlideOrder.NewestFirst : SlideOrder.Shuffle;
@@ -497,41 +556,75 @@ public static class ApiEndpoints
             return Results.Ok();
         });
 
-        app.MapPost("/api/senders/{id:long}/status",
-            async (long id, SenderStatusRequest request, StateStore store) =>
+        app.MapPost("/api/senders/{id:long}/ban",
+            async (long id, BanRequest request, StateStore store, ITelegramClient telegram,
+                ILoggerFactory loggers, CancellationToken ct) =>
             {
-                if (!TryParseName<SenderStatus>(request.Status, out var status))
-                    return Results.BadRequest(
-                        new { error = "status må være known, autoApprove eller banned." });
+                if (request.Banned is not { } banned)
+                    return Results.BadRequest(new { error = "banned må være true eller false." });
+
+                var rejected = await store.MutateAsync(state =>
+                {
+                    var sender = state.Senders.FirstOrDefault(s => s.Id == id);
+                    if (sender is null)
+                    {
+                        // Creating on write is how an organiser pre-bans a nuisance
+                        // before that person has ever messaged the bot.
+                        sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
+                        state.Senders.Add(sender);
+                    }
+
+                    // Memberships are left as they are, so an unban restores them.
+                    sender.Banned = banned;
+                    if (!banned) return [];
+
+                    // A ban revokes what they already sent, in every event and in this
+                    // same write, so no screen can be showing a banned sender's photo
+                    // between two state generations.
+                    var now = DateTimeOffset.UtcNow;
+                    var images = state.Images.Values.Where(i => i.SenderId == id).ToList();
+                    foreach (var image in images)
+                    {
+                        image.Status = ImageStatus.Rejected;
+                        image.DecidedAt = now;
+                        ClearTakeoverIfHeldBy(state, image.Id);
+                    }
+                    return images;
+                }, ct);
+
+                var log = loggers.CreateLogger("Reactions");
+                foreach (var image in rejected) await Reactions.SyncAsync(telegram, image, log, ct);
+                return Results.Ok();
+            });
+
+        app.MapPost("/api/senders/{id:long}/memberships/{eventId}",
+            async (long id, string eventId, MembershipRequest request, StateStore store) =>
+            {
+                if (request.AutoApprove is not { } autoApprove)
+                    return Results.BadRequest(new { error = "autoApprove må være true eller false." });
+                if (store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
 
                 return await store.MutateAsync(state =>
                 {
-                    var sender = state.Settings.Senders.FirstOrDefault(s => s.Id == id);
+                    if (state.Find(eventId) is null) return EventScope.UnknownEvent();
+                    var sender = state.Senders.FirstOrDefault(s => s.Id == id);
                     if (sender is null)
                     {
-                        // Creating on write is how an organiser pre-approves a
-                        // photographer, or pre-bans a nuisance, before that person has
-                        // ever messaged the bot.
+                        // How an organiser pre-approves a photographer for one event.
                         sender = new Sender { Id = id, Name = "", FirstSeen = DateTimeOffset.UtcNow };
-                        state.Settings.Senders.Add(sender);
+                        state.Senders.Add(sender);
                     }
-
-                    sender.Status = status;
-
-                    // A ban revokes what they already sent, in this same write, so the
-                    // screen can never be showing a banned sender's photo between two
-                    // state generations.
-                    if (status == SenderStatus.Banned)
+                    var membership = sender.MembershipIn(eventId);
+                    if (membership is null)
                     {
-                        var now = DateTimeOffset.UtcNow;
-                        foreach (var image in state.Images.Values.Where(i => i.SenderId == id))
-                        {
-                            image.Status = ImageStatus.Rejected;
-                            image.DecidedAt = now;
-                            ClearTakeoverIfHeldBy(state, image.Id);
-                        }
+                        membership = new Membership { EventId = eventId };
+                        sender.Memberships.Add(membership);
                     }
-
+                    membership.AutoApprove = autoApprove;
+                    // As UpdateHandler does for a group member's first photo: without
+                    // this, a photographer pre-approved here and nowhere else has no
+                    // current event, and their first private photo resolves to nothing.
+                    sender.CurrentEventId ??= eventId;
                     return Results.Ok();
                 });
             });
@@ -539,8 +632,11 @@ public static class ApiEndpoints
 
     private static void ClearTakeoverIfHeldBy(EventState state, string id)
     {
-        if (state.Settings.TakeoverImageId != id) return;
-        state.Settings.TakeoverImageId = null;
-        state.Settings.TakeoverUntil = null;
+        foreach (var ev in state.Events)
+        {
+            if (ev.Settings.TakeoverImageId != id) continue;
+            ev.Settings.TakeoverImageId = null;
+            ev.Settings.TakeoverUntil = null;
+        }
     }
 }

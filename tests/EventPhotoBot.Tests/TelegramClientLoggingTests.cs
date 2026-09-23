@@ -115,6 +115,18 @@ public class TelegramClientLoggingTests
         [
             (Func<ITelegramClient, Task>)(c => c.LeaveChatAsync(-100)),
         ];
+        yield return
+        [
+            (Func<ITelegramClient, Task>)(c => c.SendMessageAsync(1, "hello", [new InlineButton("A", "ev:a")])),
+        ];
+        yield return
+        [
+            (Func<ITelegramClient, Task>)(c => c.AnswerCallbackQueryAsync("cb", null)),
+        ];
+        yield return
+        [
+            (Func<ITelegramClient, Task>)(c => c.EditMessageTextAsync(1, 2, "x", [])),
+        ];
     }
 
     [Theory]

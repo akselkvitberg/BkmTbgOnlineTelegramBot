@@ -6,6 +6,78 @@
   let manifest = null;
   const listeners = [];
 
+  // ---- event context -------------------------------------------------------
+  // The event a page is about lives in ?event=; absent means the default event,
+  // which is what every page and bookmark from before events already meant.
+  let eventId = new URLSearchParams(location.search).get('event');
+  let eventsPromise = null;
+  const PHASES = { open: 'åpent', scheduled: 'planlagt', closed: 'avsluttet' };
+
+  function events(fresh = false) {
+    if (fresh || !eventsPromise) {
+      eventsPromise = fetch('/api/events', { cache: 'no-store' })
+        .then(response => response.ok ? response.json() : [])
+        .catch(() => []);
+    }
+    return eventsPromise;
+  }
+
+  async function currentEvent() {
+    const list = await events();
+    return list.find(e => e.id === eventId) ?? list.find(e => e.isDefault) ?? null;
+  }
+
+  /**
+   * If ?event= names an id the events list doesn't know (deleted, or just mistyped),
+   * drop it once the list is in. Left alone, currentEvent() falls back to Daglig for
+   * display while withEvent() keeps sending the unknown id, so every event-scoped call
+   * — settings, upload, takeover, the manifest poll — 404s while the page claims to be
+   * showing Daglig.
+   */
+  async function reconcileEventId() {
+    if (!eventId) return;
+    const list = await events();
+    if (list.some(e => e.id === eventId)) return;
+    eventId = null;
+    const url = new URL(location.href);
+    url.searchParams.delete('event');
+    history.replaceState(null, '', url);
+  }
+
+  function withEvent(path) {
+    if (!eventId) return path;
+    return `${path}${path.includes('?') ? '&' : '?'}event=${encodeURIComponent(eventId)}`;
+  }
+
+  async function renderEventPicker() {
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+    const list = await events();
+    if (list.length < 2) return;   // only the daily event: nothing to choose between
+    const current = await currentEvent();
+
+    const select = document.createElement('select');
+    select.className = 'event-picker';
+    select.setAttribute('aria-label', 'Arrangement');
+    for (const ev of list) {
+      const option = document.createElement('option');
+      option.value = ev.id;
+      // textContent, not innerHTML: an event name is typed by an organiser, but it
+      // is still text, and this keeps it that way.
+      option.textContent = ev.phase === 'open' ? ev.name : `${ev.name} (${PHASES[ev.phase]})`;
+      option.selected = ev.id === current?.id;
+      select.appendChild(option);
+    }
+    select.onchange = () => {
+      const next = new URL(location.href);
+      const chosen = list.find(e => e.id === select.value);
+      if (chosen?.isDefault) next.searchParams.delete('event');
+      else next.searchParams.set('event', select.value);
+      location.href = next.toString();
+    };
+    nav.insertBefore(select, nav.querySelector('.nav-logout'));
+  }
+
   window.Admin = {
     onManifest(callback) { listeners.push(callback); if (manifest) callback(manifest); },
     get manifest() { return manifest; },
@@ -22,6 +94,10 @@
       ],
     }).then(Boolean),
     timeAgo,
+    events,
+    currentEvent,
+    withEvent,
+    get eventId() { return eventId; },
   };
 
   /** A short message at the bottom of the screen, instead of a blocking alert(). */
@@ -140,16 +216,18 @@
 
   async function pollOnce(force) {
     const headers = force || !etag ? {} : { 'If-None-Match': etag };
-    const response = await fetch('/api/manifest', { headers, cache: 'no-store' });
+    const response = await fetch(withEvent('/api/manifest'), { headers, cache: 'no-store' });
     if (response.status === 304) return;
     if (!response.ok) return;
 
     etag = response.headers.get('ETag');
     manifest = await response.json();
 
+    // The badge counts everything waiting, across events, because the queue shows
+    // all of it.
     for (const badge of document.querySelectorAll('.badge')) {
-      badge.textContent = manifest.pendingCount || '';
-      badge.dataset.count = manifest.pendingCount;
+      badge.textContent = manifest.pendingTotal || '';
+      badge.dataset.count = manifest.pendingTotal;
     }
     renderTakeoverBanner();
     // The manifest's generation advances on every settings change too (see
@@ -195,7 +273,7 @@
     const clear = document.createElement('button');
     clear.className = 'accent';
     clear.textContent = 'Avslutt overtakelse';
-    clear.onclick = () => api('DELETE', '/api/takeover');
+    clear.onclick = () => api('DELETE', withEvent('/api/takeover'));
     banner.appendChild(clear);
   }
 
@@ -217,9 +295,21 @@
     setTimeout(loop, POLL_MS);
   }
 
-  for (const link of document.querySelectorAll('nav a')) {
-    if (link.getAttribute('href') === location.pathname) link.classList.add('active');
+  async function init() {
+    await reconcileEventId();
+
+    // Pages about one event carry the choice along; Telegram and the events list are
+    // about every event, so their links stay plain.
+    const GLOBAL_PAGES = ['/admin/telegram', '/admin/events', '/dev'];
+    for (const link of document.querySelectorAll('nav a')) {
+      const href = link.getAttribute('href');
+      if (href === location.pathname) link.classList.add('active');
+      if (!GLOBAL_PAGES.includes(href)) link.href = withEvent(href);
+    }
+
+    renderEventPicker();
+    loop();
   }
 
-  loop();
+  init();
 })();

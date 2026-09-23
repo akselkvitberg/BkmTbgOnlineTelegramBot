@@ -22,7 +22,7 @@ public class DeleteAllImagesTests : IClassFixture<AppFactory>
         await _factory.Objects.WriteAsync(ObjectPaths.Original(id, "png"), [1], "image/png", null);
         await _factory.Store.MutateAsync(s => s.Images[id] = new ImageRecord
         {
-            Id = id, Sha256 = id, SortKey = id, Status = status,
+            Id = id, EventId = StateMigration.DefaultEventId, Sha256 = id, SortKey = id, Status = status,
             Width = 10, Height = 10, OriginalExtension = "png",
             ReceivedAt = DateTimeOffset.UtcNow,
         });
@@ -52,8 +52,8 @@ public class DeleteAllImagesTests : IClassFixture<AppFactory>
         // One write for the lot, so the screen never shows a half-cleared set.
         Assert.Equal(generationBefore + 1, _factory.Store.Generation);
         Assert.Empty(_factory.Store.Snapshot.Images);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverImageId);
-        Assert.Null(_factory.Store.Snapshot.Settings.TakeoverUntil);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverImageId);
+        Assert.Null(_factory.Store.Snapshot.Default().Settings.TakeoverUntil);
         foreach (var id in ids)
         {
             Assert.DoesNotContain(ObjectPaths.Display(id), _factory.Objects.Paths);

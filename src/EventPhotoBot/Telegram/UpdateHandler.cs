@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using EventPhotoBot.Imaging;
 using EventPhotoBot.State;
 
@@ -9,7 +7,6 @@ public sealed class UpdateHandler(
     StateStore store,
     IObjectStore objects,
     ITelegramClient telegram,
-    AppConfig config,
     ILogger<UpdateHandler> logger)
 {
     private const long MaxDownloadBytes = 20L * 1024 * 1024;
@@ -36,15 +33,10 @@ public sealed class UpdateHandler(
     /// every message is a free way to make the bot talk. Throttles the "scan the QR"
     /// reply to a sender who has not redeemed the join code; in-memory only, so a
     /// redeploy simply resets the cooldown. Redemption itself is never throttled —
-    /// see HandleUnredeemedAsync.
+    /// see HandleJoinCodeAsync.
     /// </summary>
     private readonly Dictionary<long, DateTimeOffset> _lastUnlistedReplyAt = [];
     private static readonly TimeSpan UnlistedReplyCooldown = TimeSpan.FromSeconds(60);
-
-    // A photo in a group is acknowledged with a reaction on it rather than a reply.
-    // Two, so a pre-approved photographer can tell "on the screen" from "queued".
-    private const string QueuedReaction = "👀";
-    private const string LiveReaction = "🔥";
 
     private const string JoinPrompt =
         "Du står ikke på listen for dette arrangementet ennå. Skann QR-koden på skjermen — " +
@@ -52,6 +44,12 @@ public sealed class UpdateHandler(
 
     public async Task HandleAsync(TgUpdate update, CancellationToken ct = default)
     {
+        if (update.CallbackQuery is { } callback)
+        {
+            await HandleCallbackAsync(callback, ct);
+            return;
+        }
+
         if (update.MyChatMember is { } membership)
         {
             await HandleMembershipAsync(membership, ct);
@@ -69,24 +67,29 @@ public sealed class UpdateHandler(
         // into the private flow below and getting the join prompt posted into it.
         if (message?.From is not { } sender || message.Chat is not { IsPrivate: true } chat) return;
 
-        var entry = store.Snapshot.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+        var entry = store.Snapshot.Senders.FirstOrDefault(s => s.Id == sender.Id);
 
         // Banned first, and before anything that costs a download, a reply or a
         // write. A banned sender gets no signal at all — a reply would both confirm
         // the ban landed and make the bot a reply relay for whoever earned it.
-        if (entry is { Status: SenderStatus.Banned }) return;
+        if (entry is { Banned: true }) return;
 
-        if (entry is null)
+        if (message.Text is { } text && TryReadJoinCode(text, out var supplied))
         {
-            await HandleUnredeemedAsync(message, sender, chat, ct);
+            await HandleJoinCodeAsync(sender, chat, entry, supplied, ct);
             return;
         }
 
-        if (message.Text is { } text && text.StartsWith("/start", StringComparison.Ordinal))
+        if (entry is null || entry.Memberships.Count == 0)
         {
-            await telegram.SendMessageAsync(chat.Id,
-                "Send meg bilder, så kommer de opp på skjermen på arrangementet. " +
-                "En arrangør godkjenner dem først. Alt slettes etter arrangementet.", ct);
+            if (ShouldReplyToUnlisted(sender.Id))
+                await telegram.SendMessageAsync(chat.Id, JoinPrompt, ct);
+            return;
+        }
+
+        if (message.Text is { } command && command.StartsWith("/start", StringComparison.Ordinal))
+        {
+            await SendCurrentEventAsync(chat, entry, ct);
             return;
         }
 
@@ -104,8 +107,20 @@ public sealed class UpdateHandler(
             return;
         }
 
-        await IngestAsync(message, sender, chat, entry, candidate, ct);
+        if (Routing.ResolvePrivateTarget(store.Snapshot, entry, DateTimeOffset.UtcNow) is not { } target)
+        {
+            // The one event they belong to is over. Throttled like the join prompt: a
+            // guest sending twenty photos the day after the wedding gets one answer.
+            if (ShouldReplyToUnlisted(sender.Id))
+                await telegram.SendMessageAsync(chat.Id, $"{ClosedName(entry)} er avsluttet.", ct);
+            return;
+        }
+
+        await IngestAsync(message, sender, chat, entry, candidate, target.Id, ct);
     }
+
+    private string ClosedName(Sender entry) =>
+        store.Snapshot.Find(entry.CurrentEventId)?.Name ?? "Arrangementet";
 
     /// <summary>
     /// The bot was added to or removed from a chat. Telegram offers no way to ask
@@ -124,18 +139,18 @@ public sealed class UpdateHandler(
             return;
         }
 
-        // Removed or left. The row goes, listening included: a bot that is re-added
-        // later has to be given the code again, and the notice goes out again with it.
-        if (store.Snapshot.Settings.Groups.All(g => g.Id != chat.Id)) return;
-        await store.MutateAsync(state => state.Settings.Groups.RemoveAll(g => g.Id == chat.Id), ct);
+        // Removed or left. The row goes, routing included: a group the bot is re-added
+        // to is unrouted until an organiser routes it again, and the notice goes out then.
+        if (store.Snapshot.Groups.All(g => g.Id != chat.Id)) return;
+        await store.MutateAsync(state => state.Groups.RemoveAll(g => g.Id == chat.Id), ct);
     }
 
     /// <summary>
-    /// Everything posted in a group. Nothing here ever sends a text reply except the
-    /// one notice when listening starts: a group is other people's conversation, and
-    /// a bot that answers in it — a join prompt, a "received", a decline — is noise
-    /// for every member, and in a group the bot does not listen to, a way to make it
-    /// talk to strangers.
+    /// Everything posted in a group. Nothing here ever sends a text reply: a group is
+    /// other people's conversation, and a bot that answers in it — a join prompt, a
+    /// "received", a decline — is noise for every member, and in a group the bot is
+    /// not routed to, a way to make it talk to strangers. The one notice, when an
+    /// admin routes the group, is sent from the admin API instead.
     /// </summary>
     private async Task HandleGroupMessageAsync(TgMessage message, TgChat chat, CancellationToken ct)
     {
@@ -155,20 +170,17 @@ public sealed class UpdateHandler(
         // person would lump them together, and banning it would ban all of them.
         if (message.From is not { IsBot: false } sender || message.SenderChat is not null) return;
 
-        var entry = store.Snapshot.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+        var entry = store.Snapshot.Senders.FirstOrDefault(s => s.Id == sender.Id);
 
         // Banned first, as in a private chat, and before the join code: a banned
         // person must not be able to open a group of their own to the queue.
-        if (entry is { Status: SenderStatus.Banned }) return;
+        if (entry is { Banned: true }) return;
 
-        var group = store.Snapshot.Settings.Groups.FirstOrDefault(g => g.Id == chat.Id);
-        if (group is not { Listening: true })
-        {
-            if (message.Text is { } text && TryReadGroupJoinCode(text, out var supplied)
-                && JoinCodeMatches(config.JoinCode, supplied))
-                await StartListeningAsync(chat, ct);
-            return;
-        }
+        // Only a group an organiser has routed to an event that is open. Every other
+        // group — never routed, routed to an event since deleted or closed — is
+        // dropped with no reply and no write: its members did not agree to a screen.
+        var group = store.Snapshot.Groups.FirstOrDefault(g => g.Id == chat.Id);
+        if (store.Snapshot.Find(group?.EventId) is not { } ev || !ev.IsOpen(DateTimeOffset.UtcNow)) return;
 
         // Members talking to each other, and the join code posted again. Neither is
         // addressed to the bot.
@@ -182,15 +194,7 @@ public sealed class UpdateHandler(
             return;
         }
 
-        await IngestAsync(message, sender, chat, entry, candidate, ct);
-    }
-
-    private async Task StartListeningAsync(TgChat chat, CancellationToken ct)
-    {
-        var started = await store.MutateAsync(state =>
-            Groups.Listen(state, chat.Id, chat.Title, DateTimeOffset.UtcNow), ct);
-
-        if (started) await telegram.SendMessageAsync(chat.Id, Groups.ListeningNotice, ct);
+        await IngestAsync(message, sender, chat, entry, candidate, ev.Id, ct);
     }
 
     /// <summary>
@@ -202,17 +206,17 @@ public sealed class UpdateHandler(
     private async Task MigrateGroupAsync(long from, long to, CancellationToken ct)
     {
         // Both halves of the pair arrive; the second finds nothing left to move.
-        if (store.Snapshot.Settings.Groups.All(g => g.Id != from)) return;
+        if (store.Snapshot.Groups.All(g => g.Id != from)) return;
 
         await store.MutateAsync(state =>
         {
-            var groups = state.Settings.Groups;
+            var groups = state.Groups;
             var old = groups.FirstOrDefault(g => g.Id == from);
             if (old is null) return;
 
             if (groups.FirstOrDefault(g => g.Id == to) is { } existing)
             {
-                existing.Listening |= old.Listening;
+                existing.EventId ??= old.EventId;
                 groups.Remove(old);
             }
             else
@@ -223,64 +227,129 @@ public sealed class UpdateHandler(
     }
 
     /// <summary>
-    /// "/start CODE" (or "/start@bot CODE", as a group client writes a command), or the
-    /// bare code on its own, as someone would type it after reading it off the screen.
-    /// The bare form only reaches the bot once privacy mode is off; a command always does.
+    /// "/start CODE", from anyone who is not banned. A code for an open event joins it
+    /// and makes it where this person's photos go; any other code gets said so. Never
+    /// throttled when it matches: being rate-limited out of joining is the worst
+    /// possible moment to go quiet on somebody.
     /// </summary>
-    private static bool TryReadGroupJoinCode(string text, out string code)
+    private async Task HandleJoinCodeAsync(
+        TgUser sender, TgChat chat, Sender? entry, string supplied, CancellationToken ct)
     {
-        code = "";
-        var parts = text.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries
-                                       | StringSplitOptions.TrimEntries);
+        var now = DateTimeOffset.UtcNow;
+        Event? match = null;
+        // Every event's code is compared, not the first match: which event is being
+        // joined must not show in how long the answer takes.
+        foreach (var ev in store.Snapshot.Events)
+            if (SecretComparison.Matches(ev.JoinCode, supplied)) match = ev;
 
-        if (parts.Length == 2
-            && (parts[0] == "/start" || parts[0].StartsWith("/start@", StringComparison.Ordinal)))
-            code = parts[1];
-        else if (parts.Length == 1 && !parts[0].StartsWith('/'))
-            code = parts[0];
-        else
-            return false;
-
-        return true;
-    }
-
-    /// <summary>
-    /// Nobody in the roster. Either they are redeeming the join code, or they found
-    /// the bot some other way and need pointing at the QR. Nothing is stored in the
-    /// second case: recording every stranger who pokes the bot would let anyone who
-    /// finds the handle grow the roster with writes nobody authorised.
-    /// </summary>
-    private async Task HandleUnredeemedAsync(
-        TgMessage message, TgUser sender, TgChat chat, CancellationToken ct)
-    {
-        if (message.Text is { } text && TryReadJoinCode(text, out var supplied)
-            && JoinCodeMatches(config.JoinCode, supplied))
+        if (match is null)
         {
-            await store.MutateAsync(state =>
-            {
-                // Re-checked under the store's lock: two /start messages racing must
-                // not produce two rows, and a row added by an admin in the meantime
-                // must not be overwritten with a weaker status.
-                if (state.Settings.Senders.Any(s => s.Id == sender.Id)) return;
-                state.Settings.Senders.Add(new Sender
-                {
-                    Id = sender.Id,
-                    Name = sender.DisplayName,
-                    Status = SenderStatus.Known,
-                    FirstSeen = DateTimeOffset.UtcNow,
-                });
-            }, ct);
-
-            // Deliberately outside the throttle: being rate-limited out of joining is
-            // the worst possible moment to go quiet on somebody.
-            await telegram.SendMessageAsync(chat.Id,
-                "Du er inne. Send meg bilder, så kommer de opp på skjermen så snart en " +
-                "arrangør har godkjent dem. Alt slettes etter arrangementet.", ct);
+            if (entry is { Memberships.Count: > 0 }) await SendCurrentEventAsync(chat, entry, ct);
+            else if (ShouldReplyToUnlisted(sender.Id)) await telegram.SendMessageAsync(chat.Id, JoinPrompt, ct);
             return;
         }
 
-        if (ShouldReplyToUnlisted(sender.Id))
-            await telegram.SendMessageAsync(chat.Id, JoinPrompt, ct);
+        switch (match.PhaseAt(now))
+        {
+            case EventPhase.Closed:
+                await telegram.SendMessageAsync(chat.Id, $"{match.Name} er avsluttet.", ct);
+                return;
+            case EventPhase.Scheduled:
+                await telegram.SendMessageAsync(chat.Id, $"{match.Name} har ikke startet ennå.", ct);
+                return;
+        }
+
+        var eventId = match.Id;
+        var outcome = await store.MutateAsync(state =>
+        {
+            // Re-checked under the store's lock: two /start messages racing must not
+            // produce two rows, and a ban landing meanwhile must win. The event itself
+            // is re-checked too — deleted or closed between the phase switch above and
+            // this write must not leave a dangling membership, which a later event
+            // reusing the same slug could otherwise silently inherit.
+            var lockNow = DateTimeOffset.UtcNow;
+            if (state.Find(eventId) is not { } ev || !ev.IsOpen(lockNow)) return (Joined: false, IsNew: false);
+
+            var row = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
+            var isNew = row is null;
+            if (row is null)
+            {
+                row = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = lockNow };
+                state.Senders.Add(row);
+            }
+            if (row.Banned) return (Joined: false, IsNew: false);
+            if (row.MembershipIn(eventId) is null) row.Memberships.Add(new Membership { EventId = eventId });
+            row.CurrentEventId = eventId;
+            return (Joined: true, IsNew: isNew);
+        }, ct);
+        if (!outcome.Joined) return;
+
+        var buttons = Routing.SwitchButtons(store.Snapshot,
+            store.Snapshot.Senders.First(s => s.Id == sender.Id), eventId, now);
+        await SendAsync(chat.Id, outcome.IsNew
+            ? $"Du er inne. Du sender nå bilder til {match.Name}. En arrangør godkjenner bildene før de vises på skjermen."
+            : $"Du sender nå bilder til {match.Name}.", buttons, ct);
+    }
+
+    /// <summary>A bare /start from someone already in: where their photos go now.</summary>
+    private async Task SendCurrentEventAsync(TgChat chat, Sender entry, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var target = Routing.ResolvePrivateTarget(store.Snapshot, entry, now);
+        await SendAsync(chat.Id, target is null
+            ? $"{ClosedName(entry)} er avsluttet."
+            : $"Du sender bilder til {target.Name}. Send meg bilder, så kommer de opp på skjermen når en arrangør har godkjent dem.",
+            Routing.SwitchButtons(store.Snapshot, entry, target?.Id, now), ct);
+    }
+
+    /// <summary>Sends with an inline keyboard only when there is one to attach.</summary>
+    private Task SendAsync(long chatId, string text, IReadOnlyList<InlineButton> buttons, CancellationToken ct) =>
+        buttons.Count == 0
+            ? telegram.SendMessageAsync(chatId, text, ct)
+            : telegram.SendMessageAsync(chatId, text, buttons, ct);
+
+    /// <summary>
+    /// A tap on one of the switch buttons. Always answered, so the button's spinner
+    /// stops; only a member tapping an open event changes anything.
+    /// </summary>
+    private async Task HandleCallbackAsync(TgCallbackQuery callback, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var entry = callback.From is { } from ? store.Snapshot.Senders.FirstOrDefault(s => s.Id == from.Id) : null;
+        var data = callback.Data ?? "";
+
+        if (entry is null or { Banned: true } || !data.StartsWith(Routing.CallbackPrefix, StringComparison.Ordinal))
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, null, ct);
+            return;
+        }
+
+        var ev = store.Snapshot.Find(data[Routing.CallbackPrefix.Length..]);
+        if (ev is null || entry.MembershipIn(ev.Id) is null)
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, "Det arrangementet er ikke tilgjengelig.", ct);
+            return;
+        }
+        if (!ev.IsOpen(now))
+        {
+            await telegram.AnswerCallbackQueryAsync(callback.Id, $"{ev.Name} er avsluttet.", ct);
+            return;
+        }
+
+        var switched = await store.MutateAsync(state =>
+        {
+            var row = state.Senders.FirstOrDefault(s => s.Id == entry.Id);
+            if (row is null || row.Banned || row.MembershipIn(ev.Id) is null) return null;
+            row.CurrentEventId = ev.Id;
+            return row;
+        }, ct);
+
+        await telegram.AnswerCallbackQueryAsync(callback.Id, null, ct);
+        if (switched is null || callback.Message?.Chat is not { } chat) return;
+
+        await telegram.EditMessageTextAsync(chat.Id, callback.Message.MessageId,
+            $"Du sender nå bilder til {ev.Name}.",
+            Routing.SwitchButtons(store.Snapshot, switched, ev.Id, now), ct);
     }
 
     /// <summary>"/start CODE" — the payload Telegram appends from a deep link.</summary>
@@ -295,20 +364,6 @@ public sealed class UpdateHandler(
 
         code = parts[1];
         return true;
-    }
-
-    /// <summary>
-    /// Constant-time, hashing both sides first. Same reasoning as the webhook
-    /// secret check in Program.cs: this is reachable by anyone who finds the bot,
-    /// and FixedTimeEquals on its own leaks length through its argument check.
-    /// </summary>
-    private static bool JoinCodeMatches(string expected, string supplied)
-    {
-        Span<byte> hashA = stackalloc byte[32];
-        Span<byte> hashB = stackalloc byte[32];
-        SHA256.HashData(Encoding.UTF8.GetBytes(expected), hashA);
-        SHA256.HashData(Encoding.UTF8.GetBytes(supplied), hashB);
-        return CryptographicOperations.FixedTimeEquals(hashA, hashB);
     }
 
     /// <summary>
@@ -368,23 +423,28 @@ public sealed class UpdateHandler(
         return null;
     }
 
-    private enum IngestOutcome { Stored, Duplicate, Refused }
+    private enum IngestOutcome { Stored, Duplicate, Refused, Closed }
 
     /// <summary>
     /// <paramref name="entry"/> is the sender's roster row as read before the
     /// download. Always present in a private chat; in a group it is null for a
     /// member's first photo, and the row is added in the same write as the image.
+    /// <paramref name="expectedEventId"/> is the event resolved before the download —
+    /// the private path's current event, or the group's routed one — used only for
+    /// the fast-path duplicate pre-checks below; the authoritative check inside
+    /// MutateAsync re-resolves the event under the lock instead of trusting it.
     /// </summary>
     private async Task IngestAsync(
         TgMessage message, TgUser sender, TgChat chat,
-        Sender? entry, Candidate candidate, CancellationToken ct)
+        Sender? entry, Candidate candidate, string expectedEventId, CancellationToken ct)
     {
         // Fast-path pre-check: saves a download for the obvious case of a resend.
         // Not authoritative by itself — it reads a Snapshot taken before the download
         // and decode below, both unbounded in duration, so it cannot by itself stop
         // two overlapping deliveries of the same content. The re-check inside
         // MutateAsync further down, under the store's lock, is what actually does.
-        if (store.Snapshot.Images.Values.Any(i => i.FileUniqueId == candidate.FileUniqueId))
+        if (store.Snapshot.Images.Values.Any(i =>
+                i.EventId == expectedEventId && i.FileUniqueId == candidate.FileUniqueId))
         {
             await AcknowledgeAsync(message, chat, "Det bildet har jeg allerede.", ct);
             return;
@@ -427,7 +487,7 @@ public sealed class UpdateHandler(
 
         // Same fast-path caveat as above: saves the object writes below for the
         // common case, but is still followed by the authoritative re-check.
-        if (store.Snapshot.Images.Values.Any(i => i.Sha256 == processed.Sha256))
+        if (store.Snapshot.Images.Values.Any(i => i.EventId == expectedEventId && i.Sha256 == processed.Sha256))
         {
             await AcknowledgeAsync(message, chat, "Det bildet har jeg allerede.", ct);
             return;
@@ -449,54 +509,78 @@ public sealed class UpdateHandler(
         await objects.WriteAsync(ObjectPaths.Thumb(id), processed.Thumb, "image/jpeg", null, ct);
 
         var approved = false;
-        var outcome = await store.MutateAsync(state =>
+        var (outcome, storedEventId) = await store.MutateAsync(state =>
         {
-            // The authoritative check. This runs while MutateAsync holds its
-            // semaphore (and, on a precondition-failure retry, against a freshly
-            // reloaded state), so two overlapping calls cannot both see "no
-            // duplicate" and both add an entry — one of them always observes the
-            // other's write first.
-            var isDuplicate = state.Images.Values.Any(i =>
-                i.FileUniqueId == candidate.FileUniqueId || i.Sha256 == processed.Sha256);
-            if (isDuplicate) return IngestOutcome.Duplicate;
-
             var now = DateTimeOffset.UtcNow;
-            var status = entry?.Status;
+            string eventId;
             if (chat.IsGroup)
             {
                 // Re-read under the lock, unlike the private path's entry: a group
                 // member was never asked to join, so an admin removing the group or
                 // banning the member during the download must win. A ban that lost
                 // this race would leave a photo the ban cascade has already swept past.
-                var group = state.Settings.Groups.FirstOrDefault(g => g.Id == chat.Id);
-                if (group is not { Listening: true }) return IngestOutcome.Refused;
+                var group = state.Groups.FirstOrDefault(g => g.Id == chat.Id);
+                if (group is null) return (IngestOutcome.Refused, "");
+                if (state.Find(group.EventId) is not { } routedEvent || !routedEvent.IsOpen(now))
+                    return (IngestOutcome.Refused, "");
+                var routed = routedEvent.Id;
 
-                var member = state.Settings.Senders.FirstOrDefault(s => s.Id == sender.Id);
+                var member = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
                 if (member is null)
                 {
-                    // Posting a photo in a group the bot listens to is this member's
-                    // join. The group was told so by the notice when listening started.
-                    member = new Sender
-                    {
-                        Id = sender.Id,
-                        Name = sender.DisplayName,
-                        Status = SenderStatus.Known,
-                        FirstSeen = now,
-                    };
-                    state.Settings.Senders.Add(member);
+                    // Posting a photo in a group the bot collects from is this member's
+                    // join. The group was told so by the notice when collecting started.
+                    member = new Sender { Id = sender.Id, Name = sender.DisplayName, FirstSeen = now };
+                    state.Senders.Add(member);
                 }
-                if (member.Status == SenderStatus.Banned) return IngestOutcome.Refused;
+                if (member.Banned) return (IngestOutcome.Refused, "");
+
+                var membership = member.MembershipIn(routed);
+                if (membership is null)
+                {
+                    membership = new Membership { EventId = routed };
+                    member.Memberships.Add(membership);
+                }
+
+                // A group member who also DMs the bot needs somewhere to resolve to;
+                // without this, a group-only member's first private photo would find no
+                // current event and get the misleading "Arrangementet er avsluttet."
+                // Only when null: an existing member's current event is untouched by a
+                // group photo — it names where their *private* photos go, and a group
+                // post is not that.
+                member.CurrentEventId ??= routed;
 
                 // Free: this write happens anyway, and it keeps a renamed group
                 // recognisable on the admin page.
                 if (!string.IsNullOrWhiteSpace(chat.Title)) group.Title = chat.Title;
-                status = member.Status;
+                eventId = routed;
+                approved = membership.AutoApprove;
+            }
+            else
+            {
+                // Re-read under the lock too: the event can close, and the sender be
+                // banned, while the download and decode above were running.
+                var row = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
+                if (row is null || row.Banned) return (IngestOutcome.Refused, "");
+                if (Routing.ResolvePrivateTarget(state, row, now) is not { } target) return (IngestOutcome.Closed, "");
+                eventId = target.Id;
+                approved = row.MembershipIn(eventId)!.AutoApprove;
             }
 
-            approved = status == SenderStatus.AutoApprove;
+            // The authoritative duplicate check, scoped to the event just resolved:
+            // this runs while MutateAsync holds its semaphore (and, on a
+            // precondition-failure retry, against a freshly reloaded state), so two
+            // overlapping calls cannot both see "no duplicate" and both add an entry
+            // — one of them always observes the other's write first. Scoped rather
+            // than global, because the same photo may legitimately go to two events.
+            var isDuplicate = state.Images.Values.Any(i =>
+                i.EventId == eventId && (i.FileUniqueId == candidate.FileUniqueId || i.Sha256 == processed.Sha256));
+            if (isDuplicate) return (IngestOutcome.Duplicate, "");
+
             state.Images[id] = new ImageRecord
             {
                 Id = id,
+                EventId = eventId,
                 Source = ImageSource.Telegram,
                 SenderId = sender.Id,
                 SenderName = sender.DisplayName,
@@ -511,11 +595,38 @@ public sealed class UpdateHandler(
                 DecidedAt = approved ? now : null,
                 SortKey = id,
                 OriginalExtension = candidate.Extension,
+                TelegramChatId = chat.IsGroup ? chat.Id : null,
+                TelegramMessageId = chat.IsGroup ? message.MessageId : null,
             };
-            return IngestOutcome.Stored;
+            return (IngestOutcome.Stored, eventId);
         }, ct);
 
+        if (outcome != IngestOutcome.Stored)
+        {
+            // The three objects above were written before the outcome was known; a
+            // non-Stored one leaves nothing in state pointing at them. Best effort, the
+            // same way as the admin delete paths — CancellationToken.None so a request
+            // that is about to return regardless does not race the delete, and a
+            // failure here is logged rather than surfaced to the sender, who already
+            // gets their own reply below. See ImageObjects.DeleteAllAsync.
+            try
+            {
+                await ImageObjects.DeleteAsync(objects, id, candidate.Extension, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e,
+                    "Failed to delete objects for image {ImageId} after a {Outcome} outcome; its bytes are now orphaned.",
+                    id, outcome);
+            }
+        }
+
         if (outcome == IngestOutcome.Refused) return;
+        if (outcome == IngestOutcome.Closed)
+        {
+            await ReplyAsync(chat, "Arrangementet er avsluttet, så bildet ble ikke lagret.", ct);
+            return;
+        }
 
         if (outcome == IngestOutcome.Duplicate)
         {
@@ -528,12 +639,13 @@ public sealed class UpdateHandler(
             // Per message, not per album: a reaction sits on the photo it is about,
             // so five of them are no noisier than one.
             await telegram.SetMessageReactionAsync(
-                chat.Id, message.MessageId, approved ? LiveReaction : QueuedReaction, ct);
+                chat.Id, message.MessageId, approved ? Reactions.Live : Reactions.Queued, ct);
             return;
         }
 
+        var name = store.Snapshot.Find(storedEventId)?.Name ?? "";
         await AcknowledgeAsync(message, chat,
-            approved ? "Mottatt — det er på skjermen nå." : "Mottatt — en arrangør godkjenner det snart.",
+            approved ? $"Mottatt til {name} — det er på skjermen nå." : $"Mottatt til {name} — en arrangør godkjenner det snart.",
             ct);
     }
 

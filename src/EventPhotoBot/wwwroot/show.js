@@ -16,6 +16,11 @@
   const FAILURES_BEFORE_BACKOFF = 3;
   const POLL_TIMEOUT_MS = 8000;
 
+  // Which event this screen shows. Absent is the default event, so the church
+  // screen's bookmark from before events keeps working unchanged.
+  const eventId = new URLSearchParams(location.search).get('event');
+  const scoped = path => eventId ? `${path}?event=${encodeURIComponent(eventId)}` : path;
+
   /// <summary>
   /// How each layout arranges the stage. The server sends a name; everything the
   /// screen actually does with it is decided here, in one table, rather than being
@@ -233,7 +238,7 @@
 
     try {
       const headers = etag ? { 'If-None-Match': etag } : {};
-      const response = await fetch('/api/manifest', {
+      const response = await fetch(scoped('/api/manifest'), {
         headers, cache: 'no-store', signal: controller.signal,
       });
 
@@ -286,11 +291,16 @@
     // screen is actually inviting anyone — turning the setting on mid-event
     // arms it on that poll instead.
     if (joinUrl && inviting && !joinReady) {
-      joinQrEl.src = '/api/join-qr.svg';
-      joinBadgeEl.src = '/api/join-qr.svg';
+      joinQrEl.src = scoped('/api/join-qr.svg');
+      joinBadgeEl.src = scoped('/api/join-qr.svg');
       joinHandleEl.textContent = handleFrom(joinUrl);
       joinReady = true;
     }
+
+    // joinUrl goes null when the event closes, which does not itself unset joinReady -
+    // without this, a reopened event's next poll would see joinReady already true and
+    // never re-arm the QR src.
+    if (!joinUrl) joinReady = false;
 
     joinEl.hidden = !joinReady || !inviting;
     // Large in the empty state, small in the corner once there are photos to show.
