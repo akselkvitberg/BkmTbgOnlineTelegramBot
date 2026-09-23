@@ -119,4 +119,53 @@ public class RetentionSweepTests
 
         Assert.Equal(generation, store.Generation);
     }
+
+    /// <summary>Wraps an InMemoryObjectStore and throws instead of deleting one exact path.</summary>
+    private sealed class FailingDeleteObjectStore(InMemoryObjectStore inner, string failingPath) : IObjectStore
+    {
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default) => inner.ReadAsync(path, ct);
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType, long? ifGenerationMatch,
+            CancellationToken ct = default) => inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) => inner.OpenReadAsync(path, ct);
+
+        public Task DeleteAsync(string path, CancellationToken ct = default) =>
+            path == failingPath ? throw new InvalidOperationException($"Simulated failure deleting {path}.") : inner.DeleteAsync(path, ct);
+    }
+
+    [Fact]
+    public async Task One_images_delete_failure_does_not_stop_the_rest()
+    {
+        var inner = new InMemoryObjectStore();
+        var objects = new FailingDeleteObjectStore(inner, ObjectPaths.Display("bad"));
+        var store = new StateStore(objects);
+        await store.LoadAsync();
+        await store.MutateAsync(s =>
+        {
+            s.Default().Retention = new Retention { MaxAgeDays = 30 };
+            s.Images["bad"] = new ImageRecord
+            {
+                Id = "bad", EventId = "daglig", Sha256 = "b", SortKey = "b", OriginalExtension = "jpg",
+                ReceivedAt = Now.AddDays(-60),
+            };
+            s.Images["good"] = new ImageRecord
+            {
+                Id = "good", EventId = "daglig", Sha256 = "g", SortKey = "g", OriginalExtension = "jpg",
+                ReceivedAt = Now.AddDays(-60),
+            };
+        });
+        await inner.WriteAsync(ObjectPaths.Original("bad", "jpg"), [1], "image/jpeg", null);
+        await inner.WriteAsync(ObjectPaths.Original("good", "jpg"), [1], "image/jpeg", null);
+
+        var counts = await RetentionSweep.RunAsync(store, objects, NullLogger.Instance, null, Now, default);
+
+        // The sweep does not throw, both records leave state, and the failure on "bad" -
+        // whose Display delete is the one that throws - does not stop "good" from having
+        // every one of its objects deleted.
+        Assert.Equal(2, counts["daglig"]);
+        Assert.Empty(store.Snapshot.Images);
+        Assert.DoesNotContain(ObjectPaths.Original("good", "jpg"), inner.Paths);
+        Assert.Contains(ObjectPaths.Original("bad", "jpg"), inner.Paths);
+    }
 }

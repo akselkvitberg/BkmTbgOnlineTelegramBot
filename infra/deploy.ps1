@@ -156,9 +156,16 @@ if ([string]::IsNullOrWhiteSpace($retentionSecret)) { throw 'retention-secret ha
 # Created with gcloud, not Terraform, for the same reason as every secret value here:
 # the header would otherwise sit in plaintext in Terraform state.
 $job = "$Name-retention"
+# attempt-deadline: Cloud Scheduler's own default for an HTTP target is 3 minutes,
+# well under the sweep's 900s Cloud Run request timeout - a job dropped mid-sweep
+# cancels the rest of RetentionSweep's delete loop and orphans object bytes whose
+# state record is already gone. --format=none: `jobs create/update` otherwise print
+# the resulting Job resource, headers and all, putting X-Retention-Secret in the
+# console output; `describe` above is already redirected to null for the same reason.
 $jobArgs = @('--location', $SchedulerRegion, '--project', $ProjectId,
     '--schedule', '15 3 * * *', '--time-zone', 'Europe/Oslo',
-    '--uri', "$serviceUrl/internal/retention", '--http-method', 'POST')
+    '--uri', "$serviceUrl/internal/retention", '--http-method', 'POST',
+    '--attempt-deadline', '900s', '--format=none')
 gcloud scheduler jobs describe $job --location $SchedulerRegion --project $ProjectId *> $null
 if ($LASTEXITCODE -eq 0) {
     gcloud scheduler jobs update http $job @jobArgs --update-headers "X-Retention-Secret=$retentionSecret"

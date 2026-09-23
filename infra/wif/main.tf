@@ -139,6 +139,7 @@ locals {
     "roles/iam.serviceAccountAdmin",        # create the Cloud Run runtime service account (google_service_account.runtime in infra/main.tf)
     "roles/iam.serviceAccountUser",         # let Terraform attach that runtime service account to the Cloud Run service (actAs)
     "roles/run.admin",                      # create/update the Cloud Run service and set its IAM policy (the allUsers invoker binding)
+    "roles/cloudscheduler.admin",           # create/update the retention sweep's Cloud Scheduler job in deploy.yml
 
     # Only matters when infra/main.tf's var.hosting_site is set — the optional
     # Firebase Hosting front door that gives the event a <site>.web.app URL
