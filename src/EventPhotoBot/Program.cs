@@ -121,6 +121,7 @@ app.UseSessionGate(config);
 
 app.UseStaticFiles();
 app.MapApi();
+app.MapEvents();
 app.MapImages();
 app.MapJoinQr();
 if (config.LocalDev) app.MapDev();

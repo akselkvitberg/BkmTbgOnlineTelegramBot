@@ -11,6 +11,7 @@ public class EndpointAuthTests : IClassFixture<AppFactory>
 
     [Theory]
     [InlineData("/api/manifest")]
+    [InlineData("/api/events")]
     [InlineData("/img/anything/display")]
     [InlineData("/img/anything/thumb")]
     public async Task Api_and_image_paths_return_401_without_a_session(string path)

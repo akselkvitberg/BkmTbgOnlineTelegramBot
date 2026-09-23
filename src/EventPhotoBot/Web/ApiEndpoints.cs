@@ -347,9 +347,7 @@ public static class ApiEndpoints
                 // State first here, unlike ingest: an entry pointing at deleted bytes
                 // would put a broken image on the projector, while orphaned bytes are
                 // invisible and the lifecycle rule sweeps them up.
-                await objects.DeleteAsync(ObjectPaths.Display(id), ct);
-                await objects.DeleteAsync(ObjectPaths.Thumb(id), ct);
-                await objects.DeleteAsync(ObjectPaths.Original(id, removed.OriginalExtension), ct);
+                await ImageObjects.DeleteAsync(objects, removed, ct);
 
                 return Results.Ok();
             });
@@ -374,12 +372,7 @@ public static class ApiEndpoints
                 });
 
                 // State first, for the same reason as the single delete above.
-                foreach (var image in removed)
-                {
-                    await objects.DeleteAsync(ObjectPaths.Display(image.Id), ct);
-                    await objects.DeleteAsync(ObjectPaths.Thumb(image.Id), ct);
-                    await objects.DeleteAsync(ObjectPaths.Original(image.Id, image.OriginalExtension), ct);
-                }
+                foreach (var image in removed) await ImageObjects.DeleteAsync(objects, image, ct);
 
                 return Results.Ok(new { deleted = removed.Count });
             });
