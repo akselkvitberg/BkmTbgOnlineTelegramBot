@@ -68,7 +68,7 @@ nav a:hover { color: var(--text); }
 nav a.active { background: var(--panel-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 
 nav .event-picker { margin-left: auto; max-width: 14em; font-size: 0.9em; }
-.event-label { display: inline-block; font-size: 0.8em; padding: 1px 6px; border-radius: 4px; background: var(--surface-2, #eee); }
+.event-label { display: inline-block; font-size: 0.8em; padding: 1px 6px; border-radius: 4px; background: var(--surface-2, #eee); color: var(--accent-ink, #1e1408); }
 
 .nav-logout { margin-left: auto; }
 
