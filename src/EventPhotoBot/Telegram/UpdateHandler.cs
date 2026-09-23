@@ -328,15 +328,10 @@ public sealed class UpdateHandler(
     {
         var now = DateTimeOffset.UtcNow;
         var target = Routing.ResolvePrivateTarget(store.Snapshot, entry, now);
-        if (target is null)
-        {
-            await telegram.SendMessageAsync(chat.Id, $"{ClosedName(entry)} er avsluttet.", ct);
-            return;
-        }
-
-        await SendAsync(chat.Id,
-            $"Du sender bilder til {target.Name}. Send meg bilder, så kommer de opp på skjermen når en arrangør har godkjent dem.",
-            Routing.SwitchButtons(store.Snapshot, entry, target.Id, now), ct);
+        await SendAsync(chat.Id, target is null
+            ? $"{ClosedName(entry)} er avsluttet."
+            : $"Du sender bilder til {target.Name}. Send meg bilder, så kommer de opp på skjermen når en arrangør har godkjent dem.",
+            Routing.SwitchButtons(store.Snapshot, entry, target?.Id, now), ct);
     }
 
     /// <summary>Sends with an inline keyboard only when there is one to attach.</summary>

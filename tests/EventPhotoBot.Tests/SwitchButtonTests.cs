@@ -52,6 +52,26 @@ public class SwitchButtonTests
     }
 
     [Fact]
+    public async Task A_bare_start_offers_buttons_to_other_open_events_even_when_the_current_one_is_closed()
+    {
+        var (handler, _, telegram) = await SetupAsync(s =>
+        {
+            s.AddEvent("bryllup", "Bryllup", closed: true);
+            s.AddEvent("konsert", "Konsert");
+            s.Senders.Add(Member("bryllup", "konsert"));
+        });
+
+        await handler.HandleAsync(new TgUpdate
+        {
+            Message = new TgMessage { From = new TgUser { Id = Guest }, Chat = new TgChat { Id = Guest }, Text = "/start" },
+        });
+
+        var (_, text, buttons) = Assert.Single(telegram.SentButtons);
+        Assert.Equal("Bryllup er avsluttet.", text);
+        Assert.Equal([new InlineButton("Konsert", "ev:konsert")], buttons);
+    }
+
+    [Fact]
     public async Task Tapping_a_button_switches_and_edits_the_message()
     {
         var (handler, store, telegram) = await SetupAsync(s => { s.AddEvent("bryllup", "Bryllup"); s.Senders.Add(Member("bryllup", "daglig")); });
