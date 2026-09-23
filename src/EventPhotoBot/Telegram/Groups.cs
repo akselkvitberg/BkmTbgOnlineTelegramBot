@@ -4,8 +4,8 @@ namespace EventPhotoBot.Telegram;
 
 /// <summary>
 /// The rules for <see cref="EventState.Groups"/>, shared by the update handler (the bot
-/// joining, leaving, or being given the join code) and the admin API (an organiser
-/// turning listening on or off, or making the bot leave).
+/// joining or leaving a group) and the admin API (an organiser routing a group to an
+/// event, un-routing it, or making the bot leave).
 /// </summary>
 public static class Groups
 {
@@ -13,24 +13,30 @@ public static class Groups
     /// How many groups the bot keeps a row for while they are not routed to an event.
     /// Anyone can add the bot to a group, and each add is a state write nobody at the
     /// event authorised; the cap keeps a stranger adding it to hundreds of groups from
-    /// growing state.json without bound. Listening groups are never evicted.
+    /// growing state.json without bound. Groups routed to an event are never evicted.
     /// </summary>
     public const int MaxNotListening = 20;
 
     /// <summary>
-    /// Posted once in a group when the bot starts collecting from it. Members of a
-    /// group shared photos with each other, not with a screen in a hall; this is
-    /// the point at which they learn otherwise, and it names what is shown — the
-    /// photo and the name of whoever posted it.
+    /// Posted in a group each time it is routed to an event. Members of a group shared
+    /// photos with each other, not with a screen in a hall; this is the point at which
+    /// they learn otherwise, and it names the screen, what is shown and how long it is kept.
     /// </summary>
-    public const string ListeningNotice =
-        "Denne gruppen er nå koblet til bildeskjermen på arrangementet. Bilder som legges " +
-        "ut her fra nå av, kan bli vist på skjermen sammen med navnet til den som la dem ut. " +
-        "En arrangør godkjenner bildene før de vises, med unntak av forhåndsgodkjente " +
-        "fotografer. Ikke legg ut bilder her som du ikke vil ha på skjermen. Alt slettes " +
-        "etter arrangementet.";
+    public static string NoticeFor(Event ev) =>
+        $"Denne gruppen er nå koblet til bildeskjermen for {ev.Name}. Bilder som legges ut her fra nå av, " +
+        "kan bli vist på skjermen sammen med navnet til den som la dem ut. En arrangør godkjenner " +
+        "bildene før de vises, med unntak av forhåndsgodkjente fotografer. Ikke legg ut bilder her " +
+        "som du ikke vil ha på skjermen. " + DeletionRule(ev);
 
-    /// <summary>Adds or refreshes the row for a group the bot is in. Never changes Listening.</summary>
+    public static string DeletionRule(Event ev) => ev.Retention.MaxAgeDays switch
+    {
+        { } days when ev.Retention.KeepNewest > 0 =>
+            $"Bildene slettes etter {days} dager, men de {ev.Retention.KeepNewest} nyeste beholdes.",
+        { } days => $"Bildene slettes etter {days} dager.",
+        null => "Bildene slettes når arrangøren sletter arrangementet.",
+    };
+
+    /// <summary>Adds or refreshes the row for a group the bot is in. Never changes EventId.</summary>
     public static BotGroup Remember(EventState state, long id, string? title, DateTimeOffset now)
     {
         var groups = state.Groups;

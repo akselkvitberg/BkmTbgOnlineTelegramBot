@@ -533,47 +533,100 @@ public class UpdateHandlerTests
     [InlineData($"/start {Harness.JoinCode}")]
     [InlineData($"/start@eventphotobot {Harness.JoinCode}")]
     [InlineData(Harness.JoinCode)]
-    public async Task The_join_code_in_a_group_starts_listening_and_posts_one_notice(string text)
+    public async Task Posting_the_join_code_in_a_group_does_nothing(string text)
     {
-        var harness = await Harness.CreateAsync();
-
-        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
-        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
-
-        var group = Assert.Single(harness.Store.Snapshot.Groups);
-        Assert.Equal(StateMigration.DefaultEventId, group.EventId);
-        Assert.Equal("Festkomiteen", group.Title);
-        var (chatId, notice) = Assert.Single(harness.Telegram.Sent);
-        Assert.Equal(Group, chatId);
-        Assert.Equal(Groups.ListeningNotice, notice);
-        // Posting the code opens the group; it does not put the poster on the roster.
-        Assert.Empty(harness.Store.Snapshot.Senders);
-    }
-
-    [Theory]
-    [InlineData("/start wrongcode")]
-    [InlineData("/start")]
-    [InlineData($"/start {Harness.JoinCode} extra")]
-    [InlineData($"/help {Harness.JoinCode}")]
-    public async Task Anything_but_the_join_code_leaves_a_group_closed(string text)
-    {
-        var harness = await Harness.CreateAsync();
+        var harness = await Harness.CreateAsync(s => s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen" }));
+        var generation = harness.Store.Generation;
 
         await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, text)));
 
-        Assert.Empty(harness.Store.Snapshot.Groups);
+        Assert.Null(Assert.Single(harness.Store.Snapshot.Groups).EventId);
         Assert.Empty(harness.Telegram.Sent);
+        Assert.Equal(generation, harness.Store.Generation);
     }
 
     [Fact]
-    public async Task A_banned_member_cannot_open_a_group_with_the_code()
+    public async Task A_photo_in_a_group_routed_to_a_closed_event_is_ignored()
     {
-        var harness = await Harness.CreateAsync(s => s.Senders.Add(Roster(Stranger, banned: true)));
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.AddEvent("bryllup", closed: true);
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen", EventId = "bryllup" });
+        });
+        StockFile(harness, "large");
 
-        await harness.Handler.HandleAsync(InGroup(TextFrom(Stranger, $"/start {Harness.JoinCode}")));
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
 
-        Assert.Empty(harness.Store.Snapshot.Groups);
-        Assert.Empty(harness.Telegram.Sent);
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.Empty(harness.Telegram.Reactions);
+    }
+
+    [Fact]
+    public async Task A_photo_in_a_group_routed_to_a_deleted_event_is_ignored()
+    {
+        // Review focus 4.
+        var harness = await Harness.CreateAsync(s =>
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen", EventId = "gone" }));
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
+
+        Assert.Empty(harness.Store.Snapshot.Images);
+        Assert.DoesNotContain(harness.Objects.Paths, IsImageObject);
+    }
+
+    [Fact]
+    public async Task A_group_photo_goes_to_the_groups_event_and_remembers_where_it_was_posted()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.AddEvent("bryllup");
+            s.Senders.Add(Roster(Guest));   // a daily member, not yet in the wedding
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen", EventId = "bryllup" });
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
+
+        var image = Assert.Single(harness.Store.Snapshot.Images.Values);
+        Assert.Equal("bryllup", image.EventId);
+        Assert.Equal(Group, image.TelegramChatId);
+        Assert.Equal(77, image.TelegramMessageId);
+        Assert.NotNull(harness.Store.Snapshot.Senders.Single().MembershipIn("bryllup"));
+    }
+
+    [Fact]
+    public async Task A_new_members_first_photo_in_a_group_sets_their_current_event()
+    {
+        // Controller ruling: a group-only member must resolve somewhere if they also
+        // DM the bot, or their private photo gets a misleading "closed" reply.
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.AddEvent("bryllup");
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen", EventId = "bryllup" });
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Stranger)));
+
+        var sender = Assert.Single(harness.Store.Snapshot.Senders);
+        Assert.Equal("bryllup", sender.CurrentEventId);
+    }
+
+    [Fact]
+    public async Task An_existing_members_current_event_is_untouched_by_a_group_photo()
+    {
+        var harness = await Harness.CreateAsync(s =>
+        {
+            s.AddEvent("bryllup");
+            s.Senders.Add(Roster(Guest));   // CurrentEventId already daglig
+            s.Groups.Add(new BotGroup { Id = Group, Title = "Festkomiteen", EventId = "bryllup" });
+        });
+        StockFile(harness, "large");
+
+        await harness.Handler.HandleAsync(InGroup(PhotoFrom(Guest)));
+
+        Assert.Equal(StateMigration.DefaultEventId, harness.Store.Snapshot.Senders.Single().CurrentEventId);
     }
 
     [Fact]

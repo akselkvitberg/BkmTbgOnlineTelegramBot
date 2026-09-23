@@ -10,8 +10,8 @@ public sealed record PinRequest(string Pin);
 public sealed record TakeoverRequest(string ImageId, int? Minutes);
 public sealed record SenderStatusRequest(string Status);
 
-/// <summary>Nullable so a body without the field is a 400, not a silent "off".</summary>
-public sealed record GroupListeningRequest(bool? Listening);
+/// <summary>An event id routes the group, "" un-routes it; null (or missing) is a 400, so a malformed body cannot un-route a group.</summary>
+public sealed record GroupEventRequest(string? EventId);
 
 /// <summary>
 /// The roster is deliberately absent here. An array replacement cannot carry the
@@ -148,7 +148,7 @@ public static class ApiEndpoints
                 {
                     group.Id,
                     group.Title,
-                    Listening = group.EventId is not null,
+                    group.EventId,
                     group.FirstSeen,
                 }),
             });
@@ -174,33 +174,33 @@ public static class ApiEndpoints
                 : Results.Ok(new { profile.Username, profile.CanReadAllGroupMessages });
         });
 
-        app.MapPost("/api/groups/{id:long}/listening",
-            async (long id, GroupListeningRequest request, StateStore store, ITelegramClient telegram,
-                CancellationToken ct) =>
+        app.MapPost("/api/groups/{id:long}/event",
+            async (long id, GroupEventRequest request, StateStore store, ITelegramClient telegram, CancellationToken ct) =>
             {
-                if (request.Listening is not { } listening)
-                    return Results.BadRequest(new { error = "listening må være true eller false." });
+                if (request.EventId is not { } eventId)
+                    return Results.BadRequest(new { error = "eventId må være en arrangement-id, eller tom for å koble fra." });
+                if (eventId != "" && store.Snapshot.Find(eventId) is null) return EventScope.UnknownEvent();
 
                 // Only a group the bot is actually in. Creating a row by id here would
                 // let the list claim a group the bot cannot hear.
-                var started = await store.MutateAsync(state =>
+                var (result, notice) = await store.MutateAsync(state =>
                 {
                     var group = state.Groups.FirstOrDefault(g => g.Id == id);
-                    if (group is null) return (bool?)null;
-                    if (!listening)
+                    if (group is null) return (Results.NotFound(), (string?)null);
+                    if (eventId == "")
                     {
                         group.EventId = null;
-                        return false;
+                        return (Results.Ok(), null);
                     }
-                    return Groups.Route(state, id, null, DateTimeOffset.UtcNow, state.Default().Id);
+                    if (state.Find(eventId) is not { } ev) return (EventScope.UnknownEvent(), null);
+                    return Groups.Route(state, id, null, DateTimeOffset.UtcNow, ev.Id)
+                        ? (Results.Ok(), Groups.NoticeFor(ev))
+                        : (Results.Ok(), null);
                 }, ct);
 
-                if (started is null) return Results.NotFound();
-
-                // The same notice as when a member posts the join code: the members
-                // did not choose this, and are told once, in the group itself.
-                if (started == true) await telegram.SendMessageAsync(id, Groups.ListeningNotice, ct);
-                return Results.Ok();
+                // Told in the group itself, once per change: its members did not choose this.
+                if (notice is not null) await telegram.SendMessageAsync(id, notice, ct);
+                return result;
             });
 
         app.MapPost("/api/groups/{id:long}/leave",

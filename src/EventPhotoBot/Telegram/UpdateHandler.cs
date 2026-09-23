@@ -151,11 +151,11 @@ public sealed class UpdateHandler(
     }
 
     /// <summary>
-    /// Everything posted in a group. Nothing here ever sends a text reply except the
-    /// one notice when listening starts: a group is other people's conversation, and
-    /// a bot that answers in it — a join prompt, a "received", a decline — is noise
-    /// for every member, and in a group the bot does not listen to, a way to make it
-    /// talk to strangers.
+    /// Everything posted in a group. Nothing here ever sends a text reply: a group is
+    /// other people's conversation, and a bot that answers in it — a join prompt, a
+    /// "received", a decline — is noise for every member, and in a group the bot is
+    /// not routed to, a way to make it talk to strangers. The one notice, when an
+    /// admin routes the group, is sent from the admin API instead.
     /// </summary>
     private async Task HandleGroupMessageAsync(TgMessage message, TgChat chat, CancellationToken ct)
     {
@@ -181,14 +181,11 @@ public sealed class UpdateHandler(
         // person must not be able to open a group of their own to the queue.
         if (entry is { Banned: true }) return;
 
+        // Only a group an organiser has routed to an event that is open. Every other
+        // group — never routed, routed to an event since deleted or closed — is
+        // dropped with no reply and no write: its members did not agree to a screen.
         var group = store.Snapshot.Groups.FirstOrDefault(g => g.Id == chat.Id);
-        if (group?.EventId is null)
-        {
-            if (message.Text is { } text && TryReadGroupJoinCode(text, out var supplied)
-                && SecretComparison.Matches(store.Snapshot.Default().JoinCode, supplied))
-                await StartListeningAsync(chat, ct);
-            return;
-        }
+        if (store.Snapshot.Find(group?.EventId) is not { } ev || !ev.IsOpen(DateTimeOffset.UtcNow)) return;
 
         // Members talking to each other, and the join code posted again. Neither is
         // addressed to the bot.
@@ -202,15 +199,7 @@ public sealed class UpdateHandler(
             return;
         }
 
-        await IngestAsync(message, sender, chat, entry, candidate, group.EventId!, ct);
-    }
-
-    private async Task StartListeningAsync(TgChat chat, CancellationToken ct)
-    {
-        var started = await store.MutateAsync(state =>
-            Groups.Route(state, chat.Id, chat.Title, DateTimeOffset.UtcNow, state.Default().Id), ct);
-
-        if (started) await telegram.SendMessageAsync(chat.Id, Groups.ListeningNotice, ct);
+        await IngestAsync(message, sender, chat, entry, candidate, ev.Id, ct);
     }
 
     /// <summary>
@@ -240,28 +229,6 @@ public sealed class UpdateHandler(
                 old.Id = to;
             }
         }, ct);
-    }
-
-    /// <summary>
-    /// "/start CODE" (or "/start@bot CODE", as a group client writes a command), or the
-    /// bare code on its own, as someone would type it after reading it off the screen.
-    /// The bare form only reaches the bot once privacy mode is off; a command always does.
-    /// </summary>
-    private static bool TryReadGroupJoinCode(string text, out string code)
-    {
-        code = "";
-        var parts = text.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries
-                                       | StringSplitOptions.TrimEntries);
-
-        if (parts.Length == 2
-            && (parts[0] == "/start" || parts[0].StartsWith("/start@", StringComparison.Ordinal)))
-            code = parts[1];
-        else if (parts.Length == 1 && !parts[0].StartsWith('/'))
-            code = parts[0];
-        else
-            return false;
-
-        return true;
     }
 
     /// <summary>
@@ -552,7 +519,10 @@ public sealed class UpdateHandler(
                 // banning the member during the download must win. A ban that lost
                 // this race would leave a photo the ban cascade has already swept past.
                 var group = state.Groups.FirstOrDefault(g => g.Id == chat.Id);
-                if (group?.EventId is not { } routed) return (IngestOutcome.Refused, "");
+                if (group is null) return (IngestOutcome.Refused, "");
+                if (state.Find(group.EventId) is not { } routedEvent || !routedEvent.IsOpen(now))
+                    return (IngestOutcome.Refused, "");
+                var routed = routedEvent.Id;
 
                 var member = state.Senders.FirstOrDefault(s => s.Id == sender.Id);
                 if (member is null)
@@ -570,6 +540,14 @@ public sealed class UpdateHandler(
                     membership = new Membership { EventId = routed };
                     member.Memberships.Add(membership);
                 }
+
+                // A group member who also DMs the bot needs somewhere to resolve to;
+                // without this, a group-only member's first private photo would find no
+                // current event and get the misleading "Arrangementet er avsluttet."
+                // Only when null: an existing member's current event is untouched by a
+                // group photo — it names where their *private* photos go, and a group
+                // post is not that.
+                member.CurrentEventId ??= routed;
 
                 // Free: this write happens anyway, and it keeps a renamed group
                 // recognisable on the admin page.
@@ -616,6 +594,8 @@ public sealed class UpdateHandler(
                 DecidedAt = approved ? now : null,
                 SortKey = id,
                 OriginalExtension = candidate.Extension,
+                TelegramChatId = chat.IsGroup ? chat.Id : null,
+                TelegramMessageId = chat.IsGroup ? message.MessageId : null,
             };
             return (IngestOutcome.Stored, eventId);
         }, ct);

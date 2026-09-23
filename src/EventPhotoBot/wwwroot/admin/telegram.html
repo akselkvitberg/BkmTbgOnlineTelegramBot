@@ -38,11 +38,10 @@
     <section class="card">
       <h2>Grupper</h2>
       <p class="muted">
-        Grupper boten er lagt til i. Boten henter bare bilder fra grupper der «Hent bilder»
-        er på. Det slås på her, eller ved at noen skriver <kbd>/start</kbd> fulgt av
-        koden fra QR-lenken i gruppen. Når det slås på, skriver boten én melding i gruppen
-        om at bildene kan bli vist på skjermen. Medlemmer som legger ut bilder, dukker opp
-        under «Personer» og følger statusen sin der.
+        Grupper boten er lagt til i. Boten henter bare bilder fra grupper som er koblet til
+        et arrangement her. Når en gruppe kobles til et arrangement, skriver boten én
+        melding i gruppen om at bildene kan bli vist på skjermen for det arrangementet.
+        Medlemmer som legger ut bilder, dukker opp under «Personer».
       </p>
       <div class="table-wrap"><table id="groups"></table></div>
     </section>
@@ -70,6 +69,7 @@
 
     let senders = [];
     let groups = [];
+    let events = [];
 
     const STATUSES = ['known', 'autoApprove', 'banned'];
     const LABELS = {
@@ -79,14 +79,20 @@
     };
 
     async function load() {
-      const response = await fetch('/api/settings', { cache: 'no-store' });
-      if (!response.ok) return;
-      const settings = await response.json();
+      const [settingsResponse, eventsResponse] = await Promise.all([
+        fetch('/api/settings', { cache: 'no-store' }),
+        fetch('/api/events', { cache: 'no-store' }),
+      ]);
+      if (!settingsResponse.ok || !eventsResponse.ok) return;
+      const settings = await settingsResponse.json();
+      events = await eventsResponse.json();
       senders = settings.senders ?? [];
       groups = settings.groups ?? [];
       renderGroups();
       renderSenders();
     }
+
+    const eventName = id => events.find(e => e.id === id)?.name ?? id;
 
     // Asked separately from load(): it goes to Telegram, and load() runs on every
     // manifest change.
@@ -98,40 +104,46 @@
     }
 
     function renderGroups() {
-      // Only the id - a number - goes into an attribute. A group's title is chosen by
-      // whoever made the group, so it is escaped into the cell like a sender's name.
+      // Only ids go into attributes; group titles and event names are escaped into text.
       const table = document.getElementById('groups');
       table.innerHTML =
         groups.length === 0
           ? '<tr><td class="muted">Boten er ikke med i noen grupper. Legg den til i en gruppe i Telegram, så dukker gruppen opp her.</td></tr>'
-          : `<tr><th>Gruppe</th><th>Hent bilder</th><th></th></tr>` +
+          : `<tr><th>Gruppe</th><th>Bildene går til</th><th></th></tr>` +
             groups.map(group => `
             <tr>
               <td>${Admin.escapeHtml(group.title) || '<span class="muted">(uten navn)</span>'}</td>
-              <td><input type="checkbox" data-id="${Number(group.id)}" aria-label="Hent bilder"
-                         ${group.listening ? 'checked' : ''}></td>
+              <td>
+                <select data-id="${Number(group.id)}" aria-label="Arrangement">
+                  <option value="" ${group.eventId ? '' : 'selected'}>Ikke koblet</option>
+                  ${events.map(ev => `
+                    <option value="${Admin.escapeHtml(ev.id)}" ${group.eventId === ev.id ? 'selected' : ''}>
+                      ${Admin.escapeHtml(ev.name)}${ev.phase === 'open' ? '' : ' (' + (ev.phase === 'closed' ? 'avsluttet' : 'planlagt') + ')'}
+                    </option>`).join('')}
+                </select>
+              </td>
               <td><button class="small quiet-danger" data-leave="${Number(group.id)}">Forlat gruppen</button></td>
             </tr>`).join('');
 
-      for (const box of table.querySelectorAll('input[type="checkbox"]'))
-        box.onchange = () => setListening(Number(box.dataset.id), box.checked);
+      for (const select of table.querySelectorAll('select'))
+        select.onchange = () => setEvent(Number(select.dataset.id), select.value);
       for (const button of table.querySelectorAll('button[data-leave]'))
         button.onclick = () => leave(Number(button.dataset.leave));
     }
 
-    async function setListening(id, listening) {
+    async function setEvent(id, eventId) {
       const group = groups.find(g => g.id === id);
-      if (listening) {
+      if (eventId) {
         const sure = await Admin.confirm({
-          title: `Hente bilder fra ${group?.title || 'denne gruppen'}?`,
+          title: `Koble ${group?.title || 'denne gruppen'} til ${eventName(eventId)}?`,
           body: 'Boten skriver en melding i gruppen om at bilder som legges ut der, kan bli '
-              + 'vist på skjermen. Bilder fra gruppens medlemmer havner i køen.',
-          confirmLabel: 'Hent bilder',
+              + 'vist på skjermen for dette arrangementet. Bilder fra gruppens medlemmer havner i køen.',
+          confirmLabel: 'Koble til',
         });
         if (!sure) { renderGroups(); return; }
       }
-      if (await Admin.api('POST', `/api/groups/${id}/listening`, { listening }))
-        Admin.toast(listening ? 'Henter bilder fra gruppen.' : 'Henter ikke lenger bilder fra gruppen.');
+      if (await Admin.api('POST', `/api/groups/${id}/event`, { eventId }))
+        Admin.toast(eventId ? `Bildene går nå til ${eventName(eventId)}.` : 'Henter ikke lenger bilder fra gruppen.');
       await load();
     }
 

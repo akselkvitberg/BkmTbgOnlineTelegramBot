@@ -51,7 +51,7 @@
         <span class="muted">
           Av: en privat chat med boten. På: gjesten er medlem i gruppen under og legger ut
           der. Boten ser ingenting i gruppen før den er lagt til, og henter ikke bilder før
-          noen har skrevet koden der eller «Hent bilder» er slått på under Telegram.
+          gruppen er koblet til et arrangement under Telegram.
         </span></label>
       <div class="field-row">
         <div class="field">
@@ -109,12 +109,6 @@
     };
     document.getElementById('addBot').onclick = () => setBotInGroup(true);
     document.getElementById('removeBot').onclick = () => setBotInGroup(false);
-
-    // In a group the join button posts the code there, which is what opens the group.
-    document.getElementById('inGroup').onchange = () => {
-      document.getElementById('join').textContent =
-        inGroup() ? 'Skriv koden i gruppen' : 'Skann QR-koden (bli med)';
-    };
 
     const NAMES = ['Ola', 'Kari', 'Per', 'Ingrid', 'Lars', 'Sofie', 'Emil', 'Nora'];
     document.getElementById('newGuest').onclick = () => {
