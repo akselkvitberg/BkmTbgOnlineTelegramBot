@@ -39,6 +39,10 @@
           <input id="guestId" type="number" value="1001">
         </div>
       </div>
+      <div class="field">
+        <label for="guestEvent">Skann QR-koden til</label>
+        <select id="guestEvent"></select>
+      </div>
       <div class="row">
         <button class="primary" id="join">Skann QR-koden (bli med)</button>
         <button id="newGuest">Ny gjest</button>
@@ -101,8 +105,24 @@
     const guest = () => ({
       id: Number(document.getElementById('guestId').value),
       name: document.getElementById('guestName').value,
+      eventId: document.getElementById('guestEvent').value,
       ...(inGroup() ? { groupId: group().id, groupTitle: group().title } : {}),
     });
+
+    async function loadEvents() {
+      const response = await fetch('/api/events', { cache: 'no-store' });
+      if (!response.ok) return;
+      const events = await response.json();
+      const select = document.getElementById('guestEvent');
+      select.replaceChildren(...events
+        .filter(ev => ev.phase === 'open')
+        .map(ev => {
+          const option = document.createElement('option');
+          option.value = ev.id;
+          option.textContent = ev.name;
+          return option;
+        }));
+    }
 
     const setBotInGroup = async present => {
       await Admin.api('POST', '/dev/group', { ...group(), present });
@@ -155,13 +175,32 @@
         const where = reply.chatId < 0 ? `gruppe ${reply.chatId}` : reply.chatId;
         meta.textContent = `Til ${where} · ${new Date(reply.at).toLocaleTimeString()}`;
         const text = document.createElement('p');
-        text.textContent = reply.reaction ? `Reagerte med ${reply.text} på bildet` : reply.text;
+        text.textContent = reply.reaction
+          ? (reply.text ? `Reagerte med ${reply.text} på bildet` : 'Fjernet reaksjonen på bildet')
+          : (reply.edited ? `(endret) ${reply.text}` : reply.text);
         item.append(meta, text);
+        if (reply.buttons?.length) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          for (const button of reply.buttons) {
+            const tap = document.createElement('button');
+            tap.className = 'small';
+            tap.textContent = button.text;
+            tap.onclick = async () => {
+              const { id, name } = guest();
+              await Admin.api('POST', '/dev/tap', { id, name, messageId: reply.messageId, data: button.callbackData });
+              loadReplies();
+            };
+            row.appendChild(tap);
+          }
+          item.appendChild(row);
+        }
         return item;
       }));
       if (replies.length === 0) list.innerHTML = '<li class="muted">Ingen svar ennå.</li>';
     }
 
+    loadEvents();
     loadReplies();
   </script>
 </body>
