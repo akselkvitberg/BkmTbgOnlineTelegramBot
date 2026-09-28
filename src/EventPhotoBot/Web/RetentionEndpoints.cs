@@ -9,13 +9,12 @@ public static class RetentionEndpoints
     public static void MapRetention(this WebApplication app)
     {
         // Called once a day by Cloud Scheduler. Outside the session gate, so it carries
-        // its own secret; with none configured the route does not exist at all.
+        // its own secret, derived from the bot token (see DerivedSecrets).
         app.MapPost("/internal/retention",
             async (HttpContext http, AppConfig config, StateStore store, IObjectStore objects,
                 ILoggerFactory loggers, CancellationToken ct) =>
             {
-                if (config.RetentionSecret is not { } secret) return Results.NotFound();
-                if (!SecretComparison.Matches(secret, http.Request.Headers["X-Retention-Secret"]))
+                if (!SecretComparison.Matches(config.RetentionSecret, http.Request.Headers["X-Retention-Secret"]))
                     return Results.Unauthorized();
 
                 var counts = await RetentionSweep.RunAsync(store, objects,

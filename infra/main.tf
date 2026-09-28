@@ -122,17 +122,17 @@ resource "google_artifact_registry_repository" "images" {
 # Secrets — resources only. Values are added outside Terraform:
 #   gcloud secrets versions add eventphoto-bot-token --data-file=-
 # A secret passed as a Terraform variable ends up in plaintext in state.
+#
+# Two, on purpose. Secret Manager bills per active version and gives six free
+# per billing account; the webhook secret and path, the cookie signing key and
+# the retention secret are derived from the bot token instead (see the app's
+# DerivedSecrets and the deploy scripts), so they cost nothing to keep.
 # ---------------------------------------------------------------------------
 
 locals {
   secret_ids = {
-    bot_token        = "${var.name}-bot-token"
-    webhook_secret   = "${var.name}-webhook-secret"
-    webhook_path     = "${var.name}-webhook-path"
-    admin_password   = "${var.name}-admin-password"
-    cookie_key       = "${var.name}-cookie-key"
-    join_code        = "${var.name}-join-code"
-    retention_secret = "${var.name}-retention-secret"
+    bot_token      = "${var.name}-bot-token"
+    admin_password = "${var.name}-admin-password"
   }
 }
 
@@ -229,13 +229,8 @@ resource "google_cloud_run_v2_service" "app" {
 
       dynamic "env" {
         for_each = {
-          TELEGRAM_BOT_TOKEN      = local.secret_ids.bot_token
-          TELEGRAM_WEBHOOK_SECRET = local.secret_ids.webhook_secret
-          TELEGRAM_WEBHOOK_PATH   = local.secret_ids.webhook_path
-          ADMIN_PASSWORD          = local.secret_ids.admin_password
-          COOKIE_SIGNING_KEY      = local.secret_ids.cookie_key
-          JOIN_CODE               = local.secret_ids.join_code
-          RETENTION_SECRET        = local.secret_ids.retention_secret
+          TELEGRAM_BOT_TOKEN = local.secret_ids.bot_token
+          ADMIN_PASSWORD     = local.secret_ids.admin_password
         }
 
         content {

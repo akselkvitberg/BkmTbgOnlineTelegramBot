@@ -15,10 +15,7 @@ public class AppConfigTests
     [
         ("BUCKET_NAME", "bucket"),
         ("TELEGRAM_BOT_TOKEN", "token"),
-        ("TELEGRAM_WEBHOOK_SECRET", "secret"),
-        ("TELEGRAM_WEBHOOK_PATH", "abc123"),
         ("ADMIN_PASSWORD", "hunter2"),
-        ("COOKIE_SIGNING_KEY", "0123456789abcdef0123456789abcdef"),
         ("JOIN_CODE", "party2026"),
     ];
 
@@ -28,19 +25,50 @@ public class AppConfigTests
         var config = AppConfig.Load(Config(Complete()));
 
         Assert.Equal("bucket", config.BucketName);
-        Assert.Equal("abc123", config.WebhookPath);
+        Assert.Equal("token", config.BotToken);
+        Assert.Equal("hunter2", config.AdminPassword);
+    }
+
+    [Fact]
+    public void Only_the_bot_token_and_admin_password_are_required()
+    {
+        // The four values that used to be secrets of their own are derived; a
+        // deployment that no longer sets them must still start.
+        var config = AppConfig.Load(Config(("BUCKET_NAME", "bucket"),
+            ("TELEGRAM_BOT_TOKEN", "token"), ("ADMIN_PASSWORD", "hunter2")));
+
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.WebhookSecretLabel), config.WebhookSecret);
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.WebhookPathLabel), config.WebhookPath);
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.CookieSigningKeyLabel), config.CookieSigningKey);
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.RetentionSecretLabel), config.RetentionSecret);
+    }
+
+    [Fact]
+    public void The_old_secret_variables_are_ignored_if_still_set()
+    {
+        // A revision deployed before the old secrets were removed from Terraform would
+        // still carry them; the derived values must win, or the webhook the deploy
+        // script registered stops matching.
+        var pairs = Complete().Concat([
+            ("TELEGRAM_WEBHOOK_SECRET", "old"), ("TELEGRAM_WEBHOOK_PATH", "old"),
+            ("COOKIE_SIGNING_KEY", "old"), ("RETENTION_SECRET", "old")]).ToArray();
+
+        var config = AppConfig.Load(Config(pairs));
+
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.WebhookPathLabel), config.WebhookPath);
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.RetentionSecretLabel), config.RetentionSecret);
     }
 
     [Fact]
     public void Load_throws_and_names_every_missing_key()
     {
         var partial = Complete().Where(p =>
-            p.Item1 is not ("ADMIN_PASSWORD" or "COOKIE_SIGNING_KEY")).ToArray();
+            p.Item1 is not ("ADMIN_PASSWORD" or "TELEGRAM_BOT_TOKEN")).ToArray();
 
         var error = Assert.Throws<InvalidOperationException>(() => AppConfig.Load(Config(partial)));
 
         Assert.Contains("ADMIN_PASSWORD", error.Message);
-        Assert.Contains("COOKIE_SIGNING_KEY", error.Message);
+        Assert.Contains("TELEGRAM_BOT_TOKEN", error.Message);
     }
 
     [Fact]
@@ -58,11 +86,11 @@ public class AppConfigTests
     public void Load_treats_a_whitespace_only_value_as_missing()
     {
         var blanked = Complete()
-            .Select(p => p.Item1 == "TELEGRAM_WEBHOOK_SECRET" ? (p.Item1, "   ") : p).ToArray();
+            .Select(p => p.Item1 == "ADMIN_PASSWORD" ? (p.Item1, "   ") : p).ToArray();
 
         var error = Assert.Throws<InvalidOperationException>(() => AppConfig.Load(Config(blanked)));
 
-        Assert.Contains("TELEGRAM_WEBHOOK_SECRET", error.Message);
+        Assert.Contains("ADMIN_PASSWORD", error.Message);
     }
 
     [Fact]
@@ -77,10 +105,9 @@ public class AppConfigTests
 
         Assert.Equal("bucket", config.BucketName);
         Assert.Equal("token", config.BotToken);
-        Assert.Equal("secret", config.WebhookSecret);
-        Assert.Equal("abc123", config.WebhookPath);
         Assert.Equal("hunter2", config.AdminPassword);
-        Assert.Equal("0123456789abcdef0123456789abcdef", config.CookieSigningKey);
+        // Derived from the trimmed token, so they match what the deploy scripts register.
+        Assert.Equal(DerivedSecrets.Derive("token", DerivedSecrets.WebhookSecretLabel), config.WebhookSecret);
     }
 
     [Fact]
@@ -139,13 +166,5 @@ public class AppConfigTests
             .Append(("JOIN_CODE", "party2026\n")).ToArray();
 
         Assert.Equal("party2026", AppConfig.Load(Config(pairs)).JoinCode);
-    }
-
-    [Fact]
-    public void The_retention_secret_is_optional_and_trimmed()
-    {
-        Assert.Null(AppConfig.Load(Config(Complete())).RetentionSecret);
-        var pairs = Complete().Append(("RETENTION_SECRET", " s3cret\n")).ToArray();
-        Assert.Equal("s3cret", AppConfig.Load(Config(pairs)).RetentionSecret);
     }
 }

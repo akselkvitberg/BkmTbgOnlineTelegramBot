@@ -12,14 +12,14 @@ namespace EventPhotoBot.Tests;
 public sealed class AppFactory : WebApplicationFactory<Program>
 {
     public const string Password = "hunter2";
-    public const string SigningKey = "0123456789abcdef0123456789abcdef";
-    public const string WebhookPath = "hook-abc";
-    public const string WebhookSecret = "tg-secret";
+    public const string BotToken = "test-token";
     public const string JoinCode = "party2026";
-    public const string DefaultRetentionSecret = "retention-secret";
 
-    /// <summary>Set before the first client is created; null leaves RETENTION_SECRET unset.</summary>
-    public string? RetentionSecret { get; init; } = DefaultRetentionSecret;
+    // Derived from the bot token, as the app derives them.
+    public static readonly string SigningKey = DerivedSecrets.Derive(BotToken, DerivedSecrets.CookieSigningKeyLabel);
+    public static readonly string WebhookPath = DerivedSecrets.Derive(BotToken, DerivedSecrets.WebhookPathLabel);
+    public static readonly string WebhookSecret = DerivedSecrets.Derive(BotToken, DerivedSecrets.WebhookSecretLabel);
+    public static readonly string RetentionSecret = DerivedSecrets.Derive(BotToken, DerivedSecrets.RetentionSecretLabel);
 
     public InMemoryObjectStore Objects { get; } = new();
     public FakeTelegramClient Telegram { get; } = new();
@@ -37,13 +37,9 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("BUCKET_NAME", "test-bucket");
-        builder.UseSetting("TELEGRAM_BOT_TOKEN", "test-token");
-        builder.UseSetting("TELEGRAM_WEBHOOK_SECRET", WebhookSecret);
-        builder.UseSetting("TELEGRAM_WEBHOOK_PATH", WebhookPath);
+        builder.UseSetting("TELEGRAM_BOT_TOKEN", BotToken);
         builder.UseSetting("ADMIN_PASSWORD", Password);
-        builder.UseSetting("COOKIE_SIGNING_KEY", SigningKey);
         builder.UseSetting("JOIN_CODE", JoinCode);
-        if (RetentionSecret is not null) builder.UseSetting("RETENTION_SECRET", RetentionSecret);
 
         builder.ConfigureServices(services =>
         {

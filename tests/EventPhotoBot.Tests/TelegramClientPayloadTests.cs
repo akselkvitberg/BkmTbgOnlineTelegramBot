@@ -26,6 +26,7 @@ public class TelegramClientPayloadTests
         {
             BucketName = "b", BotToken = "t", WebhookSecret = "s", WebhookPath = "p",
             AdminPassword = "a", CookieSigningKey = "0123456789abcdef0123456789abcdef",
+            RetentionSecret = "r",
         };
         return (new TelegramClient(new HttpClient(capture), config, NullLogger<TelegramClient>.Instance), capture);
     }

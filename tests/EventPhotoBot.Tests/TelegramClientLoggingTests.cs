@@ -83,6 +83,7 @@ public class TelegramClientLoggingTests
             WebhookPath = "hookpath",
             AdminPassword = "pw",
             CookieSigningKey = "0123456789abcdef0123456789abcdef",
+            RetentionSecret = "retention",
             JoinCode = "party2026",
         });
 

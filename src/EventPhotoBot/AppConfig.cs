@@ -3,9 +3,11 @@ using System.Text.RegularExpressions;
 namespace EventPhotoBot;
 
 /// <summary>
-/// Every value arrives as an environment variable; the secrets among them are
-/// projected from Secret Manager by Cloud Run. Missing anything is fatal at
-/// startup rather than at the first request that needs it.
+/// Every value arrives as an environment variable; the two secrets among them, the
+/// bot token and the admin password, are projected from Secret Manager by Cloud Run.
+/// The webhook secret and path, the cookie signing key and the retention secret are
+/// derived from the bot token (see DerivedSecrets) rather than stored. Missing
+/// anything is fatal at startup rather than at the first request that needs it.
 /// </summary>
 public sealed class AppConfig
 {
@@ -17,10 +19,14 @@ public sealed class AppConfig
     public required string AdminPassword { get; init; }
     public required string CookieSigningKey { get; init; }
 
+    /// <summary>The header Cloud Scheduler sends to /internal/retention.</summary>
+    public required string RetentionSecret { get; init; }
+
     /// <summary>
-    /// Optional. Read once, by StateMigration, to give the default event the code
-    /// already printed on the QR of a deployment from before events. After that every
-    /// event's code lives in state and is rotated from admin.
+    /// Optional, and no longer set by the deployment: read once, by StateMigration, to
+    /// give the default event the code already printed on the QR of a deployment from
+    /// before events. Every event's code now lives in state and is rotated from admin;
+    /// this is only for a local run or a hand-migrated old state file.
     /// </summary>
     public string? JoinCode { get; init; }
 
@@ -33,17 +39,7 @@ public sealed class AppConfig
     public bool LocalDev { get; init; }
     public string? StorageDir { get; init; }
 
-    /// <summary>
-    /// Optional. The header Cloud Scheduler sends to /internal/retention. Unset, the
-    /// route answers 404 and photos are only removed by hand.
-    /// </summary>
-    public string? RetentionSecret { get; init; }
-
-    private static readonly string[] SecretKeys =
-    [
-        "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_PATH",
-        "ADMIN_PASSWORD", "COOKIE_SIGNING_KEY",
-    ];
+    private static readonly string[] SecretKeys = ["TELEGRAM_BOT_TOKEN", "ADMIN_PASSWORD"];
 
     // Telegram's deep-link payload charset. A code outside it produces a
     // https://t.me/<bot>?start=<code> link whose payload Telegram silently drops,
@@ -76,28 +72,30 @@ public sealed class AppConfig
         {
             throw new InvalidOperationException(
                 "JOIN_CODE must be 1-64 characters from A-Z, a-z, 0-9, underscore or hyphen " +
-                "(Telegram's deep-link payload charset). Fix the secret version and redeploy.");
+                "(Telegram's deep-link payload charset).");
         }
 
         // Trimmed: `gcloud secrets versions add --data-file=-` run interactively (as the
         // runbook and deploy script tell the operator to do) stores whatever the terminal
-        // sends on Enter, trailing newline included. An untrimmed value flows straight into
-        // the HMAC key, the password comparison, the route template and the constant-time
-        // webhook check — the worst case being a webhook secret that never again matches
-        // what Telegram sends, silently 401-ing every update with nothing in the app's own
-        // logs to explain why. Trimming a shared event password costs nothing.
+        // sends on Enter, trailing newline included. An untrimmed bot token would derive
+        // a different webhook secret, path, cookie key and retention secret from the ones
+        // the deploy scripts register (they trim too) — the worst case being a webhook
+        // that never again matches what Telegram sends, silently 401-ing every update
+        // with nothing in the app's own logs to explain why. Trimming a shared event
+        // password costs nothing.
+        var botToken = config["TELEGRAM_BOT_TOKEN"]!.Trim();
         return new AppConfig
         {
             BucketName = config["BUCKET_NAME"]?.Trim() ?? "",
-            BotToken = config["TELEGRAM_BOT_TOKEN"]!.Trim(),
-            WebhookSecret = config["TELEGRAM_WEBHOOK_SECRET"]!.Trim(),
-            WebhookPath = config["TELEGRAM_WEBHOOK_PATH"]!.Trim(),
+            BotToken = botToken,
+            WebhookSecret = DerivedSecrets.Derive(botToken, DerivedSecrets.WebhookSecretLabel),
+            WebhookPath = DerivedSecrets.Derive(botToken, DerivedSecrets.WebhookPathLabel),
             AdminPassword = config["ADMIN_PASSWORD"]!.Trim(),
-            CookieSigningKey = config["COOKIE_SIGNING_KEY"]!.Trim(),
+            CookieSigningKey = DerivedSecrets.Derive(botToken, DerivedSecrets.CookieSigningKeyLabel),
+            RetentionSecret = DerivedSecrets.Derive(botToken, DerivedSecrets.RetentionSecretLabel),
             JoinCode = joinCode,
             LocalDev = localDev,
             StorageDir = config["STORAGE_DIR"]?.Trim(),
-            RetentionSecret = string.IsNullOrWhiteSpace(config["RETENTION_SECRET"]) ? null : config["RETENTION_SECRET"]!.Trim(),
         };
     }
 
@@ -105,8 +103,7 @@ public sealed class AppConfig
     public void LogLoaded(ILogger logger)
     {
         foreach (var key in SecretKeys) logger.LogInformation("Secret {Key} loaded.", key);
-        if (JoinCode is not null) logger.LogInformation("Secret {Key} loaded.", "JOIN_CODE");
-        if (RetentionSecret is not null) logger.LogInformation("Secret {Key} loaded.", "RETENTION_SECRET");
+        if (JoinCode is not null) logger.LogInformation("{Key} loaded.", "JOIN_CODE");
         if (LocalDev)
             logger.LogWarning("LOCAL_DEV: storing files in {Dir}; Telegram is offline.", StorageDir);
         else
