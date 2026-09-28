@@ -63,17 +63,10 @@ Write-Host 'Add any that are missing, then rerun. AppConfig trims whitespace on 
 Write-Host 'trailing newline from typing a value and pressing Enter is no longer fatal - but'
 Write-Host 'the form below avoids adding one in the first place:'
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-bot-token      --data-file=- --project $ProjectId"
-Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webhook-secret --data-file=- --project $ProjectId"
-Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-webhook-path   --data-file=- --project $ProjectId"
 Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-admin-password --data-file=- --project $ProjectId"
-Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-cookie-key     --data-file=- --project $ProjectId"
-Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-join-code     --data-file=- --project $ProjectId"
-Write-Host "  printf '%s' 'YOUR_VALUE' | gcloud secrets versions add $Name-retention-secret --data-file=- --project $ProjectId"
 Write-Host ''
-Write-Host 'Generate the random ones (webhook-secret, webhook-path, cookie-key, retention-secret) with:  openssl rand -hex 32'
-Write-Host 'join-code is yours to choose and goes in the QR on the screen: letters, digits,'
-Write-Host '_ and - only, at most 64 characters. Anything else fails startup, because Telegram'
-Write-Host 'silently drops a deep-link payload outside that set.'
+Write-Host 'Those two are all. The webhook path and secret, the cookie signing key and the'
+Write-Host 'retention secret are derived from the bot token, by the app and by this script.'
 Write-Host ''
 
 if (-not $SkipBuild) {
@@ -120,17 +113,21 @@ Write-Host '==> Registering the Telegram webhook' -ForegroundColor Cyan
 # space-joined rather than throwing — a silent corruption of the token, not a loud
 # failure. Out-String forces a single string in every case, and Trim() drops the
 # trailing newline gcloud's own output adds.
-$botToken      = (gcloud secrets versions access latest --secret "$Name-bot-token" --project $ProjectId | Out-String).Trim()
+$botToken = (gcloud secrets versions access latest --secret "$Name-bot-token" --project $ProjectId | Out-String).Trim()
 Assert-Success 'gcloud secrets versions access (bot-token)'
-$webhookPath   = (gcloud secrets versions access latest --secret "$Name-webhook-path" --project $ProjectId | Out-String).Trim()
-Assert-Success 'gcloud secrets versions access (webhook-path)'
-$webhookSecret = (gcloud secrets versions access latest --secret "$Name-webhook-secret" --project $ProjectId | Out-String).Trim()
-Assert-Success 'gcloud secrets versions access (webhook-secret)'
+if ([string]::IsNullOrWhiteSpace($botToken)) { throw 'bot-token has no version yet. Add it (see above) and rerun.' }
 
-if ([string]::IsNullOrWhiteSpace($botToken) -or [string]::IsNullOrWhiteSpace($webhookPath) `
-        -or [string]::IsNullOrWhiteSpace($webhookSecret)) {
-    throw 'One or more secrets have no version yet. Add the missing ones (see above) and rerun.'
+# HMAC-SHA256 of a fixed label keyed by the bot token, lowercase hex: exactly what the
+# app's DerivedSecrets computes, so the webhook registered here is the route it serves.
+function Get-DerivedSecret([string] $Label) {
+    $hmac = [System.Security.Cryptography.HMACSHA256]::new([System.Text.Encoding]::UTF8.GetBytes($botToken))
+    try {
+        $hash = $hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Label))
+        return [System.Convert]::ToHexString($hash).ToLowerInvariant()
+    } finally { $hmac.Dispose() }
 }
+$webhookPath   = Get-DerivedSecret 'webhook-path'
+$webhookSecret = Get-DerivedSecret 'webhook-secret'
 
 $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$botToken/setWebhook" -Body @{
     url                  = "$serviceUrl/tg/$webhookPath"
@@ -149,9 +146,7 @@ $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$bo
 if (-not $response.ok) { throw "setWebhook failed: $($response.description)" }
 
 Write-Host '==> Scheduling the daily retention sweep' -ForegroundColor Cyan
-$retentionSecret = (gcloud secrets versions access latest --secret "$Name-retention-secret" --project $ProjectId | Out-String).Trim()
-Assert-Success 'gcloud secrets versions access (retention-secret)'
-if ([string]::IsNullOrWhiteSpace($retentionSecret)) { throw 'retention-secret has no version yet. Add it (see above) and rerun.' }
+$retentionSecret = Get-DerivedSecret 'retention-secret'
 
 # Created with gcloud, not Terraform, for the same reason as every secret value here:
 # the header would otherwise sit in plaintext in Terraform state.

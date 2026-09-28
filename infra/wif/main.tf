@@ -116,16 +116,17 @@ resource "google_service_account_iam_member" "wif_binding" {
 # i.e. it CAN read a secret version's payload, not just create/configure the
 # secret resource and its IAM policy. That is not an oversight to narrow —
 # .github/workflows/deploy.yml's webhook-registration step genuinely reads
-# three payloads (the bot token, webhook path and webhook secret) to call
-# Telegram's setWebhook, the same values infra/deploy.ps1 reads from a
-# human's own gcloud session for the same call. There is no predefined role
+# the bot token's payload to call Telegram's setWebhook (and to derive the
+# webhook path and secret, and the retention job's secret, from it), the same
+# value infra/deploy.ps1 reads from a human's own gcloud session for the same
+# call. There is no predefined role
 # that creates secret resources without also being able to read their
 # versions — Google ships secretVersionManager as the read/write-versions
 # role precisely because admin already includes it, not as a narrower
 # alternative to it — so this grant is the correct one, not an approximation
-# of a narrower one. What keeps the exposure bounded is that the three
-# values this role lets the deploy SA read are masked the instant the
-# workflow captures them — see that step's own comment. See the GHA report
+# of a narrower one. What keeps the exposure bounded is that the token and
+# every value derived from it are masked the instant the workflow computes
+# them — see that step's own comment. See the GHA report
 # for the one-line justification of every other entry, restated here for
 # anyone reading only this file.
 # ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ locals {
     "roles/serviceusage.serviceUsageAdmin", # enable/track the APIs infra/main.tf's google_project_service turns on
     "roles/storage.admin",                  # create/configure the images bucket and its IAM, and read/write Terraform state objects in the backend bucket
     "roles/artifactregistry.admin",         # create the Artifact Registry repository, and push the built image to it
-    "roles/secretmanager.admin",            # create the 7 secret resources and their IAM bindings, AND read a version's payload — deploy.yml's webhook step needs the latter; see the comment block above
+    "roles/secretmanager.admin",            # create the 2 secret resources and their IAM bindings, AND read a version's payload — deploy.yml's webhook step needs the latter; see the comment block above
     "roles/iam.serviceAccountAdmin",        # create the Cloud Run runtime service account (google_service_account.runtime in infra/main.tf)
     "roles/iam.serviceAccountUser",         # let Terraform attach that runtime service account to the Cloud Run service (actAs)
     "roles/run.admin",                      # create/update the Cloud Run service and set its IAM policy (the allUsers invoker binding)

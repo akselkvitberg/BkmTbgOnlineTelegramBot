@@ -344,11 +344,10 @@ Manual (`workflow_dispatch`-only) GitHub Actions workflows — `plan`, `deploy`,
 | Variable | Source | Notes |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Secret Manager | From BotFather |
-| `TELEGRAM_WEBHOOK_SECRET` | Secret Manager | Sent by Telegram as a header on every update |
-| `TELEGRAM_WEBHOOK_PATH` | Secret Manager | Random path segment, defence in depth |
 | `ADMIN_PASSWORD` | Secret Manager | The single shared password |
-| `COOKIE_SIGNING_KEY` | Secret Manager | Rotating it logs everyone out |
 | `BUCKET_NAME` | Plain env var | |
+
+Four more values are derived from the bot token rather than stored, as HMAC-SHA256 of a fixed label keyed by the token (`DerivedSecrets`), computed identically by the app and the deploy scripts: the webhook secret (sent by Telegram as a header on every update), the webhook path (a random path segment, defence in depth), the cookie signing key, and the retention job's header. Secret Manager bills per active version with six free per billing account; two secrets stay inside that. Anyone with the bot token can compute all four, which adds nothing: the token alone already lets its holder take over the bot. Replacing the token replaces all four, and the next deploy re-registers the webhook and the retention job and signs everyone out.
 
 The whitelist is deliberately absent here. It is state, not configuration — see `settings.whitelist`. The event name is absent for the same reason: it is display text an organiser may want to correct once the screen is already up, so it lives in `settings.eventName` and is edited from the admin settings page. It started out as an env var beside `BUCKET_NAME` and cost a redeploy to change, which is exactly the trade this spec rejects elsewhere.
 

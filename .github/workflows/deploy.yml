@@ -191,31 +191,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Each fetch is guarded individually rather than with a trailing
-          # `[ -z ... ]` check after all three: under `set -e`, a `gcloud`
-          # call that fails outright (no version at all — the common case
-          # for a secret nobody has added yet) aborts the script at the
-          # assignment itself, so a check placed after all three assignments
-          # never runs for that case; it would only ever fire for the much
-          # rarer "version exists but is empty" case. `cmd || { ...; }` is a
-          # checked context (`-e` does not trigger on the left side of `||`,
-          # same as the `&&` idiom the preflight steps use above), so each
-          # failure is caught right where it happens, with a message naming
-          # which secret is missing rather than gcloud's own bare NOT_FOUND.
+          # Guarded with `cmd || { ...; }` rather than a check afterwards: under
+          # `set -e`, a `gcloud` call that fails outright (no version at all —
+          # the common case for a secret nobody has added yet) aborts the script
+          # at the assignment itself, so a later `[ -z ... ]` would never run.
+          # `-e` does not trigger on the left side of `||`, so the failure is
+          # caught right here, with a message naming the missing secret rather
+          # than gcloud's own bare NOT_FOUND.
           bot_token=$(gcloud secrets versions access latest --secret "$NAME-bot-token" --project "$GCP_PROJECT_ID") \
             || { echo "No accessible version for secret '$NAME-bot-token'. Add one with 'gcloud secrets versions add $NAME-bot-token --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
-          webhook_path=$(gcloud secrets versions access latest --secret "$NAME-webhook-path" --project "$GCP_PROJECT_ID") \
-            || { echo "No accessible version for secret '$NAME-webhook-path'. Add one with 'gcloud secrets versions add $NAME-webhook-path --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
-          webhook_secret=$(gcloud secrets versions access latest --secret "$NAME-webhook-secret" --project "$GCP_PROJECT_ID") \
-            || { echo "No accessible version for secret '$NAME-webhook-secret'. Add one with 'gcloud secrets versions add $NAME-webhook-secret --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
 
-          # Mask immediately, in the same breath they're captured. These are
-          # never registered as GitHub *secrets* (the constraint on this repo
-          # is that no bot token, password or signing key is ever configured
-          # as one), so nothing masks them automatically the way secrets.*
-          # values are — this line is what stands in for that. Nothing below
-          # may echo, printf, or `set -x` these three variables.
+          # Mask immediately, in the same breath it's captured. It is never
+          # registered as a GitHub *secret* (the constraint on this repo is
+          # that no bot token, password or signing key is ever configured as
+          # one), so nothing masks it automatically the way secrets.* values
+          # are — this line is what stands in for that. Nothing below may
+          # echo, printf, or `set -x` it or anything derived from it.
           echo "::add-mask::$bot_token"
+
+          # The webhook path and secret are not stored: they are HMAC-SHA256 of
+          # a fixed label keyed by the (trimmed) bot token, exactly as the app's
+          # DerivedSecrets computes them. The token goes in through the
+          # environment, not argv — see the curl comment below for why argv is
+          # off limits — and python3 rather than `openssl -hmac TOKEN` for the
+          # same reason.
+          derive() {
+            BOT_TOKEN="$bot_token" python3 -c 'import hashlib, hmac, os, sys
+          print(hmac.new(os.environ["BOT_TOKEN"].strip().encode(), sys.argv[1].encode(), hashlib.sha256).hexdigest())' "$1"
+          }
+          webhook_path=$(derive webhook-path)
+          webhook_secret=$(derive webhook-secret)
           echo "::add-mask::$webhook_path"
           echo "::add-mask::$webhook_secret"
 
@@ -263,11 +268,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          retention_secret=$(gcloud secrets versions access latest --secret "$NAME-retention-secret" --project "$GCP_PROJECT_ID") \
-            || { echo "No accessible version for secret '$NAME-retention-secret'. Add one with 'gcloud secrets versions add $NAME-retention-secret --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          bot_token=$(gcloud secrets versions access latest --secret "$NAME-bot-token" --project "$GCP_PROJECT_ID") \
+            || { echo "No accessible version for secret '$NAME-bot-token'. Add one with 'gcloud secrets versions add $NAME-bot-token --data-file=-' (see docs/RUNBOOK.md) and rerun." >&2; exit 1; }
+          echo "::add-mask::$bot_token"
 
-          # Mask immediately, same as the webhook step above - this value is
-          # never registered as a GitHub secret, so nothing masks it for free.
+          # Derived from the bot token like the webhook values in the step above,
+          # and masked the same way - see that step's comments.
+          retention_secret=$(BOT_TOKEN="$bot_token" python3 -c 'import hashlib, hmac, os
+          print(hmac.new(os.environ["BOT_TOKEN"].strip().encode(), b"retention-secret", hashlib.sha256).hexdigest())')
           echo "::add-mask::$retention_secret"
 
           # attempt-deadline: Cloud Scheduler's own default for an HTTP target is

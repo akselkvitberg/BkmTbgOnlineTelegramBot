@@ -23,17 +23,7 @@ public class RetentionEndpointTests : IClassFixture<AppFactory>
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(Sweep(null))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(Sweep("wrong"))).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Sweep(AppFactory.DefaultRetentionSecret))).StatusCode);
-    }
-
-    [Fact]
-    public async Task Without_a_configured_secret_the_sweep_route_does_not_exist()
-    {
-        using var factory = new AppFactory { RetentionSecret = null };
-
-        var response = await factory.CreateAnonymousClient().SendAsync(Sweep("anything"));
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Sweep(AppFactory.RetentionSecret))).StatusCode);
     }
 
     [Fact]
