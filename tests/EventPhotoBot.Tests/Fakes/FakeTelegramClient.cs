@@ -43,9 +43,11 @@ public sealed class FakeTelegramClient : ITelegramClient
     public bool CanReadAllGroupMessages { get; set; } = true;
     public bool GetMeThrows { get; set; }
     public bool GetMeHangs { get; set; }
+    public int GetMeCalls;
 
     public async Task<BotProfile?> GetMeAsync(CancellationToken ct = default)
     {
+        Interlocked.Increment(ref GetMeCalls);
         if (GetMeThrows) throw new HttpRequestException("getMe unavailable");
         if (GetMeHangs) await Task.Delay(Timeout.Infinite, ct);
         return new BotProfile(Username, CanReadAllGroupMessages);

@@ -216,11 +216,18 @@ public static class ApiEndpoints
             });
 
         app.MapGet("/api/manifest",
-            (HttpContext http, StateStore store, BotIdentity identity) =>
+            async (HttpContext http, StateStore store, BotIdentity identity, CancellationToken ct) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
-            var etag = $"\"{store.Generation}\"";
+            // The join link is cached after the first poll that learns it; until then
+            // a poll may wait on one getMe, bounded by BotIdentity.LookupTimeout.
+            var joinUrl = await identity.GetJoinUrlAsync(ct);
+
+            // The join link can go from unknown to known within one generation, so it
+            // is part of the ETag: otherwise a screen that polled before the username
+            // resolved would be told 304 and never show the QR.
+            var etag = $"\"{store.Generation}{(joinUrl is null ? "" : "-j")}\"";
 
             if (http.Request.Headers.IfNoneMatch.Any(v => v == etag))
                 return Results.StatusCode(StatusCodes.Status304NotModified);
@@ -228,12 +235,8 @@ public static class ApiEndpoints
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
 
-            // identity.JoinUrl is fixed for the life of the instance, so it cannot
-            // change between two polls of the same generation — the ETag above still
-            // keys off store.Generation alone, and the no-object-store-IO guarantee
-            // this path is tested for is unaffected.
             return Results.Ok(ManifestBuilder.Build(
-                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, identity.JoinUrl));
+                store.Snapshot, store.Generation, DateTimeOffset.UtcNow, joinUrl));
         });
 
         app.MapPost("/api/images/{id}/status",

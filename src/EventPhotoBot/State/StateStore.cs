@@ -17,15 +17,48 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
     private static readonly TimeSpan LoadRetryDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Lock _loadLock = new();
+    private Task? _initialLoad;
+    private volatile bool _loaded;
     private EventState _state = new();
     private byte[] _lastBytes = [];
     private long _generation;
 
-    /// <summary>The live state. Read freely; mutate only through MutateAsync.</summary>
-    public EventState Snapshot => _state;
+    /// <summary>
+    /// The live state. Read freely; mutate only through MutateAsync. Throws until
+    /// the state has been loaded: serving the empty defaults instead would show an
+    /// empty slideshow and let a mutation build on nothing.
+    /// </summary>
+    public EventState Snapshot => _loaded ? _state : throw NotLoaded();
 
     /// <summary>The GCS generation of state.json, used directly as the manifest ETag.</summary>
-    public long Generation => _generation;
+    public long Generation => _loaded ? _generation : throw NotLoaded();
+
+    public bool IsLoaded => _loaded;
+
+    private static InvalidOperationException NotLoaded() =>
+        new("State has not been loaded yet; call EnsureLoadedAsync first.");
+
+    /// <summary>
+    /// Loads state.json the first time anyone needs it, not at startup: startup has
+    /// to reach the listening port as fast as possible, and a GCS read there only
+    /// delays that. Concurrent callers share one read. The read is not tied to any
+    /// one caller's cancellation, so a request that gives up does not waste it; a
+    /// read that fails is not cached, and the next caller tries again.
+    /// </summary>
+    public Task EnsureLoadedAsync(CancellationToken ct = default)
+    {
+        if (_loaded) return Task.CompletedTask;
+
+        Task load;
+        lock (_loadLock)
+        {
+            if (_initialLoad is null || _initialLoad.IsFaulted || _initialLoad.IsCanceled)
+                _initialLoad = LoadAsync(CancellationToken.None);
+            load = _initialLoad;
+        }
+        return load.WaitAsync(ct);
+    }
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
@@ -35,6 +68,7 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
             _state = new EventState();
             _lastBytes = [];
             _generation = 0;
+            _loaded = true;
             logger?.LogInformation("No existing state found; starting from defaults.");
             return;
         }
@@ -43,18 +77,18 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
                  ?? new EventState();
         _lastBytes = stored.Bytes;
         _generation = stored.Generation;
+        _loaded = true;
         logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
             _generation, _state.Images.Count);
     }
 
     /// <summary>
-    /// Startup calls this before anything else is mapped, including /healthz, so a
-    /// transient failure reaching the bucket — permission propagation lag on a fresh
-    /// deploy, a passing GCS 5xx, a cold IAM token fetch — must not crash the revision
-    /// before Kestrel ever binds. A small bounded retry absorbs that; a persistently
-    /// broken bucket still fails fast once attempts are exhausted, unchanged from
-    /// before. Cancellation is never retried — it means the caller stopped waiting,
-    /// not that the bucket is unreachable.
+    /// The first request after a cold start waits on this, so a transient failure
+    /// reaching the bucket — permission propagation lag on a fresh deploy, a passing
+    /// GCS 5xx, a cold IAM token fetch — must not fail that request. A small bounded
+    /// retry absorbs that; a persistently broken bucket still fails the request once
+    /// attempts are exhausted, and the next request tries again. Cancellation is never
+    /// retried — it means the caller stopped waiting, not that the bucket is unreachable.
     /// </summary>
     private async Task<StoredObject?> ReadStateWithRetryAsync(CancellationToken ct)
     {
@@ -79,6 +113,7 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
 
     public async Task<T> MutateAsync<T>(Func<EventState, T> mutate, CancellationToken ct = default)
     {
+        await EnsureLoadedAsync(ct);
         await _gate.WaitAsync(ct);
         try
         {

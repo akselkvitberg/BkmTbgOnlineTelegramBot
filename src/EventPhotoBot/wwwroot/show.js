@@ -269,9 +269,10 @@
   // ---- join QR -------------------------------------------------------------
 
   /// The QR is fixed for the life of the instance, so its src is set once rather
-  /// than reassigned on every two-second poll. joinUrl is null when the bot's
-  /// username could not be resolved at startup, in which case no QR is shown at
-  /// all — the slideshow is not worth failing over a missing affordance.
+  /// than reassigned on every two-second poll. joinUrl is null while the bot's
+  /// username is unknown (Telegram has not answered yet), in which case no QR is
+  /// shown until a later poll carries it — the slideshow is not worth failing
+  /// over a missing affordance.
   ///
   /// Visibility, unlike the src, is decided on every poll: showJoinInvite can be
   /// turned off mid-event, and the screen it is turned off for is one that must
