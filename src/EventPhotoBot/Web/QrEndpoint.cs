@@ -10,7 +10,7 @@ public static class QrEndpoint
     public static void MapJoinQr(this WebApplication app)
     {
         app.MapGet("/api/join-qr.svg",
-            ([FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
+            (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
         {
             // Served for a scheduled event too, so its QR can be printed in advance;
             // refused once it is over, when the code only earns a "that has ended".
@@ -26,6 +26,9 @@ public static class QrEndpoint
             using var data = generator.CreateQrCode(url, QRCodeGenerator.ECCLevel.M);
             var svg = new SvgQRCode(data).GetGraphic(4);
 
+            // The code can be rotated, so the same address may encode a different link
+            // tomorrow; a cached copy of the old QR would send people to a dead code.
+            http.Response.Headers.CacheControl = "no-cache";
             return Results.Text(svg, "image/svg+xml");
         });
     }

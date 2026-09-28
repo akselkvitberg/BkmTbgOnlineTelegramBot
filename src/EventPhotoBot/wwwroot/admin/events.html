@@ -115,7 +115,7 @@
             ${schedule ? ' · ' + Admin.escapeHtml(schedule) : ''}
           </p>
           ${ev.phase !== 'closed' && ev.joinUrl ? `
-            <img class="event-qr" src="/api/join-qr.svg?event=${encodeURIComponent(ev.id)}" alt="QR-kode for ${Admin.escapeHtml(ev.name)}">
+            <img class="event-qr" src="/api/join-qr.svg?event=${encodeURIComponent(ev.id)}&v=${encodeURIComponent(ev.joinCode)}" alt="QR-kode for ${Admin.escapeHtml(ev.name)}">
             <p><code>${Admin.escapeHtml(ev.joinUrl)}</code></p>` : ''}
           <div class="row">
             <a class="link-button" href="/show${ev.isDefault ? '' : '?event=' + encodeURIComponent(ev.id)}">Skjerm</a>

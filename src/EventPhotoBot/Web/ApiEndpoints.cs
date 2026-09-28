@@ -428,7 +428,7 @@ public static class ApiEndpoints
 
         app.MapPost("/api/images",
             async (HttpRequest http, [FromQuery(Name = "event")] string? eventId, StateStore store,
-                IObjectStore objects, CancellationToken ct) =>
+                IObjectStore objects, ILoggerFactory loggers, CancellationToken ct) =>
             {
                 if (EventScope.Resolve(store.Snapshot, eventId) is not { } target) return EventScope.UnknownEvent();
                 if (!http.HasFormContentType) return Results.BadRequest(new { error = "Forventet en filopplasting." });
@@ -482,25 +482,49 @@ public static class ApiEndpoints
                 await objects.WriteAsync(ObjectPaths.Display(id), processed.Display, "image/jpeg", null, ct);
                 await objects.WriteAsync(ObjectPaths.Thumb(id), processed.Thumb, "image/jpeg", null, ct);
 
-                await store.MutateAsync(state => state.Images[id] = new ImageRecord
+                var stored = await store.MutateAsync(state =>
                 {
-                    Id = id,
-                    EventId = targetId,
-                    Source = ImageSource.Admin,
-                    SenderId = null,
-                    SenderName = null,
-                    FileUniqueId = null,
-                    Sha256 = processed.Sha256,
-                    Caption = null,
-                    Status = ImageStatus.Approved,
-                    Pin = PinKind.None,
-                    Width = processed.Width,
-                    Height = processed.Height,
-                    ReceivedAt = now,
-                    DecidedAt = now,
-                    SortKey = id,
-                    OriginalExtension = extension,
+                    // Re-checked under the lock: the event can be deleted during the
+                    // upload and decode, and a record for it would belong to no event —
+                    // on no screen, and never reached by retention.
+                    if (state.Find(targetId) is null) return false;
+                    state.Images[id] = new ImageRecord
+                    {
+                        Id = id,
+                        EventId = targetId,
+                        Source = ImageSource.Admin,
+                        SenderId = null,
+                        SenderName = null,
+                        FileUniqueId = null,
+                        Sha256 = processed.Sha256,
+                        Caption = null,
+                        Status = ImageStatus.Approved,
+                        Pin = PinKind.None,
+                        Width = processed.Width,
+                        Height = processed.Height,
+                        ReceivedAt = now,
+                        DecidedAt = now,
+                        SortKey = id,
+                        OriginalExtension = extension,
+                    };
+                    return true;
                 });
+
+                if (!stored)
+                {
+                    // Nothing in state points at the objects written above. Best effort,
+                    // as in the other delete paths — see ImageObjects.DeleteAllAsync.
+                    try
+                    {
+                        await ImageObjects.DeleteAsync(objects, id, extension, CancellationToken.None);
+                    }
+                    catch (Exception e)
+                    {
+                        loggers.CreateLogger("ImageObjects").LogWarning(e,
+                            "Failed to delete objects for image {ImageId} after its event was deleted; its bytes are now orphaned.", id);
+                    }
+                    return EventScope.UnknownEvent();
+                }
 
                 return Results.Ok(new { id });
             }).DisableAntiforgery();

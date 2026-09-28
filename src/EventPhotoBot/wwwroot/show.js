@@ -132,7 +132,7 @@
   let seenIds = new Set();
   let currentImageId = null;
   let currentImage = null; // last image passed to render(), for instant caption toggling
-  let joinReady = false;   // the QR src is set once, not on every two-second poll
+  let armedJoinUrl = null; // the join link the QR src was last set for; null while unarmed
 
   let stageLayout = null;  // the layout the stage's DOM is currently built for
   let cells = [];          // the stage's slot elements, in slot order
@@ -273,9 +273,10 @@
 
   // ---- join QR -------------------------------------------------------------
 
-  /// The QR is fixed for the life of the instance, so its src is set once rather
-  /// than reassigned on every two-second poll. joinUrl is null when the bot's
-  /// username could not be resolved at startup, in which case no QR is shown at
+  /// The QR changes only when the join link does (an organiser rotating the code),
+  /// so its src is set when the link changes rather than reassigned on every
+  /// two-second poll. joinUrl is null when the bot's username could not be resolved
+  /// at startup, or while the event is not open, in which case no QR is shown at
   /// all — the slideshow is not worth failing over a missing affordance.
   ///
   /// Visibility, unlike the src, is decided on every poll: showJoinInvite can be
@@ -289,18 +290,20 @@
 
     // A hidden <img> still fetches its src, so the QR is armed only once the
     // screen is actually inviting anyone — turning the setting on mid-event
-    // arms it on that poll instead.
-    if (joinUrl && inviting && !joinReady) {
-      joinQrEl.src = scoped('/api/join-qr.svg');
-      joinBadgeEl.src = scoped('/api/join-qr.svg');
+    // arms it on that poll instead. A rotated code changes joinUrl, which re-arms
+    // it; the version in the src keeps the browser from reusing the old SVG.
+    if (joinUrl && inviting && joinUrl !== armedJoinUrl) {
+      const src = qrSrc(joinUrl);
+      joinQrEl.src = src;
+      joinBadgeEl.src = src;
       joinHandleEl.textContent = handleFrom(joinUrl);
-      joinReady = true;
+      armedJoinUrl = joinUrl;
     }
 
-    // joinUrl goes null when the event closes, which does not itself unset joinReady -
-    // without this, a reopened event's next poll would see joinReady already true and
-    // never re-arm the QR src.
-    if (!joinUrl) joinReady = false;
+    // joinUrl goes null when the event closes; forgetting the armed link means a
+    // reopened event's next poll sets the src again.
+    if (!joinUrl) armedJoinUrl = null;
+    const joinReady = armedJoinUrl !== null;
 
     joinEl.hidden = !joinReady || !inviting;
     // Large in the empty state, small in the corner once there are photos to show.
@@ -311,6 +314,16 @@
     document.body.classList.toggle('has-badge', !joinBadgeEl.hidden);
     emptyInviteEl.hidden = !inviting;
     emptyQuietEl.hidden = inviting;
+  }
+
+  /// The QR's URL, versioned by the join link it encodes: the same address for a
+  /// different code would let the browser show the old, no longer valid QR.
+  function qrSrc(joinUrl) {
+    let hash = 0;
+    for (let i = 0; i < joinUrl.length; i++) hash = (hash * 31 + joinUrl.charCodeAt(i)) | 0;
+    const version = `v=${(hash >>> 0).toString(36)}`;
+    const base = scoped('/api/join-qr.svg');
+    return base + (base.includes('?') ? '&' : '?') + version;
   }
 
   function handleFrom(joinUrl) {
