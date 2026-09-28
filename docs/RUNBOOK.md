@@ -390,7 +390,7 @@ several depend on state left by the one before.
       `gcloud run services update eventphoto --project PROJECT_ID --region
       europe-north1` (with no real change). Pass: the slideshow keeps going
       from its next poll with no images or approvals lost — state is
-      reloaded from `state.json` at the new instance's startup. Do **not**
+      reloaded from `state.json` by the new instance's first request. Do **not**
       use `infra/deploy.ps1 -SkipBuild` for this check while the event is
       live, and do not run the **deploy** workflow either: both re-register
       the webhook with `drop_pending_updates: true`,
@@ -590,9 +590,9 @@ steps above are what actually worked, including the two corrections this
 paragraph sits between (step 0, and the PowerShell form of the secret
 commands). The failure points are the documented ones: the first `deploy`
 run stops at "Terraform apply" with `Secret .../versions/latest was not
-found` listing all seven secrets. Cloud Run's startup probe hits `/healthz`
-from inside the service; do not be alarmed if that same path answers 404
-through an outbound proxy while the revision reports healthy.
+found` listing all seven secrets. Cloud Run's startup probe is a TCP check on
+the port, and `/healthz` never touches the bucket; do not be alarmed if that
+path answers 404 through an outbound proxy while the revision reports healthy.
 
 Note that `workflow_dispatch` workflows only appear in the Actions tab once
 the workflow file is on the repository's **default branch** — a first deploy
@@ -643,13 +643,17 @@ were in flight at that moment; a photo sent in that window is gone, silently.
 That was already true before this release, it just could no longer be
 scheduled around "between events" once Daglig runs every day.
 
-**What the first start after upgrading does, automatically, no action
-needed:** it rewrites `state.json` into the events shape — a `Daglig` event
+**What the new revision's first request does, automatically, no action
+needed:** nothing is read at startup any more, so the first request that
+reaches the new instance (a screen's poll, a webhook, opening the admin) loads
+`state.json` and, in the same step and before answering anything, rewrites it
+into the events shape — a `Daglig` event
 is created from the old settings, every image gets `EventId = "daglig"`,
 every sender becomes a Daglig member with their old status carried over, and
 `JOIN_CODE` seeds Daglig's join code if it was set.
 
-**Right after the first start, check:**
+**Right after the upgrade, open the admin (which triggers that first load if
+nothing else has yet) and check:**
 
 - [ ] Telegram → Personer still lists everyone, with the same auto-approve
       and ban status as before.

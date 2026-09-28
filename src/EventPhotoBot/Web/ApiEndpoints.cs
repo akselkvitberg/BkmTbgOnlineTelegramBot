@@ -239,7 +239,8 @@ public static class ApiEndpoints
             });
 
         app.MapGet("/api/manifest",
-            (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
+            async (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store,
+                BotIdentity identity, CancellationToken ct) =>
         {
             // Served entirely from memory. No object-store I/O on this path, ever:
             // it runs every two seconds per open page for the length of the event.
@@ -247,17 +248,25 @@ public static class ApiEndpoints
             if (EventScope.Resolve(state, eventId) is not { } ev) return EventScope.UnknownEvent();
             var now = DateTimeOffset.UtcNow;
 
+            // The join link is cached after the first poll that learns it; until then
+            // a poll may wait on one getMe, bounded by BotIdentity.LookupTimeout.
+            var joinUrl = await identity.GetJoinUrlAsync(ev.JoinCode, ct);
+
             // The generation alone is not enough: which event this is, and whether it is
             // open, change what the screen gets — and an event opens and closes on its
-            // own clock, with no write to move the generation.
-            var etag = $"\"{store.Generation}-{ev.Id}-{(ev.IsOpen(now) ? "open" : "closed")}\"";
+            // own clock, with no write to move the generation. The join link can also go
+            // from unknown to known within one generation; without it in the ETag, a
+            // screen that polled before the username resolved would be told 304 and
+            // never show the QR. A rotated code is a state write, so the generation
+            // already covers that.
+            var etag = $"\"{store.Generation}-{ev.Id}-{(ev.IsOpen(now) ? "open" : "closed")}{(joinUrl is null ? "" : "-j")}\"";
 
             if (http.Request.Headers.IfNoneMatch.Any(v => v == etag))
                 return Results.StatusCode(StatusCodes.Status304NotModified);
 
             http.Response.Headers.ETag = etag;
             http.Response.Headers.CacheControl = "no-cache";
-            return Results.Ok(ManifestBuilder.Build(state, ev, store.Generation, now, identity.JoinUrlFor(ev.JoinCode)));
+            return Results.Ok(ManifestBuilder.Build(state, ev, store.Generation, now, joinUrl));
         });
 
         app.MapPost("/api/images/{id}/status",

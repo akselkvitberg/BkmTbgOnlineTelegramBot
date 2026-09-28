@@ -42,7 +42,7 @@ flowchart LR
   APP -->|images + state.json| GCS[(GCS bucket)]
 ```
 
-The service reads `state.json` once at startup and holds it in memory. Reads are served from memory; every change mutates memory and writes the whole object back. The slideshow polls `/api/manifest` every two seconds with an ETag, so an approval, hide or delete is visible on the next poll.
+The service reads `state.json` once, on the first request that needs it (never before listening, so a cold start is only process start), and holds it in memory. Reads are served from memory; every change mutates memory and writes the whole object back. The slideshow polls `/api/manifest` every two seconds with an ETag, so an approval, hide or delete is visible on the next poll.
 
 **Decisions**
 
@@ -237,7 +237,7 @@ Slide duration, transition, ordering, boost on/off, auto-approve for trusted sen
 | Method and path | Auth | Purpose |
 | --- | --- | --- |
 | `POST /tg/{webhookPath}` | Secret header | Telegram updates |
-| `GET /healthz` | none | Cloud Run startup and liveness probe |
+| `GET /healthz` | none | Liveness check; never touches the bucket. The Cloud Run startup probe is a TCP check on the port |
 | `GET /login`, `POST /login` | none | Password form; sets the session cookie |
 | `GET /show` | session | Slideshow page |
 | `GET /api/manifest` | session | Ordered list of visible images, plus settings and the pending count; ETag is the `state.json` generation, polled every 2 s |
@@ -420,7 +420,7 @@ Set a billing budget alert at €20 and make teardown a scheduled task anyway. T
 | Telegram uptake is low outside the core group | Decide who the senders are before building; the whitelist makes this explicit anyway |
 | Display machine sleeps or the browser tab is throttled | Wake lock, OS sleep disabled, test for an hour beforehand |
 | Venue internet drops | Slideshow keeps running on its cached manifest; images already fetched stay in browser cache. Polls back off to ten seconds and recover on their own |
-| Single instance restarts mid-event | `state.json` holds everything; the new instance reloads it at startup and the next poll picks up. Loss is under two seconds, plus a few seconds of cold start if the instance had scaled to zero |
+| Single instance restarts mid-event | `state.json` holds everything; the new instance reloads it on its first request and the next poll picks up. Loss is under two seconds, plus a few seconds of cold start if the instance had scaled to zero |
 | A bug in the state write path corrupts everything at once | `state-prev.json` is written before each state write, so the previous generation is always one copy away. The generation precondition catches interleaved writes rather than letting them overwrite silently |
 | Cold start after a quiet period | Only affects the first request after roughly fifteen idle minutes. An open slideshow polls often enough that it never happens mid-event; startup CPU boost keeps it to a few seconds regardless |
 | Someone shares the password | Accepted. One password is the requirement; there is nothing behind it but event photos |

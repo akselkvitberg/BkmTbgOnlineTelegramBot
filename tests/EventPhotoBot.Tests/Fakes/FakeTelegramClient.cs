@@ -77,9 +77,14 @@ public sealed class FakeTelegramClient : ITelegramClient
     public string? Username { get; set; } = "eventphotobot";
     public bool CanReadAllGroupMessages { get; set; } = true;
     public bool GetMeThrows { get; set; }
+    public bool GetMeHangs { get; set; }
+    public int GetMeCalls;
 
-    public Task<BotProfile?> GetMeAsync(CancellationToken ct = default) =>
-        GetMeThrows
-            ? throw new HttpRequestException("getMe unavailable")
-            : Task.FromResult<BotProfile?>(new BotProfile(Username, CanReadAllGroupMessages));
+    public async Task<BotProfile?> GetMeAsync(CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref GetMeCalls);
+        if (GetMeThrows) throw new HttpRequestException("getMe unavailable");
+        if (GetMeHangs) await Task.Delay(Timeout.Infinite, ct);
+        return new BotProfile(Username, CanReadAllGroupMessages);
+    }
 }

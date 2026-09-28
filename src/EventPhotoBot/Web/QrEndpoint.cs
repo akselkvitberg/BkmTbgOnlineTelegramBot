@@ -10,13 +10,15 @@ public static class QrEndpoint
     public static void MapJoinQr(this WebApplication app)
     {
         app.MapGet("/api/join-qr.svg",
-            (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store, BotIdentity identity) =>
+            async (HttpContext http, [FromQuery(Name = "event")] string? eventId, StateStore store,
+                BotIdentity identity, CancellationToken ct) =>
         {
             // Served for a scheduled event too, so its QR can be printed in advance;
             // refused once it is over, when the code only earns a "that has ended".
+            // The event is checked first, so an unknown or closed one never asks Telegram.
             if (EventScope.Resolve(store.Snapshot, eventId) is not { } ev
                 || ev.PhaseAt(DateTimeOffset.UtcNow) == EventPhase.Closed
-                || identity.JoinUrlFor(ev.JoinCode) is not { } url)
+                || await identity.GetJoinUrlAsync(ev.JoinCode, ct) is not { } url)
                 return Results.NotFound();
 
             // Error correction M: the QR hangs on a wall and may be photographed at an

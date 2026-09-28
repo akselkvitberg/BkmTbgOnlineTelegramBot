@@ -38,14 +38,17 @@ public static class EventEndpoints
 
     public static void MapEvents(this WebApplication app)
     {
-        app.MapGet("/api/events", (StateStore store, BotIdentity identity) =>
+        app.MapGet("/api/events", async (StateStore store, BotIdentity identity, CancellationToken ct) =>
         {
             var state = store.Snapshot;
             var now = DateTimeOffset.UtcNow;
+            // One lookup for the whole list, cached after the first; null leaves every
+            // joinUrl out until Telegram answers.
+            var username = await identity.GetUsernameAsync(ct);
             return Results.Ok(state.Events
                 .OrderByDescending(e => e.IsDefault)
                 .ThenByDescending(e => e.CreatedAt)
-                .Select(e => View(state, e, now, identity)));
+                .Select(e => View(state, e, now, username)));
         });
 
         app.MapPost("/api/events", async (CreateEventRequest request, StateStore store) =>
@@ -208,7 +211,7 @@ public static class EventEndpoints
         });
     }
 
-    private static object View(EventState state, Event e, DateTimeOffset now, BotIdentity identity)
+    private static object View(EventState state, Event e, DateTimeOffset now, string? username)
     {
         var images = state.Images.Values.Where(i => i.EventId == e.Id).ToList();
         return new
@@ -222,7 +225,7 @@ public static class EventEndpoints
             e.ClosedAt,
             e.CreatedAt,
             e.JoinCode,
-            JoinUrl = identity.JoinUrlFor(e.JoinCode),
+            JoinUrl = BotIdentity.JoinUrl(username, e.JoinCode),
             Retention = new { e.Retention.MaxAgeDays, e.Retention.KeepNewest },
             Counts = new
             {

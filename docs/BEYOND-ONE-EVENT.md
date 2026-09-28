@@ -19,9 +19,9 @@ would notice, and every feature below waits on at least one of them.
 
 ### 1. State in a database, not a JSON object
 
-Today the whole event lives in one `state.json`, loaded once at startup, held
-in memory, and rewritten in full on every change with a generation
-precondition. At tens of senders and low hundreds of images that is not just
+Today the whole event lives in one `state.json`, loaded once by the first
+request, held in memory, and rewritten in full on every change with a
+generation precondition. At tens of senders and low hundreds of images that is not just
 adequate, it is why the manifest poll can do zero object-store I/O.
 
 It stops working when events accumulate. Rewriting one object per change turns

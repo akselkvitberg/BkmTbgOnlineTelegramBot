@@ -80,16 +80,24 @@ var app = builder.Build();
 
 config.LogLoaded(app.Logger);
 
-// Load state once, at startup — the only read of state.json — and persist any migration.
-await app.Services.GetRequiredService<StateStore>().InitializeAsync();
-
-// Vanity, not correctness: a failure here omits the join QR and nothing else,
-// so unlike the state load above it must never stop the revision coming up.
-await app.Services.GetRequiredService<BotIdentity>().ResolveAsync(
-    app.Services.GetRequiredService<ITelegramClient>(),
-    app.Services.GetRequiredService<ILogger<BotIdentity>>());
+// Nothing does I/O before app.Run(). Cloud Run counts the instance as started
+// once the port accepts connections, and a request is held until then, so any
+// work here is added to every cold start. State (its migration write included)
+// and the bot's username are both fetched by the first request that needs them.
 
 app.UseForwardedHeaders();
+
+// state.json is read once per instance, by whichever request arrives first, and
+// a pre-events file is migrated and written back in that same step; the rest wait
+// on it. /healthz stays free of it so a health check never
+// depends on the bucket.
+var stateStore = app.Services.GetRequiredService<StateStore>();
+app.Use(async (http, next) =>
+{
+    if (!http.Request.Path.StartsWithSegments("/healthz"))
+        await stateStore.EnsureLoadedAsync(http.RequestAborted);
+    await next(http);
+});
 
 app.UseRateLimiter();
 

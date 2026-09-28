@@ -249,11 +249,18 @@ resource "google_cloud_run_v2_service" "app" {
         }
       }
 
+      # Started means the port accepts connections, nothing more. The app does no
+      # I/O before listening (state and the bot username load on first use), so
+      # there is nothing for an HTTP probe to wait on that a TCP one would miss.
       startup_probe {
-        http_get { path = "/healthz" }
-        initial_delay_seconds = 3
-        period_seconds        = 3
-        failure_threshold     = 10
+        failure_threshold     = 3
+        initial_delay_seconds = 0
+        period_seconds        = 10
+        timeout_seconds       = 10
+
+        tcp_socket {
+          port = 8080
+        }
       }
     }
   }
