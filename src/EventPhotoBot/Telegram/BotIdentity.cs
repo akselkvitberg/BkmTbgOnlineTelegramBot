@@ -16,11 +16,20 @@ public sealed class BotIdentity(AppConfig config)
     public string? JoinUrl =>
         Username is null ? null : $"https://t.me/{Username}?start={config.JoinCode}";
 
+    /// <summary>
+    /// How long startup waits for getMe. This runs before the server listens, so
+    /// Cloud Run's startup probe is failing the whole time; the HttpClient's own
+    /// 60s timeout outlasts the probe's ~33s window, and a stalled call would get
+    /// the instance killed instead of merely losing the QR.
+    /// </summary>
+    public static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(5);
+
     public async Task ResolveAsync(ITelegramClient telegram, ILogger<BotIdentity> logger)
     {
+        using var timeout = new CancellationTokenSource(StartupTimeout);
         try
         {
-            Username = (await telegram.GetMeAsync())?.Username;
+            Username = (await telegram.GetMeAsync(timeout.Token))?.Username;
         }
         catch (Exception e)
         {

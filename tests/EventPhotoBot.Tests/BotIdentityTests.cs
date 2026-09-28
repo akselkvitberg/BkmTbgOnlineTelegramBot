@@ -46,4 +46,17 @@ public class BotIdentityTests
 
         Assert.Null(identity.JoinUrl);
     }
+
+    [Fact]
+    public async Task A_hanging_getMe_gives_up_instead_of_blocking_startup()
+    {
+        var telegram = new FakeTelegramClient { Username = "eventphotobot", GetMeHangs = true };
+        var identity = new BotIdentity(Config());
+
+        var resolve = identity.ResolveAsync(telegram, NullLogger<BotIdentity>.Instance);
+        var finished = await Task.WhenAny(resolve, Task.Delay(BotIdentity.StartupTimeout * 3));
+
+        Assert.Same(resolve, finished);
+        Assert.Null(identity.JoinUrl);
+    }
 }
