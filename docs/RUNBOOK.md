@@ -491,6 +491,15 @@ printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add eventphoto-w
 Then run `deploy` again. That run applies cleanly and registers the webhook.
 Every subsequent deploy is a single run.
 
+Changing a value later is the same `versions add` command followed by a
+deploy. The old version is not removed by `add`, and Secret Manager bills
+every version that isn't destroyed (only six are free per billing account),
+so the `deploy` workflow's last step destroys every version older than each
+secret's newest enabled one. That step is not undoable; if you need a
+previous value back, re-add it rather than expecting an old version to still
+be there. `deploy.ps1` does not do this — after a workstation deploy, clean
+up by hand or run the workflow once.
+
 This whole sequence — steps 0 to 5 and both `deploy` runs — was walked
 end to end against a fresh personal GCP project on 2026-09-21, and the
 steps above are what actually worked, including the two corrections this

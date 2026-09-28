@@ -249,6 +249,50 @@ jobs:
           fi
           rm -f response.json
 
+      # Secret Manager bills every version that isn't destroyed — enabled and
+      # disabled alike — per month, and only the first six on the billing
+      # account are free. Each `gcloud secrets versions add` from the runbook
+      # keeps the old version around, so a few typo fixes and key rotations
+      # turned six secrets into dozens of billable versions. Cloud Run mounts
+      # `latest` and this workflow reads `latest`, so nothing needs the older
+      # ones.
+      #
+      # Kept: the newest ENABLED version of each secret, and anything newer
+      # than it (a newer disabled version is someone's deliberate rollback,
+      # not clutter). Destroyed: every other version older than that one.
+      # Destroying cannot be undone, which is why this runs last — after the
+      # new revision is live and the webhook is registered against `latest`.
+      #
+      # Deliberately non-fatal: by this point the deploy has succeeded, and a
+      # cleanup failure should read as a warning, not a failed deploy.
+      - name: Destroy superseded secret versions
+        env:
+          NAME: ${{ steps.cfg.outputs.name }}
+        run: |
+          set -uo pipefail
+          destroyed=0
+          for suffix in bot-token webhook-secret webhook-path admin-password cookie-key join-code; do
+            secret="$NAME-$suffix"
+            keep=$(gcloud secrets versions list "$secret" --project "$GCP_PROJECT_ID" \
+                     --filter="state=ENABLED" --format="value(name.basename())" | sort -n | tail -n 1)
+            if [ -z "$keep" ]; then
+              echo "::warning::$secret has no enabled version; left untouched."
+              continue
+            fi
+            old=$(gcloud secrets versions list "$secret" --project "$GCP_PROJECT_ID" \
+                    --filter="state!=DESTROYED" --format="value(name.basename())" \
+                  | awk -v keep="$keep" '$1 + 0 < keep + 0')
+            for v in $old; do
+              if gcloud secrets versions destroy "$v" --secret "$secret" --project "$GCP_PROJECT_ID" --quiet; then
+                destroyed=$((destroyed + 1))
+              else
+                echo "::warning::Could not destroy $secret version $v."
+              fi
+            done
+          done
+          echo "Destroyed $destroyed superseded secret version(s)."
+          echo "destroyed=$destroyed" >> "$GITHUB_ENV"
+
       - name: Summary
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
@@ -265,4 +309,5 @@ jobs:
               echo "- Direct: $SERVICE_URL (bypasses Hosting; also the webhook base)"
             fi
             echo "- Webhook registered."
+            echo "- Superseded secret versions destroyed: ${destroyed:-0}"
           } >> "$GITHUB_STEP_SUMMARY"
