@@ -40,7 +40,7 @@ public class ManifestEndpointTests : IClassFixture<AppFactory>
     public async Task The_event_name_reaches_the_screen_without_a_redeploy()
     {
         var client = _factory.CreateAuthenticatedClient();
-        await _factory.Store.MutateAsync(s => s.Settings.EventName = "Sommerfest 2026");
+        await _factory.Store.MutateAsync(s => s.Default().Name = "Sommerfest 2026");
 
         var manifest = await client.GetFromJsonAsync<JsonDocument>("/api/manifest");
 
@@ -75,7 +75,7 @@ public class ManifestEndpointTests : IClassFixture<AppFactory>
         var client = _factory.CreateAuthenticatedClient();
         var before = (await client.GetAsync("/api/manifest")).Headers.ETag!.ToString();
 
-        await _factory.Store.MutateAsync(s => s.Settings.SlideSeconds = 11);
+        await _factory.Store.MutateAsync(s => s.Default().Settings.SlideSeconds = 11);
 
         var after = (await client.GetAsync("/api/manifest")).Headers.ETag!.ToString();
         Assert.NotEqual(before, after);

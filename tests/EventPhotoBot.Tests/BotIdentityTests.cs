@@ -6,23 +6,27 @@ namespace EventPhotoBot.Tests;
 
 public class BotIdentityTests
 {
-    private static AppConfig Config() => new()
-    {
-        BucketName = "bucket", BotToken = "token",
-        WebhookSecret = "secret", WebhookPath = "abc123", AdminPassword = "hunter2",
-        CookieSigningKey = "0123456789abcdef0123456789abcdef", JoinCode = "party2026",
-    };
-
     private static BotIdentity Identity(FakeTelegramClient telegram) =>
-        new(Config(), telegram, NullLogger<BotIdentity>.Instance);
+        new(telegram, NullLogger<BotIdentity>.Instance);
 
     [Fact]
     public async Task Builds_the_deep_link_from_the_username_and_join_code()
     {
         var identity = Identity(new FakeTelegramClient { Username = "eventphotobot" });
 
-        Assert.Equal("https://t.me/eventphotobot?start=party2026", await identity.GetJoinUrlAsync());
+        Assert.Equal("https://t.me/eventphotobot?start=party2026", await identity.GetJoinUrlAsync("party2026"));
         Assert.Equal("eventphotobot", await identity.GetUsernameAsync());
+    }
+
+    [Fact]
+    public async Task Each_event_code_gets_its_own_link_from_one_lookup()
+    {
+        var telegram = new FakeTelegramClient { Username = "eventphotobot" };
+        var identity = Identity(telegram);
+
+        Assert.Equal("https://t.me/eventphotobot?start=a", await identity.GetJoinUrlAsync("a"));
+        Assert.Equal("https://t.me/eventphotobot?start=b", await identity.GetJoinUrlAsync("b"));
+        Assert.Equal(1, telegram.GetMeCalls);
     }
 
     [Fact]
@@ -41,9 +45,9 @@ public class BotIdentityTests
         var telegram = new FakeTelegramClient();
         var identity = Identity(telegram);
 
-        await identity.GetJoinUrlAsync();
-        await identity.GetJoinUrlAsync();
-        await identity.GetJoinUrlAsync();
+        await identity.GetJoinUrlAsync("party2026");
+        await identity.GetJoinUrlAsync("party2026");
+        await identity.GetJoinUrlAsync("party2026");
 
         Assert.Equal(1, telegram.GetMeCalls);
     }
@@ -54,7 +58,7 @@ public class BotIdentityTests
         var telegram = new FakeTelegramClient();
         var identity = Identity(telegram);
 
-        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(() => identity.GetJoinUrlAsync())));
+        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(() => identity.GetJoinUrlAsync("party2026"))));
 
         Assert.Equal(1, telegram.GetMeCalls);
     }
@@ -64,7 +68,7 @@ public class BotIdentityTests
     {
         var identity = Identity(new FakeTelegramClient { Username = null });
 
-        Assert.Null(await identity.GetJoinUrlAsync());
+        Assert.Null(await identity.GetJoinUrlAsync("party2026"));
     }
 
     [Fact]
@@ -72,7 +76,7 @@ public class BotIdentityTests
     {
         var identity = Identity(new FakeTelegramClient { GetMeThrows = true });
 
-        Assert.Null(await identity.GetJoinUrlAsync());
+        Assert.Null(await identity.GetJoinUrlAsync("party2026"));
     }
 
     [Fact]
@@ -83,9 +87,9 @@ public class BotIdentityTests
         var telegram = new FakeTelegramClient { GetMeThrows = true };
         var identity = Identity(telegram);
 
-        await identity.GetJoinUrlAsync();
+        await identity.GetJoinUrlAsync("party2026");
         telegram.GetMeThrows = false;
-        var second = await identity.GetJoinUrlAsync();
+        var second = await identity.GetJoinUrlAsync("party2026");
 
         Assert.Null(second);
         Assert.Equal(1, telegram.GetMeCalls);
@@ -96,7 +100,7 @@ public class BotIdentityTests
     {
         var identity = Identity(new FakeTelegramClient { GetMeHangs = true });
 
-        var lookup = identity.GetJoinUrlAsync();
+        var lookup = identity.GetJoinUrlAsync("party2026");
         var finished = await Task.WhenAny(lookup, Task.Delay(BotIdentity.LookupTimeout * 3));
 
         Assert.Same(lookup, finished);

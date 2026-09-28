@@ -8,7 +8,7 @@ namespace EventPhotoBot.State;
 /// interleaved write is detected and retried rather than silently overwritten.
 /// This is the only type that writes state.json.
 /// </summary>
-public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger = null)
+public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger = null, StateSeed? seed = null)
 {
     public const string StatePath = "state/state.json";
     public const string PrevPath = "state/state-prev.json";
@@ -40,11 +40,19 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
         new("State has not been loaded yet; call EnsureLoadedAsync first.");
 
     /// <summary>
+    /// Whether the last read changed the state it read (a file from before events, or
+    /// no file at all). InitializeAsync persists it, so a generated join code is fixed
+    /// before anyone scans it.
+    /// </summary>
+    public bool MigratedOnLoad { get; private set; }
+
+    /// <summary>
     /// Loads state.json the first time anyone needs it, not at startup: startup has
     /// to reach the listening port as fast as possible, and a GCS read there only
-    /// delays that. Concurrent callers share one read. The read is not tied to any
-    /// one caller's cancellation, so a request that gives up does not waste it; a
-    /// read that fails is not cached, and the next caller tries again.
+    /// delays that. Concurrent callers share one load, migration write included. The
+    /// load is not tied to any one caller's cancellation, so a request that gives up
+    /// does not waste it; a load that fails is not cached, and the next caller tries
+    /// again.
     /// </summary>
     public Task EnsureLoadedAsync(CancellationToken ct = default)
     {
@@ -54,13 +62,42 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
         lock (_loadLock)
         {
             if (_initialLoad is null || _initialLoad.IsFaulted || _initialLoad.IsCanceled)
-                _initialLoad = LoadAsync(CancellationToken.None);
+                _initialLoad = InitializeAsync(CancellationToken.None);
             load = _initialLoad;
         }
         return load.WaitAsync(ct);
     }
 
+    /// <summary>
+    /// The first load: read and migrate, then one write if the read migrated
+    /// anything, and only then is the state served. A migration that is visible but
+    /// not yet written could hand out a generated join code that a restart would
+    /// replace; this way a failed write fails the load, and the next caller retries
+    /// the whole thing.
+    /// </summary>
+    public async Task InitializeAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            await ReadAndMigrateAsync(ct);
+            if (MigratedOnLoad) await WriteLockedAsync<object?>(_ => null, ct);
+            _loaded = true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Reads and migrates in memory, without writing a migration back.</summary>
     public async Task LoadAsync(CancellationToken ct = default)
+    {
+        await ReadAndMigrateAsync(ct);
+        _loaded = true;
+    }
+
+    private async Task ReadAndMigrateAsync(CancellationToken ct)
     {
         var stored = await ReadStateWithRetryAsync(ct);
         if (stored is null)
@@ -68,18 +105,20 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
             _state = new EventState();
             _lastBytes = [];
             _generation = 0;
-            _loaded = true;
             logger?.LogInformation("No existing state found; starting from defaults.");
-            return;
+        }
+        else
+        {
+            _state = JsonSerializer.Deserialize<EventState>(stored.Bytes, StateJson.Options)
+                     ?? new EventState();
+            _lastBytes = stored.Bytes;
+            _generation = stored.Generation;
+            logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
+                _generation, _state.Images.Count);
         }
 
-        _state = JsonSerializer.Deserialize<EventState>(stored.Bytes, StateJson.Options)
-                 ?? new EventState();
-        _lastBytes = stored.Bytes;
-        _generation = stored.Generation;
-        _loaded = true;
-        logger?.LogInformation("Loaded state at generation {Generation} with {Count} images.",
-            _generation, _state.Images.Count);
+        MigratedOnLoad = StateMigration.Migrate(_state, seed?.JoinCode, DateTimeOffset.UtcNow);
+        if (MigratedOnLoad) logger?.LogInformation("Migrated state to the events shape.");
     }
 
     /// <summary>
@@ -117,44 +156,54 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
         await _gate.WaitAsync(ct);
         try
         {
-            for (var attempt = 1; ; attempt++)
-            {
-                // Mutate a clone, never the live _state: until WriteAsync to StatePath
-                // has actually succeeded, nothing here is confirmed, and Snapshot must
-                // never show a change the bucket does not have. This also means a
-                // thrown mutate callback, a non-precondition write failure, or a
-                // cancellation leaves _state exactly as it was before this call.
-                var working = Clone(_state);
-                ClearExpiredTakeover(working);
-                var result = mutate(working);
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(working, StateJson.Options);
-
-                try
-                {
-                    // Backup first: if the state write then fails, the previous
-                    // generation is still one object away.
-                    if (_lastBytes.Length > 0)
-                        await objects.WriteAsync(PrevPath, _lastBytes, "application/json", null, ct);
-
-                    _generation = await objects.WriteAsync(
-                        StatePath, bytes, "application/json",
-                        ifGenerationMatch: _generation, ct);
-                    _state = working;
-                    _lastBytes = bytes;
-                    return result;
-                }
-                catch (PreconditionFailedException) when (attempt < MaxAttempts)
-                {
-                    logger?.LogWarning(
-                        "State generation moved under us (attempt {Attempt}); reloading and reapplying.",
-                        attempt);
-                    await LoadAsync(ct);
-                }
-            }
+            return await WriteLockedAsync(mutate, ct);
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>The write loop. The caller holds _gate.</summary>
+    private async Task<T> WriteLockedAsync<T>(Func<EventState, T> mutate, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            // Mutate a clone, never the live _state: until WriteAsync to StatePath
+            // has actually succeeded, nothing here is confirmed, and Snapshot must
+            // never show a change the bucket does not have. This also means a
+            // thrown mutate callback, a non-precondition write failure, or a
+            // cancellation leaves _state exactly as it was before this call.
+            var working = Clone(_state);
+            ClearExpiredTakeover(working);
+            var result = mutate(working);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(working, StateJson.Options);
+
+            try
+            {
+                // Backup first: if the state write then fails, the previous
+                // generation is still one object away.
+                if (_lastBytes.Length > 0)
+                    await objects.WriteAsync(PrevPath, _lastBytes, "application/json", null, ct);
+
+                _generation = await objects.WriteAsync(
+                    StatePath, bytes, "application/json",
+                    ifGenerationMatch: _generation, ct);
+                _state = working;
+                _lastBytes = bytes;
+                // One line per write, so the point where one file stops being
+                // enough is visible in the logs before it is felt in admin.
+                logger?.LogInformation("Wrote state.json at generation {Generation}: {Bytes} bytes.",
+                    _generation, bytes.Length);
+                return result;
+            }
+            catch (PreconditionFailedException) when (attempt < MaxAttempts)
+            {
+                logger?.LogWarning(
+                    "State generation moved under us (attempt {Attempt}); reloading and reapplying.",
+                    attempt);
+                await ReadAndMigrateAsync(ct);
+            }
         }
     }
 
@@ -169,12 +218,15 @@ public sealed class StateStore(IObjectStore objects, ILogger<StateStore>? logger
     /// </summary>
     private static void ClearExpiredTakeover(EventState state)
     {
-        var s = state.Settings;
-        if (s.TakeoverImageId is null) return;
-        if (s.TakeoverUntil is { } until && until <= DateTimeOffset.UtcNow)
+        foreach (var ev in state.Events)
         {
-            s.TakeoverImageId = null;
-            s.TakeoverUntil = null;
+            var s = ev.Settings;
+            if (s.TakeoverImageId is null) continue;
+            if (s.TakeoverUntil is { } until && until <= DateTimeOffset.UtcNow)
+            {
+                s.TakeoverImageId = null;
+                s.TakeoverUntil = null;
+            }
         }
     }
 }

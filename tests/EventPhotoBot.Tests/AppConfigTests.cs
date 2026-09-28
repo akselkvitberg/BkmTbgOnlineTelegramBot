@@ -102,13 +102,11 @@ public class AppConfigTests
     }
 
     [Fact]
-    public void Load_throws_when_the_join_code_is_missing()
+    public void Load_accepts_a_missing_join_code()
     {
         var partial = Complete().Where(p => p.Item1 is not "JOIN_CODE").ToArray();
 
-        var error = Assert.Throws<InvalidOperationException>(() => AppConfig.Load(Config(partial)));
-
-        Assert.Contains("JOIN_CODE", error.Message);
+        Assert.Null(AppConfig.Load(Config(partial)).JoinCode);
     }
 
     [Theory]
@@ -141,5 +139,13 @@ public class AppConfigTests
             .Append(("JOIN_CODE", "party2026\n")).ToArray();
 
         Assert.Equal("party2026", AppConfig.Load(Config(pairs)).JoinCode);
+    }
+
+    [Fact]
+    public void The_retention_secret_is_optional_and_trimmed()
+    {
+        Assert.Null(AppConfig.Load(Config(Complete())).RetentionSecret);
+        var pairs = Complete().Append(("RETENTION_SECRET", " s3cret\n")).ToArray();
+        Assert.Equal("s3cret", AppConfig.Load(Config(pairs)).RetentionSecret);
     }
 }

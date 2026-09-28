@@ -16,6 +16,11 @@
   const FAILURES_BEFORE_BACKOFF = 3;
   const POLL_TIMEOUT_MS = 8000;
 
+  // Which event this screen shows. Absent is the default event, so the church
+  // screen's bookmark from before events keeps working unchanged.
+  const eventId = new URLSearchParams(location.search).get('event');
+  const scoped = path => eventId ? `${path}?event=${encodeURIComponent(eventId)}` : path;
+
   /// <summary>
   /// How each layout arranges the stage. The server sends a name; everything the
   /// screen actually does with it is decided here, in one table, rather than being
@@ -127,7 +132,7 @@
   let seenIds = new Set();
   let currentImageId = null;
   let currentImage = null; // last image passed to render(), for instant caption toggling
-  let joinReady = false;   // the QR src is set once, not on every two-second poll
+  let armedJoinUrl = null; // the join link the QR src was last set for; null while unarmed
 
   let stageLayout = null;  // the layout the stage's DOM is currently built for
   let cells = [];          // the stage's slot elements, in slot order
@@ -233,7 +238,7 @@
 
     try {
       const headers = etag ? { 'If-None-Match': etag } : {};
-      const response = await fetch('/api/manifest', {
+      const response = await fetch(scoped('/api/manifest'), {
         headers, cache: 'no-store', signal: controller.signal,
       });
 
@@ -268,11 +273,12 @@
 
   // ---- join QR -------------------------------------------------------------
 
-  /// The QR is fixed for the life of the instance, so its src is set once rather
-  /// than reassigned on every two-second poll. joinUrl is null while the bot's
-  /// username is unknown (Telegram has not answered yet), in which case no QR is
-  /// shown until a later poll carries it — the slideshow is not worth failing
-  /// over a missing affordance.
+  /// The QR changes only when the join link does (an organiser rotating the code),
+  /// so its src is set when the link changes rather than reassigned on every
+  /// two-second poll. joinUrl is null while the bot's username is unknown (Telegram
+  /// has not answered yet), or while the event is not open, in which case no QR is
+  /// shown until a later poll carries it — the slideshow is not worth failing over
+  /// a missing affordance.
   ///
   /// Visibility, unlike the src, is decided on every poll: showJoinInvite can be
   /// turned off mid-event, and the screen it is turned off for is one that must
@@ -285,13 +291,20 @@
 
     // A hidden <img> still fetches its src, so the QR is armed only once the
     // screen is actually inviting anyone — turning the setting on mid-event
-    // arms it on that poll instead.
-    if (joinUrl && inviting && !joinReady) {
-      joinQrEl.src = '/api/join-qr.svg';
-      joinBadgeEl.src = '/api/join-qr.svg';
+    // arms it on that poll instead. A rotated code changes joinUrl, which re-arms
+    // it; the version in the src keeps the browser from reusing the old SVG.
+    if (joinUrl && inviting && joinUrl !== armedJoinUrl) {
+      const src = qrSrc(joinUrl);
+      joinQrEl.src = src;
+      joinBadgeEl.src = src;
       joinHandleEl.textContent = handleFrom(joinUrl);
-      joinReady = true;
+      armedJoinUrl = joinUrl;
     }
+
+    // joinUrl goes null when the event closes; forgetting the armed link means a
+    // reopened event's next poll sets the src again.
+    if (!joinUrl) armedJoinUrl = null;
+    const joinReady = armedJoinUrl !== null;
 
     joinEl.hidden = !joinReady || !inviting;
     // Large in the empty state, small in the corner once there are photos to show.
@@ -302,6 +315,16 @@
     document.body.classList.toggle('has-badge', !joinBadgeEl.hidden);
     emptyInviteEl.hidden = !inviting;
     emptyQuietEl.hidden = inviting;
+  }
+
+  /// The QR's URL, versioned by the join link it encodes: the same address for a
+  /// different code would let the browser show the old, no longer valid QR.
+  function qrSrc(joinUrl) {
+    let hash = 0;
+    for (let i = 0; i < joinUrl.length; i++) hash = (hash * 31 + joinUrl.charCodeAt(i)) | 0;
+    const version = `v=${(hash >>> 0).toString(36)}`;
+    const base = scoped('/api/join-qr.svg');
+    return base + (base.includes('?') ? '&' : '?') + version;
   }
 
   function handleFrom(joinUrl) {

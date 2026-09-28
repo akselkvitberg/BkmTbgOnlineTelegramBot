@@ -63,14 +63,15 @@ public static class AuthEndpoints
     }
 
     /// <summary>
-    /// The gate. Everything except the webhook, the health probe and the login
-    /// surface needs a session; API calls get 401, pages get the login form.
+    /// The gate. Everything except the webhook, the health probe, the login
+    /// surface and the retention trigger, which has its own secret, needs a session;
+    /// API calls get 401, pages get the login form.
     /// </summary>
     public static void UseSessionGate(this WebApplication app, AppConfig config)
     {
         var open = new HashSet<string>(StringComparer.Ordinal)
         {
-            "/healthz", "/login", $"/tg/{config.WebhookPath}",
+            "/healthz", "/login", $"/tg/{config.WebhookPath}", "/internal/retention",
         };
 
         app.Use(async (http, next) =>

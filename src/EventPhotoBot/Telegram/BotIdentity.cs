@@ -15,7 +15,7 @@ namespace EventPhotoBot.Telegram;
 /// that asks every two seconds does not turn a Telegram outage into a stream of
 /// getMe calls, each one holding up a poll.
 /// </summary>
-public sealed class BotIdentity(AppConfig config, ITelegramClient telegram, ILogger<BotIdentity> logger)
+public sealed class BotIdentity(ITelegramClient telegram, ILogger<BotIdentity> logger)
 {
     /// <summary>How long one getMe may hold up the request that triggered it.</summary>
     public static readonly TimeSpan LookupTimeout = TimeSpan.FromSeconds(5);
@@ -29,15 +29,19 @@ public sealed class BotIdentity(AppConfig config, ITelegramClient telegram, ILog
     private string? _username;
 
     /// <summary>
-    /// The deep link, or null while the username is unknown. Only the first caller
-    /// (or the first after a failure has aged out) talks to Telegram; everyone else
-    /// shares that lookup or gets the cached answer.
+    /// The deep link for one event's code, or null while the username is unknown.
+    /// Only the first caller (or the first after a failure has aged out) talks to
+    /// Telegram; everyone else shares that lookup or gets the cached answer.
     /// </summary>
-    public async Task<string?> GetJoinUrlAsync(CancellationToken ct = default)
-    {
-        var username = await GetUsernameAsync(ct);
-        return username is null ? null : $"https://t.me/{username}?start={config.JoinCode}";
-    }
+    public async Task<string?> GetJoinUrlAsync(string joinCode, CancellationToken ct = default) =>
+        JoinUrl(await GetUsernameAsync(ct), joinCode);
+
+    /// <summary>
+    /// The deep link for a username already in hand: a page listing every event
+    /// asks Telegram once, not once per event.
+    /// </summary>
+    public static string? JoinUrl(string? username, string joinCode) =>
+        username is null ? null : $"https://t.me/{username}?start={joinCode}";
 
     public Task<string?> GetUsernameAsync(CancellationToken ct = default)
     {

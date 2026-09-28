@@ -33,6 +33,16 @@ public class QrEndpointTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task The_qr_is_not_reused_from_cache_since_the_code_can_be_rotated()
+    {
+        var client = _factory.CreateAuthenticatedClient();
+
+        var response = await client.GetAsync("/api/join-qr.svg");
+
+        Assert.True(response.Headers.CacheControl?.NoCache);
+    }
+
+    [Fact]
     public async Task The_qr_is_absent_when_the_username_is_unknown()
     {
         // A separate factory, so clearing the identity cannot leak into other tests.

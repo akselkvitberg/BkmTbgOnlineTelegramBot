@@ -84,13 +84,13 @@ public class StateStoreLazyLoadTests
         var objects = new InMemoryObjectStore();
         var seed = new StateStore(objects);
         await seed.LoadAsync();
-        await seed.MutateAsync(s => s.Settings.SlideSeconds = 42);
+        await seed.MutateAsync(s => s.Default().Settings.SlideSeconds = 42);
 
         var store = new StateStore(objects);
-        await store.MutateAsync(s => s.Settings.RecurringEvery = 7);
+        await store.MutateAsync(s => s.Default().Settings.RecurringEvery = 7);
 
-        Assert.Equal(42, store.Snapshot.Settings.SlideSeconds);
-        Assert.Equal(7, store.Snapshot.Settings.RecurringEvery);
+        Assert.Equal(42, store.Snapshot.Default().Settings.SlideSeconds);
+        Assert.Equal(7, store.Snapshot.Default().Settings.RecurringEvery);
     }
 
     [Fact]
@@ -103,6 +103,60 @@ public class StateStoreLazyLoadTests
         await store.EnsureLoadedAsync();
 
         Assert.True(store.IsLoaded);
+    }
+
+    [Fact]
+    public async Task The_first_load_writes_the_migration_of_a_pre_events_file()
+    {
+        var objects = new InMemoryObjectStore();
+        objects.ForceWrite(StateStore.StatePath,
+            """{"images":{},"settings":{"eventName":"Sommerfest"}}"""u8.ToArray());
+        var store = new StateStore(objects, seed: new StateSeed("party2026"));
+
+        await store.EnsureLoadedAsync();
+
+        var written = (await objects.ReadAsync(StateStore.StatePath))!.Bytes;
+        using var document = System.Text.Json.JsonDocument.Parse(written);
+        Assert.True(document.RootElement.TryGetProperty("events", out _));
+        Assert.Equal("party2026", store.Snapshot.Default().JoinCode);
+    }
+
+    [Fact]
+    public async Task A_migration_that_cannot_be_written_is_not_served_and_the_next_caller_retries()
+    {
+        // A fresh bucket migrates to a generated join code. Serving it before it is
+        // written would put a code on the screen that a restart then replaces.
+        var objects = new FailingWriteObjectStore { FailuresLeft = 1 };
+        var store = new StateStore(objects);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => store.EnsureLoadedAsync());
+        Assert.False(store.IsLoaded);
+
+        await store.EnsureLoadedAsync();
+
+        Assert.True(store.IsLoaded);
+        Assert.NotNull(await objects.ReadAsync(StateStore.StatePath));
+    }
+
+    private sealed class FailingWriteObjectStore : IObjectStore
+    {
+        private readonly InMemoryObjectStore _inner = new();
+        public int FailuresLeft;
+
+        public Task<StoredObject?> ReadAsync(string path, CancellationToken ct = default) =>
+            _inner.ReadAsync(path, ct);
+
+        public Task<long> WriteAsync(string path, byte[] bytes, string contentType,
+            long? ifGenerationMatch, CancellationToken ct = default) =>
+            FailuresLeft-- > 0
+                ? throw new IOException("bucket unreachable")
+                : _inner.WriteAsync(path, bytes, contentType, ifGenerationMatch, ct);
+
+        public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default) =>
+            _inner.OpenReadAsync(path, ct);
+
+        public Task DeleteAsync(string path, CancellationToken ct = default) =>
+            _inner.DeleteAsync(path, ct);
     }
 
     private sealed class FlakyObjectStore : IObjectStore

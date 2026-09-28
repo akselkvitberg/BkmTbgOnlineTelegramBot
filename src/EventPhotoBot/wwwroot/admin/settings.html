@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -25,7 +26,7 @@
     </header>
 
     <section class="card">
-      <h2>Arrangement</h2>
+      <h2>Navn og visning</h2>
       <label for="eventName">Navn på arrangementet</label>
       <input id="eventName" type="text" maxlength="100" placeholder="Sommerfest 2026">
       <p class="muted">Vises stort på skjermen før det har kommet inn bilder.</p>
@@ -107,6 +108,28 @@
     </section>
 
     <section class="card">
+      <h2>Sletting av gamle bilder</h2>
+      <label class="toggle"><input id="retentionOn" type="checkbox">
+        <span>Slett gamle bilder automatisk</span>
+        <span class="muted">Én gang i døgnet. Festede bilder og bildet som holder skjermen, slettes aldri.</span></label>
+      <div class="number-fields">
+        <div>
+          <label for="maxAgeDays">Slett bilder eldre enn (dager)</label>
+          <input id="maxAgeDays" type="number" min="1" max="3650" inputmode="numeric">
+        </div>
+        <div>
+          <label for="keepNewest">Behold alltid de nyeste godkjente (antall)</label>
+          <input id="keepNewest" type="number" min="0" max="10000" inputmode="numeric">
+        </div>
+      </div>
+      <div class="save-row">
+        <button class="primary" id="saveRetention">Lagre</button>
+        <button id="runRetention">Rydd nå</button>
+        <span class="saved" id="savedRetention">Lagret</span>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>Personer og grupper</h2>
       <p class="muted">
         Hvem boten tar imot bilder fra, og hvilke Telegram-grupper den henter fra, styres
@@ -133,7 +156,7 @@
     }
 
     async function load() {
-      const response = await fetch('/api/settings', { cache: 'no-store' });
+      const response = await fetch(Admin.withEvent('/api/settings'), { cache: 'no-store' });
       if (!response.ok) return;
       settings = await response.json();
 
@@ -153,6 +176,14 @@
       }
       const layout = document.querySelector(`input[name="layout"][value="${settings.layout}"]`);
       if (layout && !keep(layout)) layout.checked = true;
+
+      const retention = settings.retention ?? {};
+      for (const [key, value] of [['maxAgeDays', retention.maxAgeDays ?? 30], ['keepNewest', retention.keepNewest ?? 0]]) {
+        const input = document.getElementById(key);
+        if (!keep(input)) input.value = value;
+      }
+      const on = document.getElementById('retentionOn');
+      if (!keep(on)) on.checked = retention.maxAgeDays != null;
     }
 
     function flashSaved(id) {
@@ -162,7 +193,7 @@
     }
 
     document.getElementById('saveEvent').onclick = async () => {
-      if (await Admin.api('PATCH', '/api/settings', {
+      if (await Admin.api('PATCH', Admin.withEvent('/api/settings'), {
         eventName: document.getElementById('eventName').value,
         showEventName: document.getElementById('showEventName').checked,
       })) {
@@ -174,7 +205,7 @@
     };
 
     document.getElementById('saveSlideshow').onclick = async () => {
-      if (await Admin.api('PATCH', '/api/settings', {
+      if (await Admin.api('PATCH', Admin.withEvent('/api/settings'), {
         slideSeconds: Number(document.getElementById('slideSeconds').value),
         transitionMs: Number(document.getElementById('transitionMs').value),
         order: document.getElementById('order').value,
@@ -189,6 +220,36 @@
         flashSaved('savedSlideshow');
       }
       load();
+    };
+
+    const retentionPath = () => `/api/events/${encodeURIComponent(settings.eventId)}/retention`;
+
+    document.getElementById('saveRetention').onclick = async () => {
+      const on = document.getElementById('retentionOn').checked;
+      if (await Admin.api('PUT', retentionPath(), {
+        maxAgeDays: on ? Number(document.getElementById('maxAgeDays').value) : null,
+        keepNewest: Number(document.getElementById('keepNewest').value),
+      })) {
+        for (const key of ['retentionOn', 'maxAgeDays', 'keepNewest']) edited.delete(key);
+        flashSaved('savedRetention');
+      }
+      load();
+    };
+
+    document.getElementById('runRetention').onclick = async () => {
+      const sure = await Admin.confirm({
+        title: 'Slette gamle bilder nå?',
+        body: 'Bilder eldre enn grensen slettes fra skjermen og lagringen, bortsett fra de nyeste '
+            + 'du har valgt å beholde, festede bilder og bildet som holder skjermen. Dette kan ikke angres.',
+        confirmLabel: 'Rydd nå',
+        danger: true,
+      });
+      if (!sure) return;
+      const response = await Admin.api('POST', `${retentionPath()}/run`);
+      if (response) {
+        const { deleted } = await response.json();
+        Admin.toast(deleted === 1 ? 'Slettet 1 bilde.' : `Slettet ${deleted} bilder.`);
+      }
     };
 
     // Another admin changing a setting bumps the manifest generation, which is what

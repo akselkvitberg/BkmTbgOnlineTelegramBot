@@ -1,5 +1,10 @@
 # Event Photo Bot — Technical Spec
 
+> This document describes the original single-event design. The app now
+> supports multiple events running side by side; see
+> `docs/superpowers/specs/2026-09-23-multiple-events-design.md` for what
+> changed.
+
 ## Purpose and scope
 
 Guests on a whitelist send photos to a Telegram bot, an admin approves them, and approved photos run as a slideshow on a projector. The whole web side sits behind one shared password.

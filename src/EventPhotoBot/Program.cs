@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using EventPhotoBot;
 using EventPhotoBot.State;
 using EventPhotoBot.Telegram;
@@ -19,6 +17,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 var config = AppConfig.Load(builder.Configuration);
 builder.Services.AddSingleton(config);
+builder.Services.AddSingleton(new StateSeed(config.JoinCode));
 
 // A flag that swaps storage for the local disk and silences Telegram must never
 // reach Cloud Run by accident; there the environment is Production.
@@ -83,13 +82,14 @@ config.LogLoaded(app.Logger);
 
 // Nothing does I/O before app.Run(). Cloud Run counts the instance as started
 // once the port accepts connections, and a request is held until then, so any
-// work here is added to every cold start. State and the bot's username are both
-// fetched by the first request that needs them instead.
+// work here is added to every cold start. State (its migration write included)
+// and the bot's username are both fetched by the first request that needs them.
 
 app.UseForwardedHeaders();
 
-// state.json is read once per instance, by whichever request arrives first; the
-// rest wait on that same read. /healthz stays free of it so a health check never
+// state.json is read once per instance, by whichever request arrives first, and
+// a pre-events file is migrated and written back in that same step; the rest wait
+// on it. /healthz stays free of it so a health check never
 // depends on the bucket.
 var stateStore = app.Services.GetRequiredService<StateStore>();
 app.Use(async (http, next) =>
@@ -106,7 +106,7 @@ app.MapGet("/healthz", () => Results.Text("ok"));
 app.MapPost($"/tg/{config.WebhookPath}",
     async (HttpContext http, TgUpdate update, UpdateHandler handler, CancellationToken ct) =>
     {
-        if (!SecretTokenMatches(config.WebhookSecret,
+        if (!SecretComparison.Matches(config.WebhookSecret,
                 http.Request.Headers["X-Telegram-Bot-Api-Secret-Token"]))
             return Results.Unauthorized();
 
@@ -129,6 +129,8 @@ app.UseSessionGate(config);
 
 app.UseStaticFiles();
 app.MapApi();
+app.MapEvents();
+app.MapRetention();
 app.MapImages();
 app.MapJoinQr();
 if (config.LocalDev) app.MapDev();
@@ -143,27 +145,12 @@ app.MapGet("/admin/images", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "images.html"), "text/html"));
 app.MapGet("/admin/telegram", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "telegram.html"), "text/html"));
+app.MapGet("/admin/events", () => Results.File(
+    Path.Combine(app.Environment.WebRootPath, "admin", "events.html"), "text/html"));
 app.MapGet("/admin/settings", () => Results.File(
     Path.Combine(app.Environment.WebRootPath, "admin", "settings.html"), "text/html"));
 app.MapGet("/", () => Results.Redirect("/show"));
 
 app.Run();
-
-/// <summary>
-/// Constant-time over the UTF-8 bytes, the one endpoint strangers can reach.
-/// Hashes both sides before comparing, the same way SessionCookie.PasswordMatches
-/// does it: CryptographicOperations.FixedTimeEquals alone still leaks length through
-/// its own argument check unless both inputs are already the same size, and hashing
-/// first fixes that at 32 bytes regardless of what was supplied — a missing header
-/// (null) hashes and compares exactly like a present-but-wrong one.
-/// </summary>
-static bool SecretTokenMatches(string expected, string? supplied)
-{
-    Span<byte> hashA = stackalloc byte[32];
-    Span<byte> hashB = stackalloc byte[32];
-    SHA256.HashData(Encoding.UTF8.GetBytes(expected), hashA);
-    SHA256.HashData(Encoding.UTF8.GetBytes(supplied ?? ""), hashB);
-    return CryptographicOperations.FixedTimeEquals(hashA, hashB);
-}
 
 public partial class Program { }

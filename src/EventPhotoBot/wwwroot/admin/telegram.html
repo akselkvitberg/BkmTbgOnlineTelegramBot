@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -38,11 +39,10 @@
     <section class="card">
       <h2>Grupper</h2>
       <p class="muted">
-        Grupper boten er lagt til i. Boten henter bare bilder fra grupper der «Hent bilder»
-        er på. Det slås på her, eller ved at noen skriver <kbd>/start</kbd> fulgt av
-        koden fra QR-lenken i gruppen. Når det slås på, skriver boten én melding i gruppen
-        om at bildene kan bli vist på skjermen. Medlemmer som legger ut bilder, dukker opp
-        under «Personer» og følger statusen sin der.
+        Grupper boten er lagt til i. Boten henter bare bilder fra grupper som er koblet til
+        et arrangement her. Når en gruppe kobles til et arrangement, skriver boten én
+        melding i gruppen om at bildene kan bli vist på skjermen for det arrangementet.
+        Medlemmer som legger ut bilder, dukker opp under «Personer».
       </p>
       <div class="table-wrap"><table id="groups"></table></div>
     </section>
@@ -50,14 +50,15 @@
     <section class="card">
       <h2>Personer</h2>
       <p class="muted">
-        Folk dukker opp her når de skanner QR-koden, eller når de legger ut et bilde i en
-        gruppe boten henter fra. «Til godkjenning» sender bildene deres til køen,
-        «Godkjenn automatisk» rett på skjermen, og «Utestengt» ignorerer dem og avviser
-        alt de allerede har sendt.
+        Folk dukker opp her når de skanner en QR-kode, eller når de legger ut et bilde i en
+        gruppe boten henter fra. For hvert arrangement de er med i, kan du la bildene deres
+        gå rett på skjermen. «Utesteng» gjelder alle arrangementer og avviser alt de allerede
+        har sendt.
       </p>
       <div class="table-wrap"><table id="senders"></table></div>
       <label for="newId">Forhåndsgodkjenn en fotograf</label>
       <div class="row" style="margin-top: 0; flex-wrap: nowrap">
+        <select id="newEvent" aria-label="Arrangement"></select>
         <input id="newId" type="number" inputmode="numeric" placeholder="Telegram-id">
         <button id="addSender" style="flex-shrink: 0">Legg til</button>
       </div>
@@ -70,23 +71,23 @@
 
     let senders = [];
     let groups = [];
-
-    const STATUSES = ['known', 'autoApprove', 'banned'];
-    const LABELS = {
-      known: 'Til godkjenning',
-      autoApprove: 'Godkjenn automatisk',
-      banned: 'Utestengt',
-    };
+    let events = [];
 
     async function load() {
-      const response = await fetch('/api/settings', { cache: 'no-store' });
-      if (!response.ok) return;
-      const settings = await response.json();
+      const [settingsResponse, eventsResponse] = await Promise.all([
+        fetch('/api/settings', { cache: 'no-store' }),
+        fetch('/api/events', { cache: 'no-store' }),
+      ]);
+      if (!settingsResponse.ok || !eventsResponse.ok) return;
+      const settings = await settingsResponse.json();
+      events = await eventsResponse.json();
       senders = settings.senders ?? [];
       groups = settings.groups ?? [];
       renderGroups();
       renderSenders();
     }
+
+    const eventName = id => events.find(e => e.id === id)?.name ?? id;
 
     // Asked separately from load(): it goes to Telegram, and load() runs on every
     // manifest change.
@@ -98,40 +99,52 @@
     }
 
     function renderGroups() {
-      // Only the id - a number - goes into an attribute. A group's title is chosen by
-      // whoever made the group, so it is escaped into the cell like a sender's name.
+      // Only ids go into attributes; group titles and event names are escaped into text.
       const table = document.getElementById('groups');
       table.innerHTML =
         groups.length === 0
           ? '<tr><td class="muted">Boten er ikke med i noen grupper. Legg den til i en gruppe i Telegram, så dukker gruppen opp her.</td></tr>'
-          : `<tr><th>Gruppe</th><th>Hent bilder</th><th></th></tr>` +
+          : `<tr><th>Gruppe</th><th>Bildene går til</th><th></th></tr>` +
             groups.map(group => `
             <tr>
               <td>${Admin.escapeHtml(group.title) || '<span class="muted">(uten navn)</span>'}</td>
-              <td><input type="checkbox" data-id="${Number(group.id)}" aria-label="Hent bilder"
-                         ${group.listening ? 'checked' : ''}></td>
+              <td>
+                <select data-id="${Number(group.id)}" aria-label="Arrangement">
+                  <option value="" ${group.eventId ? '' : 'selected'}>Ikke koblet</option>
+                  ${events
+                    // Closed events can't be routed to (the server refuses it) and would
+                    // only ever ignore the group's photos, so they're left out of the
+                    // list — except the one the group is already pointed at, so an
+                    // organiser can see that route rather than have it vanish silently.
+                    .filter(ev => ev.phase !== 'closed' || ev.id === group.eventId)
+                    .map(ev => `
+                    <option value="${Admin.escapeHtml(ev.id)}" ${group.eventId === ev.id ? 'selected' : ''}>
+                      ${Admin.escapeHtml(ev.name)}${ev.phase === 'open' ? '' : ' (' + (ev.phase === 'closed' ? 'avsluttet' : 'planlagt') + ')'}
+                    </option>`).join('')}
+                </select>
+              </td>
               <td><button class="small quiet-danger" data-leave="${Number(group.id)}">Forlat gruppen</button></td>
             </tr>`).join('');
 
-      for (const box of table.querySelectorAll('input[type="checkbox"]'))
-        box.onchange = () => setListening(Number(box.dataset.id), box.checked);
+      for (const select of table.querySelectorAll('select'))
+        select.onchange = () => setEvent(Number(select.dataset.id), select.value);
       for (const button of table.querySelectorAll('button[data-leave]'))
         button.onclick = () => leave(Number(button.dataset.leave));
     }
 
-    async function setListening(id, listening) {
+    async function setEvent(id, eventId) {
       const group = groups.find(g => g.id === id);
-      if (listening) {
+      if (eventId) {
         const sure = await Admin.confirm({
-          title: `Hente bilder fra ${group?.title || 'denne gruppen'}?`,
+          title: `Koble ${group?.title || 'denne gruppen'} til ${eventName(eventId)}?`,
           body: 'Boten skriver en melding i gruppen om at bilder som legges ut der, kan bli '
-              + 'vist på skjermen. Bilder fra gruppens medlemmer havner i køen.',
-          confirmLabel: 'Hent bilder',
+              + 'vist på skjermen for dette arrangementet. Bilder fra gruppens medlemmer havner i køen.',
+          confirmLabel: 'Koble til',
         });
         if (!sure) { renderGroups(); return; }
       }
-      if (await Admin.api('POST', `/api/groups/${id}/listening`, { listening }))
-        Admin.toast(listening ? 'Henter bilder fra gruppen.' : 'Henter ikke lenger bilder fra gruppen.');
+      if (await Admin.api('POST', `/api/groups/${id}/event`, { eventId }))
+        Admin.toast(eventId ? `Bildene går nå til ${eventName(eventId)}.` : 'Henter ikke lenger bilder fra gruppen.');
       await load();
     }
 
@@ -150,47 +163,63 @@
     }
 
     function renderSenders() {
-      // Only the id - a number - goes into an attribute. A sender's name is
-      // attacker-controlled (a Telegram display name), so it is escaped into the
-      // cell and never embedded in a JS argument.
+      // Only ids - numbers and slugs - go into attributes; names are escaped into text.
       const table = document.getElementById('senders');
       table.innerHTML =
         senders.length === 0
           ? '<tr><td class="muted">Ingen ennå.</td></tr>'
-          : `<tr><th>Navn</th><th>Telegram-id</th><th>Bildene deres</th></tr>` +
-            senders.map(sender => `
-            <tr>
-              <td><span class="status-dot" data-status="${STATUSES.includes(sender.status) ? sender.status : ''}"></span>${
-                Admin.escapeHtml(sender.name) || '<span class="muted">(uten navn)</span>'}</td>
-              <td class="muted">${Number(sender.id)}</td>
-              <td>
-                <select data-id="${Number(sender.id)}" aria-label="Status">
-                  ${STATUSES.map(value => `
-                    <option value="${value}" ${sender.status === value ? 'selected' : ''}>
-                      ${LABELS[value]}
-                    </option>`).join('')}
-                </select>
-              </td>
-            </tr>`).join('');
+          : `<tr><th>Navn</th><th>Telegram-id</th><th>Arrangementer</th><th></th></tr>` +
+            senders.map(sender => {
+              const dot = sender.banned ? 'banned'
+                : sender.memberships.some(m => m.autoApprove) ? 'autoApprove' : 'known';
+              return `
+              <tr>
+                <td><span class="status-dot" data-status="${dot}"></span>${
+                  Admin.escapeHtml(sender.name) || '<span class="muted">(uten navn)</span>'}</td>
+                <td class="muted">${Number(sender.id)}</td>
+                <td>${sender.memberships.map(m => `
+                  <label class="membership">
+                    <input type="checkbox" data-sender="${Number(sender.id)}" data-event="${Admin.escapeHtml(m.eventId)}"
+                           ${m.autoApprove ? 'checked' : ''} ${sender.banned ? 'disabled' : ''}>
+                    ${Admin.escapeHtml(eventName(m.eventId))}: godkjenn automatisk
+                  </label>`).join('') || '<span class="muted">Ingen</span>'}</td>
+                <td><button class="small ${sender.banned ? '' : 'quiet-danger'}" data-ban="${Number(sender.id)}">
+                  ${sender.banned ? 'Opphev utestengning' : 'Utesteng…'}</button></td>
+              </tr>`;
+            }).join('');
 
-      for (const select of table.querySelectorAll('select'))
-        select.onchange = () => setStatus(Number(select.dataset.id), select.value);
+      for (const box of table.querySelectorAll('input[data-sender]'))
+        box.onchange = () => setAutoApprove(Number(box.dataset.sender), box.dataset.event, box.checked);
+      for (const button of table.querySelectorAll('button[data-ban]'))
+        button.onclick = () => toggleBan(Number(button.dataset.ban));
+
+      const select = document.getElementById('newEvent');
+      select.innerHTML = events.filter(e => e.phase !== 'closed')
+        .map(e => `<option value="${Admin.escapeHtml(e.id)}">${Admin.escapeHtml(e.name)}</option>`).join('');
     }
 
-    async function setStatus(id, status) {
+    async function setAutoApprove(id, eventId, autoApprove) {
       const sender = senders.find(s => s.id === id);
-      if (status === 'banned') {
+      if (await Admin.api('POST', `/api/senders/${id}/memberships/${encodeURIComponent(eventId)}`, { autoApprove }))
+        Admin.toast(`${sender?.name || id}: ${autoApprove ? 'rett på skjermen' : 'til godkjenning'} i ${eventName(eventId)}.`);
+      await load();
+    }
+
+    async function toggleBan(id) {
+      const sender = senders.find(s => s.id === id);
+      const banned = !sender?.banned;
+      if (banned) {
         const sure = await Admin.confirm({
           title: `Utestenge ${sender?.name || 'denne personen'}?`,
-          body: 'Alt vedkommende allerede har sendt blir avvist, også bilder som vises på '
-              + 'skjermen nå. Dette kan ikke angres.',
+          body: 'Gjelder alle arrangementer. Alt vedkommende allerede har sendt blir avvist, også '
+              + 'bilder som vises på skjermen nå.',
           confirmLabel: 'Utesteng',
           danger: true,
         });
-        if (!sure) { renderSenders(); return; }   // put the dropdown back where it was
+        if (!sure) return;
       }
-      if (await Admin.api('POST', `/api/senders/${id}/status`, { status }))
-        Admin.toast(`${sender?.name || id}: ${LABELS[status].toLowerCase()}.`);
+      if (await Admin.api('POST', `/api/senders/${id}/ban`, { banned }))
+        Admin.toast(banned ? `${sender?.name || id} er utestengt.` : `${sender?.name || id} er ikke lenger utestengt.`);
       await load();
     }
 
@@ -202,7 +231,8 @@
         input.focus();
         return;
       }
-      if (await Admin.api('POST', `/api/senders/${id}/status`, { status: 'autoApprove' })) {
+      const eventId = document.getElementById('newEvent').value;
+      if (await Admin.api('POST', `/api/senders/${id}/memberships/${encodeURIComponent(eventId)}`, { autoApprove: true })) {
         input.value = '';
         Admin.toast('Lagt til. Bildene deres går rett på skjermen.');
       }

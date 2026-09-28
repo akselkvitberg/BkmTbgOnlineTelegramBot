@@ -59,6 +59,7 @@ locals {
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
     "iamcredentials.googleapis.com",
+    "cloudscheduler.googleapis.com",
   ]
 
   # Only when a Hosting site is actually asked for. Adding Firebase to a
@@ -97,21 +98,13 @@ resource "google_storage_bucket" "images" {
   # force_destroy so teardown removes the bucket rather than failing on contents.
   force_destroy = true
 
-  lifecycle_rule {
-    condition {
-      age            = 30
-      matches_prefix = ["originals/", "display/", "thumbs/"]
-    }
-    action { type = "Delete" }
-  }
-
   depends_on = [google_project_service.apis]
 }
 
-# state/ is deliberately outside the lifecycle rule above. Each write creates a
-# new object with a fresh creation time so it would survive an active event
-# either way, but an unscoped age rule on the object holding all the metadata is
-# not something to leave to chance.
+# No lifecycle rule. Photos are kept until an organiser deletes them or their
+# event's retention setting does (see RetentionSweep); an age rule here would
+# delete the bytes of photos the state still lists, including the pool the
+# daily screen is told to keep.
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -133,12 +126,13 @@ resource "google_artifact_registry_repository" "images" {
 
 locals {
   secret_ids = {
-    bot_token      = "${var.name}-bot-token"
-    webhook_secret = "${var.name}-webhook-secret"
-    webhook_path   = "${var.name}-webhook-path"
-    admin_password = "${var.name}-admin-password"
-    cookie_key     = "${var.name}-cookie-key"
-    join_code      = "${var.name}-join-code"
+    bot_token        = "${var.name}-bot-token"
+    webhook_secret   = "${var.name}-webhook-secret"
+    webhook_path     = "${var.name}-webhook-path"
+    admin_password   = "${var.name}-admin-password"
+    cookie_key       = "${var.name}-cookie-key"
+    join_code        = "${var.name}-join-code"
+    retention_secret = "${var.name}-retention-secret"
   }
 }
 
@@ -213,8 +207,8 @@ resource "google_cloud_run_v2_service" "app" {
       max_instance_count = 1
     }
 
-    # A 20 MB getFile plus derivatives, with margin.
-    timeout = "120s"
+    # A 20 MB getFile plus derivatives needs seconds; an event's ZIP export can need minutes.
+    timeout = "900s"
 
     containers {
       image = var.image_digest
@@ -241,6 +235,7 @@ resource "google_cloud_run_v2_service" "app" {
           ADMIN_PASSWORD          = local.secret_ids.admin_password
           COOKIE_SIGNING_KEY      = local.secret_ids.cookie_key
           JOIN_CODE               = local.secret_ids.join_code
+          RETENTION_SECRET        = local.secret_ids.retention_secret
         }
 
         content {

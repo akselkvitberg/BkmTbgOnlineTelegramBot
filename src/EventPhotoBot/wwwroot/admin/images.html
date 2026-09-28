@@ -12,6 +12,7 @@
     <a href="/admin/images">Bilder</a>
     <a href="/upload">Last opp</a>
     <a href="/admin/telegram">Telegram</a>
+    <a href="/admin/events">Arrangementer</a>
     <a href="/admin/settings">Innstillinger</a>
     <a href="/show">Skjerm</a>
     <form method="post" action="/logout" class="nav-logout"><button type="submit">Logg ut</button></form>
@@ -66,9 +67,12 @@
     // One fetch for every status, so each tab can show its count; the filter is
     // applied here rather than as a query per tab.
     async function load() {
-      const response = await fetch('/api/images', { cache: 'no-store' });
+      const ev = await Admin.currentEvent();
+      if (!ev) return;
+      const response = await fetch(`/api/images?event=${encodeURIComponent(ev.id)}`, { cache: 'no-store' });
       if (!response.ok) return;
       all = await response.json();
+      document.querySelector('.page-head h1').textContent = `Bilder – ${ev.name}`;
       render();
     }
 
@@ -161,15 +165,16 @@
     }
 
     async function removeAll() {
+      const ev = await Admin.currentEvent();
       const count = all.length;
       const sure = await Admin.confirm({
         title: count === 1 ? 'Slette det ene bildet?' : `Slette alle ${count} bildene?`,
-        body: 'Alle bilder fjernes fra skjermen og fra lagringen, også de som venter, er skjult eller avvist. Dette kan ikke angres.',
+        body: `Alle bilder i ${ev.name} fjernes fra skjermen og fra lagringen, også de som venter, er skjult eller avvist. Dette kan ikke angres.`,
         confirmLabel: 'Slett alle',
         danger: true,
       });
       if (!sure) return;
-      const response = await Admin.api('DELETE', '/api/images');
+      const response = await Admin.api('DELETE', `/api/images?event=${encodeURIComponent(ev.id)}`);
       if (response) {
         const { deleted } = await response.json().catch(() => ({ deleted: count }));
         Admin.toast(deleted === 1 ? 'Slettet 1 bilde.' : `Slettet ${deleted} bilder.`);

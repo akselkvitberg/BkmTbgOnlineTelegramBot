@@ -135,10 +135,11 @@ locals {
     "roles/serviceusage.serviceUsageAdmin", # enable/track the APIs infra/main.tf's google_project_service turns on
     "roles/storage.admin",                  # create/configure the images bucket and its IAM, and read/write Terraform state objects in the backend bucket
     "roles/artifactregistry.admin",         # create the Artifact Registry repository, and push the built image to it
-    "roles/secretmanager.admin",            # create the 5 secret resources and their IAM bindings, AND read a version's payload — deploy.yml's webhook step needs the latter; see the comment block above
+    "roles/secretmanager.admin",            # create the 7 secret resources and their IAM bindings, AND read a version's payload — deploy.yml's webhook step needs the latter; see the comment block above
     "roles/iam.serviceAccountAdmin",        # create the Cloud Run runtime service account (google_service_account.runtime in infra/main.tf)
     "roles/iam.serviceAccountUser",         # let Terraform attach that runtime service account to the Cloud Run service (actAs)
     "roles/run.admin",                      # create/update the Cloud Run service and set its IAM policy (the allUsers invoker binding)
+    "roles/cloudscheduler.admin",           # create/update the retention sweep's Cloud Scheduler job in deploy.yml
 
     # Only matters when infra/main.tf's var.hosting_site is set — the optional
     # Firebase Hosting front door that gives the event a <site>.web.app URL
