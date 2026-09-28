@@ -7,9 +7,9 @@ public static class QrEndpoint
 {
     public static void MapJoinQr(this WebApplication app)
     {
-        app.MapGet("/api/join-qr.svg", (BotIdentity identity) =>
+        app.MapGet("/api/join-qr.svg", async (BotIdentity identity, CancellationToken ct) =>
         {
-            if (identity.JoinUrl is not { } url) return Results.NotFound();
+            if (await identity.GetJoinUrlAsync(ct) is not { } url) return Results.NotFound();
 
             // Error correction M: the QR hangs on a wall and may be photographed at an
             // angle or partly glared out. H would be more robust but makes a denser
